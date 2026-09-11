@@ -15,6 +15,7 @@ import Toybox.Graphics;
 class SitemapWidget extends SitemapElement {
 
     // See the get accessors for documentation
+    private var _commandConfirmMessage as String;
     private var _displayState as String;
     private var _icon as ResourceId?;
     private var _iconType as String;
@@ -83,6 +84,12 @@ class SitemapWidget extends SitemapElement {
         _iconType = json.getOptionalString( "icon" );
         _staticIcon = json.getBoolean( "staticIcon" );
 
+        // The confirmation message to display before a command is sent.
+        // If absent, null or an empty string, no confirmation is required
+        // and commands are issued immediately (see CommandMenuItem).
+        // The value is resolved by the server and may change dynamically.
+        _commandConfirmMessage = json.getOptionalString( "commandConfirmMessage" );
+
         _icon = getCurrentIcon();
 
         _labelColor = ColorParser.parse( json, "labelcolor", "Widget '" + _label + "': invalid label color" );
@@ -139,6 +146,11 @@ class SitemapWidget extends SitemapElement {
 
     // The color to be applied to the label
     public function getLabelColor() as ColorType? { return _labelColor; }
+
+    // The confirmation message to be shown before a command is issued.
+    // An empty string means that no confirmation is required and the
+    // command is sent immediately.
+    public function getCommandConfirmMessage() as String { return _commandConfirmMessage; }
     
     // For Group elements and nested elements
     public function getLinkedPage() as SitemapContainer? { return _linkedPage; }

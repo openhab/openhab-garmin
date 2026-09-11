@@ -105,7 +105,25 @@ class CommandMenuItem extends WidgetMenuItem {
     // Subclasses that want to prevent sending a new command while one
     // is pending should call hasPendingCommand() before invoking
     // sendCommand().
+    //
+    // If the widget declares a non-empty `commandConfirmMessage`, a
+    // confirmation dialog is shown first and the command is only sent after
+    // the user confirms it. Otherwise the command is dispatched immediately.
     public function sendCommand( command as Item.ItemState ) as Void {
+        if( _commandRequest != null ) {
+            CommandConfirmation.show(
+                self,
+                command,
+                getSitemapWidget().getCommandConfirmMessage()
+            );
+        }
+    }
+
+    // Dispatches a command via the CommandRequest without any confirmation.
+    // This is the low-level command submission used both for the immediate
+    // path (no confirmation message) and by CommandConfirmation after the
+    // user confirms, so a confirmed command is never confirmed again.
+    public function dispatchCommand( command as Item.ItemState ) as Void {
         if( _commandRequest != null ) {
             _pendingCommand = command;
             _commandRequest.sendCommand( command );
