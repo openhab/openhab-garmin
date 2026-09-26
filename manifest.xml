@@ -9,7 +9,7 @@
         stable id="260c0edf-bca9-4aae-84c4-395d9623453b"
         beta id="2f31d272-fa8f-4dc7-94b8-aed752209f7a"
     -->
-    <iq:application id="260c0edf-bca9-4aae-84c4-395d9623453b" type="widget" name="@Strings.AppName" entry="OHApp" launcherIcon="@Drawables.logoLauncher" minApiLevel="3.4.0">
+    <iq:application id="2f31d272-fa8f-4dc7-94b8-aed752209f7a" type="widget" name="@Strings.AppName" entry="OHApp" launcherIcon="@Drawables.logoLauncher" minApiLevel="3.4.0">
         <!--
             Use the following from the Visual Studio Code comand palette to edit
             the build targets:
