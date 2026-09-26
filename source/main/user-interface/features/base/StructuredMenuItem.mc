@@ -45,6 +45,7 @@ class StructuredMenuItem extends BaseMenuItem {
         :icon as ResourceId?,
         :label as String?,
         :labelColor as ColorType?,
+        :allowLabelLineBreaks as Boolean?,
         :stateTextResponsive as String?,
         :stateDrawable as StateDrawable?,
         :stateColor as ColorType?,
@@ -71,6 +72,7 @@ class StructuredMenuItem extends BaseMenuItem {
     // we initialize the label with an empty string.
     private var _label as String = ""; 
     private var _labelTextArea as TextArea;
+    private var _allowLabelLineBreaks as Boolean;
 
     // Color of the label
     private var _labelColor as ColorType?;
@@ -108,6 +110,7 @@ class StructuredMenuItem extends BaseMenuItem {
             setLabel( label );            
         }
         _labelColor = options[:labelColor];
+        _allowLabelLineBreaks = options[:allowLabelLineBreaks] == true ? true : false;
         setStateTextResponsive( options[:stateTextResponsive] );
         _stateColor = options[:stateColor];
         setActionIcon( options[:actionIcon] );
@@ -254,7 +257,12 @@ class StructuredMenuItem extends BaseMenuItem {
         // Since this is typically less than twice the height of the smallest font, it
         // effectively prevents line wrapping. Given sufficient height, CIQ may insert
         // line breaks at awkward positions, so wrapping is intentionally avoided.
-        _labelTextArea.setSize( rightX - leftX, CustomMath.min( dcHeight, Graphics.getFontHeight( Config.UI_MENU_ITEM_FONTS[0] ) ) );
+        _labelTextArea.setSize( 
+            rightX - leftX, 
+            _allowLabelLineBreaks 
+            ? dcHeight
+            : CustomMath.min( dcHeight, Graphics.getFontHeight( Config.UI_MENU_ITEM_FONTS[0] ) ) 
+        );
         
         _labelTextArea.setLocation( 
             leftX, 

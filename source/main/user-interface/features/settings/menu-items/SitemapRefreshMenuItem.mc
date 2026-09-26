@@ -15,7 +15,8 @@ class SitemapRefreshMenuItem extends StructuredMenuItem {
     */
     public function initialize() {
         StructuredMenuItem.initialize( { 
-            :label => "Update Sitemap\nover Wi-Fi" 
+            :label => "Update Sitemap\nover Wi-Fi",
+            :allowLabelLineBreaks => true
         } );
     }
 
