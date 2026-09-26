@@ -71,6 +71,8 @@ class StructuredMenuItem extends BaseMenuItem {
     // we initialize the label with an empty string.
     private var _label as String = ""; 
     private var _labelTextArea as TextArea;
+    private static var _labelTextAreaMaxFontHeight as Number = 0;
+
     // Color of the label
     private var _labelColor as ColorType?;
 
@@ -246,9 +248,15 @@ class StructuredMenuItem extends BaseMenuItem {
             }
         }
 
-        // Finally, initialize the text area at the calculated leftX and width.
+        // Finally, initialize the text area using the calculated leftX and width.
         // If a text offset is defined, apply it here as well.
-        _labelTextArea.setSize( rightX - leftX, dcHeight );
+        //
+        // The height is limited to that of the largest font available to the text area.
+        // Since this is typically less than twice the height of the smallest font, it
+        // effectively prevents line wrapping. Given sufficient height, CIQ may insert
+        // line breaks at awkward positions, so wrapping is intentionally avoided.
+        _labelTextArea.setSize( rightX - leftX, CustomMath.min( dcHeight, Graphics.getFontHeight( Config.UI_MENU_ITEM_FONTS[0] ) ) );
+        
         _labelTextArea.setLocation( 
             leftX, 
             Config.UI_MENU_ITEM_LABEL_OFFSET != 0
