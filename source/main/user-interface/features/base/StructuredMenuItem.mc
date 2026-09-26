@@ -71,7 +71,6 @@ class StructuredMenuItem extends BaseMenuItem {
     // we initialize the label with an empty string.
     private var _label as String = ""; 
     private var _labelTextArea as TextArea;
-    private static var _labelTextAreaMaxFontHeight as Number = 0;
 
     // Color of the label
     private var _labelColor as ColorType?;
