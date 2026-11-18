@@ -118,7 +118,31 @@ class CommandMenuItem extends WidgetMenuItem {
         if( confirmMessage.equals( "" ) ) {
             dispatchCommand( command );
         } else {
-            CommandConfirmation.show( self, command, confirmMessage );
+            CommandConfirmation.show( self, command, confirmMessage, false );
+        }
+    }
+
+    // Sends the command like sendCommand(), but leaves the calling view once
+    // the command has been accepted: the view is popped immediately if no
+    // confirmation is configured, or after the user confirmed the dialog. When
+    // the user cancels, nothing is sent and the view stays open.
+    //
+    // The caller must not pop the view itself. Not to be used where the view is
+    // dismissed by the system (e.g. ActionMenu).
+    public function sendCommandAndLeaveView( command as Item.ItemState ) as Void {
+        if( _commandRequest == null ) {
+            // There is nothing to send or confirm, but still honor the request
+            // to leave the view.
+            ViewStack.popView( WatchUi.SLIDE_RIGHT );
+            return;
+        }
+
+        var confirmMessage = getSitemapWidget().getCommandConfirmMessage();
+        if( confirmMessage.equals( "" ) ) {
+            dispatchCommand( command );
+            ViewStack.popView( WatchUi.SLIDE_RIGHT );
+        } else {
+            CommandConfirmation.show( self, command, confirmMessage, true );
         }
     }
 

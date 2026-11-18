@@ -49,6 +49,10 @@ class CommandConfirmation {
     // The confirmation message to display.
     private var _message as String;
 
+    // True if the view underneath the confirmation shall be popped once the
+    // command has been accepted.
+    private var _leaveViewOnConfirm as Boolean;
+
     // The timer used to defer the actual push until the current call stack has
     // unwound. This keeps the object alive until it is presented.
     private var _timer as Timer.Timer?;
@@ -72,17 +76,21 @@ class CommandConfirmation {
      * @param delegate - The `CommandMenuItem` that will dispatch the command.
      * @param command - The command to send (String or Float).
      * @param message - The confirmation message to display; must not be empty.
+     * @param leaveViewOnConfirm - If true, the calling view is popped once the
+     *                             user confirms; the caller must not pop it
+     *                             itself in that case.
      */
     public static function show(
         delegate as CommandMenuItem,
         command as Item.ItemState,
-        message as String
+        message as String,
+        leaveViewOnConfirm as Boolean
     ) as Void {
         if( message.equals( "" ) ) {
             throw new GeneralException( "CommandConfirmation requires a non-empty confirmation message." );
         }
 
-        var confirmation = new CommandConfirmation( delegate, command, message );
+        var confirmation = new CommandConfirmation( delegate, command, message, leaveViewOnConfirm );
         confirmation.presentDeferred();
     }
 
@@ -90,11 +98,13 @@ class CommandConfirmation {
     private function initialize(
         delegate as CommandMenuItem,
         command as Item.ItemState,
-        message as String
+        message as String,
+        leaveViewOnConfirm as Boolean
     ) {
         _delegate = delegate;
         _command = command;
         _message = message;
+        _leaveViewOnConfirm = leaveViewOnConfirm;
     }
 
     // Defers the presentation until after the current call stack has unwound,
@@ -165,7 +175,14 @@ class CommandConfirmation {
             // Dispatch the preserved command exactly once, without re-entering
             // the confirmation flow.
             _delegate.dispatchCommand( _command );
+
+            // The dialog has already been dismissed at this point, so the
+            // calling view is current again and can be left now.
+            if( _leaveViewOnConfirm ) {
+                ViewStack.popView( WatchUi.SLIDE_RIGHT );
+            }
         }
-        // CONFIRM_NO: nothing is sent.
+        // CONFIRM_NO: nothing is sent and the calling view stays. In particular,
+        // the caller is expected to leave its view only if the user confirmed.
     }
 }

@@ -44,9 +44,13 @@ class NumericPickerDelegate extends DynamicPickerDelegate {
                 throw new NonFatalUserInterfaceException( NonFatalUserInterfaceException.EX_INVALID_STATE_TYPE );
             }
             // Logger.debug "NumericPickerDelegate.onAccept: new state=" + newState.toString() );
-            _menuItem.sendCommand( newState );
+            // Leave the picker only once the command has been accepted, so that
+            // cancelling the confirmation returns to the picker.
+            _menuItem.sendCommandAndLeaveView( newState );
+        } else {
+            // No command is sent on accept in this mode, so leave right away.
+            ViewStack.popView( WatchUi.SLIDE_RIGHT );
         }
-        ViewStack.popView( WatchUi.SLIDE_RIGHT );
         return true;
     }    
 
