@@ -53,8 +53,9 @@ class CommandConfirmation {
     // command has been accepted.
     private var _leaveViewOnConfirm as Boolean;
 
-    // The timer used to defer the actual push until the current call stack has
-    // unwound. This keeps the object alive until it is presented.
+    // The timer used to defer view stack changes until the current call stack
+    // has unwound: the presentation push, or leaving the calling view after the
+    // user confirmed.
     private var _timer as Timer.Timer?;
 
     // Prevent multiple dispatch in case onResponse is invoked more than once.
@@ -165,10 +166,9 @@ class CommandConfirmation {
         }
         _handled = true;
 
-        // The system dismisses the Confirmation view itself once a response is
-        // selected. Only the tracked view stack needs to be updated here.
-        // Popping the system view as well would remove the view underneath it,
-        // and popping the base page of a widget terminates the widget.
+        // The system dismisses the Confirmation by popping the top view after
+        // this callback returns. Only the tracked stack is updated here; view
+        // stack changes are deferred until the dialog is gone.
         ViewStack.discardTopView();
 
         if( response == WatchUi.CONFIRM_YES ) {
@@ -176,13 +176,25 @@ class CommandConfirmation {
             // the confirmation flow.
             _delegate.dispatchCommand( _command );
 
-            // The dialog has already been dismissed at this point, so the
-            // calling view is current again and can be left now.
             if( _leaveViewOnConfirm ) {
-                ViewStack.popView( WatchUi.SLIDE_RIGHT );
+                leaveViewDeferred();
             }
         }
-        // CONFIRM_NO: nothing is sent and the calling view stays. In particular,
-        // the caller is expected to leave its view only if the user confirmed.
+        // CONFIRM_NO: nothing is sent and the calling view stays.
+    }
+
+    // Defers leaving the calling view until the system has dismissed the
+    // dialog. Popping directly in onResponse() would make the system pop the
+    // next view instead.
+    private function leaveViewDeferred() as Void {
+        _timer = new Timer.Timer();
+        _timer.start( method( :leaveView ), 50, false );
+    }
+
+    // Pops the calling view once the dialog is gone.
+    // Public because it is referenced via method(:leaveView).
+    public function leaveView() as Void {
+        _timer = null;
+        ViewStack.popView( WatchUi.SLIDE_RIGHT );
     }
 }

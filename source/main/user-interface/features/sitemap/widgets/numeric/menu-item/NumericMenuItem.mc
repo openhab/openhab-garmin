@@ -54,21 +54,42 @@ class NumericMenuItem extends CommandMenuItem {
     }
 
     // When the menu item is selected, the DynamicPicker is initialized
-    // and pushed to the view stack
+    // and pushed to the view stack.
+    //
+    // If a confirmation message is configured for a value that is not
+    // releaseOnly, the picker is opened underneath a confirmation dialog and
+    // only becomes visible once the user confirmed, since in that mode every
+    // change is sent immediately.
     public function onSelect() as Boolean {
         if( ! CommandMenuItem.onSelect() ) {
             if( hasCommandsEnabled() ) {
-                ViewStack.pushView(
-                    new DynamicPicker( 
-                        getLabel(),
-                        new NumericPickerDataSource( self )
-                    ),
-                    new NumericPickerDelegate( self ),
-                    WatchUi.SLIDE_LEFT
-                );
+                var confirmMessage = getSitemapWidget().getCommandConfirmMessage();
+                if( ! getSitemapNumeric().isReleaseOnly() && ! confirmMessage.equals( "" ) ) {
+                    // Open the picker first, so that confirming only has to
+                    // dismiss the dialog on top of it.
+                    openPicker();
+                    NumericPickerOpenConfirmation.show( confirmMessage );
+                } else {
+                    // releaseOnly confirms on accept (see CommandMenuItem), and
+                    // without a message nothing needs to be confirmed.
+                    openPicker();
+                }
             }
         }
         return true;
+    }
+
+    // Opens the picker for this numeric widget, which allows the user to
+    // adjust the value.
+    public function openPicker() as Void {
+        ViewStack.pushView(
+            new DynamicPicker( 
+                getLabel(),
+                new NumericPickerDataSource( self )
+            ),
+            new NumericPickerDelegate( self ),
+            WatchUi.SLIDE_LEFT
+        );
     }
 
     // Called by the base class when the state changes, either due to
