@@ -122,10 +122,20 @@ class CommandMenuItem extends WidgetMenuItem {
         }
     }
 
+    // Sends the command without presenting a confirmation dialog, even if the
+    // widget declares a `commandConfirmMessage`.
+    //
+    // Callers use this for commands that are not discrete user actions, e.g.
+    // intermediate values while a slider is moved or a state that is reverted
+    // on cancel, for which a confirmation would be disruptive.
+    public function sendCommandWithoutConfirmation( command as Item.ItemState ) as Void {
+        dispatchCommand( command );
+    }
+
     // Dispatches a command via the CommandRequest without any confirmation.
-    // This is the low-level command submission used for commands that require
-    // no confirmation and by CommandConfirmation after the user confirms, so a
-    // confirmed command is never confirmed again.
+    // This is the low-level command submission used by
+    // sendCommandWithoutConfirmation() and by CommandConfirmation after the
+    // user confirms, so a confirmed command is never confirmed again.
     public function dispatchCommand( command as Item.ItemState ) as Void {
         if( _commandRequest != null ) {
             _pendingCommand = command;
