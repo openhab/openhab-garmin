@@ -38,7 +38,7 @@ annotButton=exclForButton;exclForSettingsFooter
 # menu boundaries from working correctly.
 # Therefore, on these devices, the settings are shown as a regular
 # menu item instead. All other button-based controls remain unchanged.
-# This applies to Edge 540 / 840, Edge MTB, and Edge 550 / 850.
+# This applies to Edge 540 / 840, Edge MTB, Edge 550 / 850, and Edge 1060.
 # https://github.com/openhab/openhab-garmin/issues/253
 # https://github.com/openhab/openhab-garmin/issues/260
 annotButtonWithSettingsMenuItem=exclForButton;exclForSettingsMenuItem
@@ -70,7 +70,8 @@ resLauncherIcons=resources/icons-launcher
 resEdgeBase=$(resBase);resources/edge/icons-interface;resources/edge/icons-widgets
 # "Short" is used for devices with shorter screens, such as the 540, 840, 550, or 850.
 resEdgeShort=$(resEdgeBase);resources/edge/icons-interface-short
-# "Tall" is used for devices with taller screens, such as the 1040 or 1050.
+# "Tall" is used for devices with taller screens, such as the Explore 2,
+# Explore 3, 1040, 1050, or 1060.
 resEdgeTall=$(resEdgeBase);resources/edge/icons-interface-tall
 
 
@@ -174,7 +175,7 @@ srcThemeManagerNightModeBase=source/themes/manager/device-night-mode/base
 
 # The default implementation switches between day and night mode
 # and does not apply a menu item focus indicator.
-# This applies to touch-based Edge devices (Explore 2, 1040, 1050).
+# This applies to touch-based Edge devices (Explore 2, Explore 3, 1040, 1050).
 srcThemeManagerNightModeDefault=$(srcThemeManagerNightModeBase);source/themes/manager/device-night-mode/device-default
 
 # Button-based devices use a focus indicator.
@@ -232,13 +233,13 @@ srcGradientFocus25DegreeSelect=$(srcBase);$(srcConfigGradientFocus25DegreeSelect
 srcGradientFocus27DegreeSelect=$(srcBase);$(srcConfigGradientFocus27DegreeSelect);$(srcThemesDefault)
 
 # Edge devices
-# Touch-based devices (Explore 2, 1040, 1050).
+# Touch-based devices (Explore 2, Explore 3, 1040, 1050).
 # These devices do not have physical control buttons.
 srcEdgeX40Touch=$(srcBase);$(srcConfigEdgeX40Touch);$(srcThemesNightModeDefault)
 srcEdgeX50Touch=$(srcBase);$(srcConfigEdgeX50Touch);$(srcThemesNightModeDefault)
-# Button-based devices (540, 840, MTB, 550, 850).
+# Button-based devices (540, 840, MTB, 550, 850, 1060).
 # These devices have physical control buttons and,
-# in some cases (840, 850), also support touch input.
+# in some cases (840, 850, 1060), also support touch input.
 srcEdgeButtonX40=$(srcBase);$(srcConfigEdgeX40Button);$(srcThemesNightModeEdgeX40Button)
 srcEdgeButtonX50=$(srcBase);$(srcConfigEdgeX50Button);$(srcThemesNightModeEdgeX50Button)
 
@@ -267,6 +268,7 @@ descentg2.resourcePath=$(resBase);$(resLauncherIcons)/60x60-light
 descentmk343mm.resourcePath=$(resBase);$(resLauncherIcons)/60x60-light
 descentmk351mm.resourcePath=$(resBase);$(resLauncherIcons)/60x60-light
 enduro3.resourcePath=$(resBase);$(resLauncherIcons)/40x40-light
+enduro4.resourcePath=$(resBase);$(resLauncherIcons)/40x40-light
 epix2.resourcePath=$(resBase);$(resLauncherIcons)/60x60-light
 epix2pro42mm.resourcePath=$(resBase);$(resLauncherIcons)/60x60-light
 epix2pro47mm.resourcePath=$(resBase);$(resLauncherIcons)/60x60-light
@@ -336,6 +338,8 @@ instinct3amoled45mm.resourcePath=$(resBase);$(resLauncherIcons)/60x60-light
 instinct3amoled50mm.resourcePath=$(resBase);$(resLauncherIcons)/60x60-light
 marq2.resourcePath=$(resBase);$(resLauncherIcons)/60x60-light
 marq2aviator.resourcePath=$(resBase);$(resLauncherIcons)/60x60-light
+marq3.resourcePath=$(resBase);$(resLauncherIcons)/65x65-light
+marq3.sourcePath=$(srcGradientFocus)
 
 # Touch-based, round screen
 approachs50.resourcePath=$(resBase);$(resLauncherIcons)/56x56-light
@@ -446,6 +450,9 @@ edge550.sourcePath = $(srcEdgeButtonX50);source/config/device-edge/device-x50-bu
 edge850.resourcePath=$(edge550.resourcePath)
 edge850.excludeAnnotations = $(edge550.excludeAnnotations)
 edge850.sourcePath = $(srcEdgeButtonX50);source/config/device-edge/device-x50-button/device-850
+edge1060.resourcePath=$(resEdgeTall);$(resLauncherIcons)/62x62-dark
+edge1060.excludeAnnotations = $(annotCiq510Plus);$(annotButtonWithSettingsMenuItem);$(annotScreenRectangular);$(annotFullMenu)
+edge1060.sourcePath = $(srcEdgeButtonX50);source/config/device-edge/device-1060
 
 # Touch-based, CIQ >= 5.1.0
 edge1040.resourcePath=$(resEdgeTall);$(resLauncherIcons)/40x40-dark
@@ -454,3 +461,9 @@ edge1040.sourcePath = $(srcEdgeX40Touch)
 edge1050.resourcePath=$(resEdgeTall);$(resLauncherIcons)/68x68-dark
 edge1050.excludeAnnotations = $(edge1040.excludeAnnotations)
 edge1050.sourcePath = $(srcEdgeX50Touch)
+edgeexplore3.resourcePath=$(resEdgeTall);$(resLauncherIcons)/39x39-dark
+edgeexplore3.excludeAnnotations = $(edge1040.excludeAnnotations)
+edgeexplore3.sourcePath = $(srcEdgeX50Touch)
+edgeexplore3plus.resourcePath=$(edgeexplore3.resourcePath)
+edgeexplore3plus.excludeAnnotations = $(edgeexplore3.excludeAnnotations)
+edgeexplore3plus.sourcePath = $(edgeexplore3.sourcePath)
