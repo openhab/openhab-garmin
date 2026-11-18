@@ -42,6 +42,16 @@ import Toybox.WatchUi;
         // Logger.debug( "ViewStack.popView: new stack size=" + _viewStack.size() );
     }
 
+    // Removes the top view from the tracked stack without popping the system
+    // view. Used for views that the system dismisses on its own, e.g. a
+    // WatchUi.Confirmation after the user selected a response.
+    public static function discardTopView() as Void {
+        if( _viewStack.size() > 0 ) {
+            _viewStack = _viewStack.slice( 0, _viewStack.size() - 1 );
+            // Logger.debug( "ViewStack.discardTopView: new stack size=" + _viewStack.size() );
+        }
+    }
+
     // Pushes a view onto the stack, replacing WatchUi.pushView().
     public static function pushView( view as Views, delegate as InputDelegates?, transition as SlideType ) as Void {
         WatchUi.pushView( view, delegate, transition );

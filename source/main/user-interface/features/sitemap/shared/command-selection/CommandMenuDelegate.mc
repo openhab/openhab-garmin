@@ -28,12 +28,13 @@ class CommandMenuDelegate extends Menu2InputDelegate {
             // var command = item.getId();
             var command = ( item as CommandOptionMenuItem ).getCommand();
             if( command instanceof String ) {
-                _delegate.sendCommand( command );
+                // Leave the command menu only once the command has been
+                // accepted, so that cancelling the confirmation returns to the
+                // menu.
+                _delegate.sendCommandAndLeaveView( command );
             } else {
                 throw new NonFatalUserInterfaceException( NonFatalUserInterfaceException.EX_INVALID_COMMAND );
             }
-            // Return to the parent view
-            onBack();
         } catch( ex ) {
             ExceptionHandler.handleUserInterfaceException( ex );
         }

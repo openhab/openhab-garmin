@@ -105,7 +105,62 @@ class CommandMenuItem extends WidgetMenuItem {
     // Subclasses that want to prevent sending a new command while one
     // is pending should call hasPendingCommand() before invoking
     // sendCommand().
+    //
+    // If the widget declares a non-empty `commandConfirmMessage`, a
+    // confirmation dialog is shown first and the command is only sent after
+    // the user confirms it. Otherwise the command is dispatched immediately.
     public function sendCommand( command as Item.ItemState ) as Void {
+        if( _commandRequest == null ) {
+            return;
+        }
+
+        var confirmMessage = getSitemapWidget().getCommandConfirmMessage();
+        if( confirmMessage.equals( "" ) ) {
+            dispatchCommand( command );
+        } else {
+            CommandConfirmation.show( self, command, confirmMessage, false );
+        }
+    }
+
+    // Sends the command like sendCommand(), but leaves the calling view once
+    // the command has been accepted: the view is popped immediately if no
+    // confirmation is configured, or after the user confirmed the dialog. When
+    // the user cancels, nothing is sent and the view stays open.
+    //
+    // The caller must not pop the view itself. Not to be used where the view is
+    // dismissed by the system (e.g. ActionMenu).
+    public function sendCommandAndLeaveView( command as Item.ItemState ) as Void {
+        if( _commandRequest == null ) {
+            // There is nothing to send or confirm, but still honor the request
+            // to leave the view.
+            ViewStack.popView( WatchUi.SLIDE_RIGHT );
+            return;
+        }
+
+        var confirmMessage = getSitemapWidget().getCommandConfirmMessage();
+        if( confirmMessage.equals( "" ) ) {
+            dispatchCommand( command );
+            ViewStack.popView( WatchUi.SLIDE_RIGHT );
+        } else {
+            CommandConfirmation.show( self, command, confirmMessage, true );
+        }
+    }
+
+    // Sends the command without presenting a confirmation dialog, even if the
+    // widget declares a `commandConfirmMessage`.
+    //
+    // Callers use this for commands that are not discrete user actions, e.g.
+    // intermediate values while a slider is moved or a state that is reverted
+    // on cancel, for which a confirmation would be disruptive.
+    public function sendCommandWithoutConfirmation( command as Item.ItemState ) as Void {
+        dispatchCommand( command );
+    }
+
+    // Dispatches a command via the CommandRequest without any confirmation.
+    // This is the low-level command submission used by
+    // sendCommandWithoutConfirmation() and by CommandConfirmation after the
+    // user confirms, so a confirmed command is never confirmed again.
+    public function dispatchCommand( command as Item.ItemState ) as Void {
         if( _commandRequest != null ) {
             _pendingCommand = command;
             _commandRequest.sendCommand( command );

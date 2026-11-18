@@ -44,9 +44,13 @@ class NumericPickerDelegate extends DynamicPickerDelegate {
                 throw new NonFatalUserInterfaceException( NonFatalUserInterfaceException.EX_INVALID_STATE_TYPE );
             }
             // Logger.debug "NumericPickerDelegate.onAccept: new state=" + newState.toString() );
-            _menuItem.sendCommand( newState );
+            // Leave the picker only once the command has been accepted, so that
+            // cancelling the confirmation returns to the picker.
+            _menuItem.sendCommandAndLeaveView( newState );
+        } else {
+            // No command is sent on accept in this mode, so leave right away.
+            ViewStack.popView( WatchUi.SLIDE_RIGHT );
         }
-        ViewStack.popView( WatchUi.SLIDE_RIGHT );
         return true;
     }    
 
@@ -58,7 +62,9 @@ class NumericPickerDelegate extends DynamicPickerDelegate {
         if( ! _menuItem.getSitemapNumeric().isReleaseOnly() ) {
             if( _menuItem.getSitemapNumeric().getNumericItem().getNumericState() != _previousState ) {
                 // Logger.debug "NumericPickerDelegate.onCancel: reverting to state=" + _previousState.toString() );
-                _menuItem.sendCommand( _previousState );
+                // Reverting is not a deliberate command selection, so it must
+                // not present a confirmation dialog.
+                _menuItem.sendCommandWithoutConfirmation( _previousState );
             } else {
                 // Logger.debug "NumericPickerDelegate.onCancel: state did not change" );
             }
@@ -85,7 +91,9 @@ class NumericPickerDelegate extends DynamicPickerDelegate {
         }
         // Update only if releaseOnly is false
         if( ! _menuItem.getSitemapNumeric().isReleaseOnly() ) {
-            _menuItem.sendCommand( state );
+            // Intermediate values are sent while the user is still moving the
+            // picker, so they must not present a confirmation dialog.
+            _menuItem.sendCommandWithoutConfirmation( state );
         }
     }     
 }
