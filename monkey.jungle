@@ -111,14 +111,15 @@ srcConfigVenuX1=$(srcConfigBase);source/config/device-venu-square/base;source/co
 # 30 degrees, while otherwise using the default values.
 srcConfig25DegreeSelect=$(srcConfigBase);source/config/device-fr-25deg-select
 srcConfig27DegreeSelect=$(srcConfigBase);source/config/device-fr-27deg-select
-# Devices whose native menu uses a gradient background as the
-# selected-item indicator (Fenix 8 and later, Forerunner x65 and later).
-# On these devices, no left padding is applied to the menu item content.
+# Devices that render the menu item content at the left edge of the
+# menu item, without any left padding (Fenix 8 and later, Forerunner x65
+# and later). These devices indicate the selected item with a background
+# highlight instead of a bar on the left side of the screen.
 # Since some of them use other input hint positions, there is a variant
 # for each button position.
-srcConfigGradientFocus=$(srcConfigBase);source/config/device-gradient-focus
-srcConfigGradientFocus25DegreeSelect=$(srcConfigBase);source/config/device-gradient-focus-25deg-select
-srcConfigGradientFocus27DegreeSelect=$(srcConfigBase);source/config/device-gradient-focus-27deg-select
+srcConfigNoLeftPadding=$(srcConfigBase);source/config/device-no-left-padding
+srcConfigNoLeftPadding25DegreeSelect=$(srcConfigBase);source/config/device-no-left-padding-25deg-select
+srcConfigNoLeftPadding27DegreeSelect=$(srcConfigBase);source/config/device-no-left-padding-27deg-select
 
 # Edge devices
 # Base path for all Edge devices
@@ -226,11 +227,11 @@ srcVenuX1=$(srcBase);$(srcConfigVenuX1);$(srcThemesDefault)
 src25DegreeSelect=$(srcBase);$(srcConfig25DegreeSelect);$(srcThemesDefault)
 src27DegreeSelect=$(srcBase);$(srcConfig27DegreeSelect);$(srcThemesDefault)
 
-# Devices whose native menu uses a gradient background as the
-# selected-item indicator. See srcConfigGradientFocus for details.
-srcGradientFocus=$(srcBase);$(srcConfigGradientFocus);$(srcThemesDefault)
-srcGradientFocus25DegreeSelect=$(srcBase);$(srcConfigGradientFocus25DegreeSelect);$(srcThemesDefault)
-srcGradientFocus27DegreeSelect=$(srcBase);$(srcConfigGradientFocus27DegreeSelect);$(srcThemesDefault)
+# Devices that render the menu item content at the left edge.
+# See srcConfigNoLeftPadding for details.
+srcNoLeftPadding=$(srcBase);$(srcConfigNoLeftPadding);$(srcThemesDefault)
+srcNoLeftPadding25DegreeSelect=$(srcBase);$(srcConfigNoLeftPadding25DegreeSelect);$(srcThemesDefault)
+srcNoLeftPadding27DegreeSelect=$(srcBase);$(srcConfigNoLeftPadding27DegreeSelect);$(srcThemesDefault)
 
 # Edge devices
 # Touch-based devices (Explore 2, Explore 3, 1040, 1050).
@@ -282,64 +283,64 @@ fenix7x.resourcePath=$(resBase);$(resLauncherIcons)/40x40-light
 fenix7xpro.resourcePath=$(resBase);$(resLauncherIcons)/40x40-light
 fenix7xpronowifi.resourcePath=$(resBase);$(resLauncherIcons)/40x40-light
 fenix843mm.resourcePath=$(resBase);$(resLauncherIcons)/60x60-light
-fenix843mm.sourcePath=$(srcGradientFocus)
+fenix843mm.sourcePath=$(srcNoLeftPadding)
 fenix847mm.resourcePath=$(resBase);$(resLauncherIcons)/65x65-light
-fenix847mm.sourcePath=$(srcGradientFocus)
+fenix847mm.sourcePath=$(srcNoLeftPadding)
 fenix8solar47mm.resourcePath=$(resBase);$(resLauncherIcons)/40x40-light
-fenix8solar47mm.sourcePath=$(srcGradientFocus)
+fenix8solar47mm.sourcePath=$(srcNoLeftPadding)
 fenix8solar51mm.resourcePath=$(resBase);$(resLauncherIcons)/40x40-light
-fenix8solar51mm.sourcePath=$(srcGradientFocus)
+fenix8solar51mm.sourcePath=$(srcNoLeftPadding)
 fenix8pro47mm.resourcePath=$(resBase);$(resLauncherIcons)/65x65-light
-fenix8pro47mm.sourcePath=$(srcGradientFocus)
+fenix8pro47mm.sourcePath=$(srcNoLeftPadding)
 fenix943mm.resourcePath=$(resBase);$(resLauncherIcons)/60x60-light
-fenix943mm.sourcePath=$(srcGradientFocus)
+fenix943mm.sourcePath=$(srcNoLeftPadding)
 fenix947mm.resourcePath=$(resBase);$(resLauncherIcons)/65x65-light
-fenix947mm.sourcePath=$(srcGradientFocus)
+fenix947mm.sourcePath=$(srcNoLeftPadding)
 fenix9pro43mm.resourcePath=$(resBase);$(resLauncherIcons)/60x60-light
-fenix9pro43mm.sourcePath=$(srcGradientFocus)
+fenix9pro43mm.sourcePath=$(srcNoLeftPadding)
 fenix9pro47mm.resourcePath=$(resBase);$(resLauncherIcons)/65x65-light
-fenix9pro47mm.sourcePath=$(srcGradientFocus)
+fenix9pro47mm.sourcePath=$(srcNoLeftPadding)
 fenix9pro51mm.resourcePath=$(resBase);$(resLauncherIcons)/65x65-light
-fenix9pro51mm.sourcePath=$(srcGradientFocus)
+fenix9pro51mm.sourcePath=$(srcNoLeftPadding)
 fenix9prosolar47mm.resourcePath=$(resBase);$(resLauncherIcons)/40x40-light
-fenix9prosolar47mm.sourcePath=$(srcGradientFocus)
+fenix9prosolar47mm.sourcePath=$(srcNoLeftPadding)
 fenix9prosolar51mm.resourcePath=$(resBase);$(resLauncherIcons)/40x40-light
-fenix9prosolar51mm.sourcePath=$(srcGradientFocus)
+fenix9prosolar51mm.sourcePath=$(srcNoLeftPadding)
 fenixe.resourcePath=$(resBase);$(resLauncherIcons)/60x60-light
-fenixe.sourcePath=$(srcGradientFocus)
+fenixe.sourcePath=$(srcNoLeftPadding)
 fr70.resourcePath=$(resBase);$(resLauncherIcons)/54x54-light
-fr70.sourcePath=$(srcGradientFocus)
+fr70.sourcePath=$(srcNoLeftPadding)
 fr165.resourcePath=$(resBase);$(resLauncherIcons)/54x54-light
-fr165.sourcePath=$(srcGradientFocus27DegreeSelect)
+fr165.sourcePath=$(srcNoLeftPadding27DegreeSelect)
 fr165m.resourcePath=$(resBase);$(resLauncherIcons)/54x54-light
-fr165m.sourcePath=$(srcGradientFocus27DegreeSelect)
+fr165m.sourcePath=$(srcNoLeftPadding27DegreeSelect)
 fr170.resourcePath=$(resBase);$(resLauncherIcons)/54x54-light
-fr170.sourcePath=$(srcGradientFocus)
+fr170.sourcePath=$(srcNoLeftPadding)
 fr170m.resourcePath=$(resBase);$(resLauncherIcons)/54x54-light
-fr170m.sourcePath=$(srcGradientFocus)
+fr170m.sourcePath=$(srcNoLeftPadding)
 fr255.resourcePath=$(resBase);$(resLauncherIcons)/40x40-light
 fr255m.resourcePath=$(resBase);$(resLauncherIcons)/40x40-light
 fr255s.resourcePath=$(resBase);$(resLauncherIcons)/40x40-light
 fr255sm.resourcePath=$(resBase);$(resLauncherIcons)/40x40-light
 fr265.resourcePath=$(resBase);$(resLauncherIcons)/60x60-light
-fr265.sourcePath=$(srcGradientFocus27DegreeSelect)
+fr265.sourcePath=$(srcNoLeftPadding27DegreeSelect)
 fr265s.resourcePath=$(resBase);$(resLauncherIcons)/60x60-light
-fr265s.sourcePath=$(srcGradientFocus27DegreeSelect)
+fr265s.sourcePath=$(srcNoLeftPadding27DegreeSelect)
 fr57042mm.resourcePath=$(resBase);$(resLauncherIcons)/54x54-light
-fr57042mm.sourcePath=$(srcGradientFocus27DegreeSelect)
+fr57042mm.sourcePath=$(srcNoLeftPadding27DegreeSelect)
 fr57047mm.resourcePath=$(resBase);$(resLauncherIcons)/65x65-light
-fr57047mm.sourcePath=$(srcGradientFocus25DegreeSelect)
+fr57047mm.sourcePath=$(srcNoLeftPadding25DegreeSelect)
 fr955.resourcePath=$(resBase);$(resLauncherIcons)/40x40-light
 fr965.resourcePath=$(resBase);$(resLauncherIcons)/65x65-light
-fr965.sourcePath=$(srcGradientFocus25DegreeSelect)
+fr965.sourcePath=$(srcNoLeftPadding25DegreeSelect)
 fr970.resourcePath=$(resBase);$(resLauncherIcons)/65x65-light
-fr970.sourcePath=$(srcGradientFocus25DegreeSelect)
+fr970.sourcePath=$(srcNoLeftPadding25DegreeSelect)
 instinct3amoled45mm.resourcePath=$(resBase);$(resLauncherIcons)/60x60-light
 instinct3amoled50mm.resourcePath=$(resBase);$(resLauncherIcons)/60x60-light
 marq2.resourcePath=$(resBase);$(resLauncherIcons)/60x60-light
 marq2aviator.resourcePath=$(resBase);$(resLauncherIcons)/60x60-light
 marq3.resourcePath=$(resBase);$(resLauncherIcons)/65x65-light
-marq3.sourcePath=$(srcGradientFocus)
+marq3.sourcePath=$(srcNoLeftPadding)
 
 # Touch-based, round screen
 approachs50.resourcePath=$(resBase);$(resLauncherIcons)/56x56-light

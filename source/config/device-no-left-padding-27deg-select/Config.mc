@@ -1,14 +1,13 @@
 import Toybox.Lang;
 
 /*
- * Config for devices whose native menu uses a gradient background
- * as the selected-item indicator, and whose select button is positioned
- * at 27 degrees.
+ * Config for devices that render the menu item content at the left edge,
+ * and whose select button is positioned at 27 degrees.
  */
 class Config extends BaseConfig {
     protected function initialize() { BaseConfig.initialize(); }
 
-    // No left padding, see ../device-gradient-focus/Config.mc
+    // See ../device-no-left-padding/Config.mc
     public static const UI_MENU_ITEM_PADDING_LEFT_FACTOR as Float = 0.0;
 
     // Positions of the keys, for drawing input hints
