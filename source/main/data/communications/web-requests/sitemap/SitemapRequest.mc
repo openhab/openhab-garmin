@@ -213,10 +213,12 @@ class SitemapRequest extends BaseRequest {
     }
 
     // Processes the response
+    // The data type must match the callback signature of Communications.makeWebRequest exactly.
     public function onReceive( 
         responseCode as Number, 
-        data as Dictionary<String,Object?> 
+        data as Dictionary 
             or String 
+            or ByteArray 
             or PersistedContent.Iterator 
             or Null 
     ) as Void {

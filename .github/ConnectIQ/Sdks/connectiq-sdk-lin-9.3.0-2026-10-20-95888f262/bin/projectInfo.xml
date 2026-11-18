@@ -1,0 +1,898 @@
+<monkeybrains>
+
+    <appTypes>
+        <appType id="watchface" name="Watch Face" description="A simple watch face" />
+        <appType id="datafield" name="Data Field" description="A data field" />
+        <appType id="widget" name="Widget" description="A widget" />
+        <appType id="watch-app" name="Watch App" description="Application" />
+        <appType id="audio-content-provider-app" name="Audio Content Provider App" description="An audio content provider application" />
+        <appType id="barrel" name="Monkey Barrel" description="A monkey barrel" />
+    </appTypes>
+
+    <appPermissions>
+        <permission id="ActivityControl" name="Activity Control" description="Permission to modify Activities" module="ActivityControl" />
+        <permission id="ActivityPrompts" name="Activity Prompts" description="Permission to handle activity prompts" module="ActivityPrompts" />
+        <permission id="Ant" name="ANT" description="Permission to use ANT" module="Ant" />
+        <permission id="AudioInput" name="Audio Input" description="Permission to initialize audio capture" module="AudioCapture" />
+        <permission id="AudioOutput" name="Audio Output" description="Permission to initialize audio playback" module="AudioOutput" />
+        <permission id="Background" name="Background" description="Permission to use Application Backgrounding" module="Background" />
+        <permission id="BluetoothLowEnergy" name="BluetoothLowEnergy" description="Permission to use Bluetooth LE" module="BluetoothLowEnergy" />
+        <permission id="Communications" name="Communications" description="Permission to use Bluetooth LE" module="Communications" />
+        <permission id="ComplicationPublisher" name="Complication Publisher" description="Permission to publish complications" module="ComplicationPublisher" />
+        <permission id="ComplicationSubscriber" name="Complication Subscriber" description="Permission to subscribe to complications" module="ComplicationSubscriber" />
+        <permission id="DataFieldAlert" name="Data Field Alert" description="Permission to push alert from a datafield" module="DataFieldAlert" />
+        <permission id="Fit" name="Activity Recording" description="Permission to record fit files" module="ActivityRecording" />
+        <permission id="FitContributor" name="FIT Contributor" description="Permission to add data to fit files" module="FitContributor" />
+        <permission id="Notifications" name="Notifications" description="Permission to show notifications" module="Notifications" />
+        <permission id="PersistedContent" name="Persisted Content" description="Permission to read persisted content" module="PersistedContent" />
+        <permission id="PersistedLocations" name="Persisted Locations" description="Permission to save persisted locations" module="PersistedLocations" />
+        <permission id="Positioning" name="Positioning" description="Permission to use GPS" module="Position" />
+        <permission id="PushNotification" name="Push Notification" description="Permission to use device notifications" module="PushNotification" />
+        <permission id="Sensor" name="Sensor" description="Permission to access sensor data" module="Sensor" />
+        <permission id="SensorHistory" name="Sensor History" description="Permission to access historical sensor data" module="SensorHistory" />
+        <permission id="SensorLogging" name="Sensor Logging" description="Permission to log sensor data" module="SensorLogging" />
+        <permission id="UserProfile" name="User Profile" description="Permission to access the user's profile" module="UserProfile" />
+    </appPermissions>
+
+    <languages>
+        <language id="ara" name= "Arabic" />
+        <language id="bul" name= "Bulgarian" />
+        <language id="zhs" name= "Chinese (Simplified)" />
+        <language id="zht" name= "Chinese (Traditional)" />
+        <language id="hrv" name= "Croatian" />
+        <language id="ces" name= "Czech" />
+        <language id="dan" name= "Danish" />
+        <language id="dut" name= "Dutch" />
+        <language id="deu" name= "German" />
+        <language id="gre" name= "Greek" />
+        <language id="eng" name= "English" />
+        <language id="est" name= "Estonian" />
+        <language id="fin" name= "Finnish" />
+        <language id="fre" name= "French" />
+        <language id="heb" name= "Hebrew" />
+        <language id="hun" name= "Hungarian" />
+        <language id="ind" name= "Indonesian" />
+        <language id="ita" name= "Italian" />
+        <language id="jpn" name= "Japanese" />
+        <language id="kor" name= "Korean" />
+        <language id="lav" name= "Latvian" />
+        <language id="lit" name= "Lithuanian" />
+        <language id="zsm" name= "Standard (Bahasa) Malay" />
+        <language id="nob" name= "Norwegian" />
+        <language id="pol" name= "Polish" />
+        <language id="por" name= "Portuguese" />
+        <language id="ron" name= "Romanian" />
+        <language id="rus" name= "Russian" />
+        <language id="slo" name= "Slovak" />
+        <language id="slv" name= "Slovenian" />
+        <language id="spa" name= "Spanish" />
+        <language id="swe" name= "Swedish" />
+        <language id="tha" name= "Thai" />
+        <language id="tur" name= "Turkish" />
+        <language id="ukr" name= "Ukrainian" />
+        <language id="vie" name= "Vietnamese" />
+    </languages>
+
+    <permissionMaps>
+        <permissionMap appType="watchface">
+            <permissions>
+                <permission id="Ant" dependsOn="Background" />
+                <permission id="Background" />
+                <permission id="BluetoothLowEnergy" dependsOn="Background" />
+                <permission id="Communications" dependsOn="Background" />
+                <permission id="ComplicationSubscriber" />
+                <permission id="Notifications" />
+                <permission id="Positioning" />
+                <permission id="PushNotification" dependsOn="Background" />
+                <permission id="Sensor" dependsOn="Background" />
+                <permission id="SensorHistory" />
+                <permission id="UserProfile" />
+            </permissions>
+        </permissionMap>
+        <permissionMap appType="datafield">
+            <permissions>
+                <permission id="ActivityControl" />
+                <permission id="ActivityPrompts" />
+                <permission id="Ant" />
+                <permission id="Background" />
+                <permission id="BluetoothLowEnergy" />
+                <permission id="Communications" />
+                <permission id="Notifications" />
+                <permission id="PersistedContent" />
+                <permission id="Positioning" />
+                <permission id="PushNotification" />
+                <permission id="Sensor" />
+                <permission id="FitContributor" />
+                <permission id="SensorHistory" />
+                <permission id="UserProfile" />
+                <permission id="DataFieldAlert" />
+            </permissions>
+        </permissionMap>
+        <permissionMap appType="widget">
+            <permissions>
+                <permission id="Ant" />
+                <permission id="Background" />
+                <permission id="BluetoothLowEnergy" />
+                <permission id="Communications" />
+                <permission id="PersistedContent" />
+                <permission id="Positioning" />
+                <permission id="PushNotification" />
+                <permission id="Sensor" />
+                <permission id="SensorHistory" />
+                <permission id="UserProfile" />
+            </permissions>
+        </permissionMap>
+        <permissionMap appType="watch-app">
+            <permissions>
+                <permission id="Ant" />
+                <permission id="AudioInput" />
+                <permission id="AudioOutput" />
+                <permission id="Background" />
+                <permission id="BluetoothLowEnergy" />
+                <permission id="Communications" />
+                <permission id="ComplicationPublisher" />
+                <permission id="Fit" />
+                <permission id="FitContributor" />
+                <permission id="Notifications" />
+                <permission id="PersistedContent" />
+                <permission id="PersistedLocations" />
+                <permission id="Positioning" />
+                <permission id="PushNotification" />
+                <permission id="Sensor" />
+                <permission id="SensorHistory" />
+                <permission id="SensorLogging" />
+                <permission id="UserProfile" />
+            </permissions>
+        </permissionMap>
+        <permissionMap appType="audio-content-provider-app">
+            <permissions>
+                <permission id="Ant" />
+                <permission id="AudioInput" />
+                <permission id="AudioOutput" />
+                <permission id="Background" />
+                <permission id="BluetoothLowEnergy" />
+                <permission id="Communications" />
+                <permission id="ComplicationPublisher" />
+                <permission id="Notifications" />
+                <permission id="PersistedContent" />
+                <permission id="PersistedLocations" />
+                <permission id="Positioning" />
+                <permission id="PushNotification" dependsOn="Background" />
+                <permission id="Sensor" />
+                <permission id="SensorHistory" />
+                <permission id="SensorLogging" />
+                <permission id="UserProfile" />
+            </permissions>
+        </permissionMap>
+        <permissionMap appType="barrel">
+            <permissions>
+                <permission id="ActivityControl" />
+                <permission id="ActivityPrompts" />
+                <permission id="Ant" />
+                <permission id="AudioInput" />
+                <permission id="AudioOutput" />
+                <permission id="Background" />
+                <permission id="BluetoothLowEnergy" />
+                <permission id="Communications" />
+                <permission id="DataFieldAlert" />
+                <permission id="Fit" />
+                <permission id="FitContributor" />
+                <permission id="Notifications" />
+                <permission id="PersistedContent" />
+                <permission id="PersistedLocations" />
+                <permission id="Positioning" />
+                <permission id="PushNotification" />
+                <permission id="Sensor" />
+                <permission id="SensorHistory" />
+                <permission id="SensorLogging" />
+                <permission id="UserProfile" />
+            </permissions>
+        </permissionMap>
+    </permissionMaps>
+
+    <sports>
+       <sport id="Toybox.Activity.SPORT_GENERIC" value="0" />
+       <sport id="Toybox.Activity.SPORT_RUNNING" value="1" />
+       <sport id="Toybox.Activity.SPORT_CYCLING" value="2" />
+       <sport id="Toybox.Activity.SPORT_TRANSITION" value="3" />
+       <sport id="Toybox.Activity.SPORT_FITNESS_EQUIPMENT" value="4" />
+       <sport id="Toybox.Activity.SPORT_SWIMMING" value="5" />
+       <sport id="Toybox.Activity.SPORT_BASKETBALL" value="6" />
+       <sport id="Toybox.Activity.SPORT_SOCCER" value="7" />
+       <sport id="Toybox.Activity.SPORT_TENNIS" value="8" />
+       <sport id="Toybox.Activity.SPORT_AMERICAN_FOOTBALL" value="9" />
+       <sport id="Toybox.Activity.SPORT_TRAINING" value="10" />
+       <sport id="Toybox.Activity.SPORT_WALKING" value="11" />
+       <sport id="Toybox.Activity.SPORT_CROSS_COUNTRY_SKIING" value="12" />
+       <sport id="Toybox.Activity.SPORT_ALPINE_SKIING" value="13" />
+       <sport id="Toybox.Activity.SPORT_SNOWBOARDING" value="14" />
+       <sport id="Toybox.Activity.SPORT_ROWING" value="15" />
+       <sport id="Toybox.Activity.SPORT_MOUNTAINEERING" value="16" />
+       <sport id="Toybox.Activity.SPORT_HIKING" value="17" />
+       <sport id="Toybox.Activity.SPORT_MULTISPORT" value="18" />
+       <sport id="Toybox.Activity.SPORT_PADDLING" value="19" />
+       <sport id="Toybox.Activity.SPORT_FLYING" value="20" />
+       <sport id="Toybox.Activity.SPORT_E_BIKING" value="21" />
+       <sport id="Toybox.Activity.SPORT_MOTORCYCLING" value="22" />
+       <sport id="Toybox.Activity.SPORT_BOATING" value="23" />
+       <sport id="Toybox.Activity.SPORT_DRIVING" value="24" />
+       <sport id="Toybox.Activity.SPORT_GOLF" value="25" />
+       <sport id="Toybox.Activity.SPORT_HANG_GLIDING" value="26" />
+       <sport id="Toybox.Activity.SPORT_HORSEBACK_RIDING" value="27" />
+       <sport id="Toybox.Activity.SPORT_HUNTING" value="28" />
+       <sport id="Toybox.Activity.SPORT_FISHING" value="29" />
+       <sport id="Toybox.Activity.SPORT_INLINE_SKIING" value="30" />
+       <sport id="Toybox.Activity.SPORT_ROCK_CLIMBING" value="31" />
+       <sport id="Toybox.Activity.SPORT_SAILING" value="32" />
+       <sport id="Toybox.Activity.SPORT_ICE_SKATING" value="33" />
+       <sport id="Toybox.Activity.SPORT_SKY_DIVING" value="34" />
+       <sport id="Toybox.Activity.SPORT_SNOWSHOEING" value="35" />
+       <sport id="Toybox.Activity.SPORT_SNOWMOBILING" value="36" />
+       <sport id="Toybox.Activity.SPORT_STAND_UP_PADDLEBOARDING" value="37" />
+       <sport id="Toybox.Activity.SPORT_SURFING" value="38" />
+       <sport id="Toybox.Activity.SPORT_WAKEBOARDING" value="39" />
+       <sport id="Toybox.Activity.SPORT_WATER_SKIING" value="40" />
+       <sport id="Toybox.Activity.SPORT_KAYAKING" value="41" />
+       <sport id="Toybox.Activity.SPORT_RAFTING" value="42" />
+       <sport id="Toybox.Activity.SPORT_WINDSURFING" value="43" />
+       <sport id="Toybox.Activity.SPORT_KITESURFING" value="44" />
+       <sport id="Toybox.Activity.SPORT_TACTICAL" value="45" />
+       <sport id="Toybox.Activity.SPORT_JUMPMASTER" value="46" />
+       <sport id="Toybox.Activity.SPORT_BOXING" value="47" />
+       <sport id="Toybox.Activity.SPORT_FLOOR_CLIMBING" value="48" />
+       <sport id="Toybox.Activity.SPORT_BASEBALL" value="49" />
+       <sport id="Toybox.Activity.SPORT_SOFTBALL_FAST_PITCH" value="50" />
+       <sport id="Toybox.Activity.SPORT_SOFTBALL_SLOW_PITCH" value="51" />
+       <sport id="Toybox.Activity.SPORT_SHOOTING" value="56" />
+       <sport id="Toybox.Activity.SPORT_AUTO_RACING" value="57" />
+       <sport id="Toybox.Activity.SPORT_WINTER_SPORT" value="58" />
+       <sport id="Toybox.Activity.SPORT_GRINDING" value="59" />
+       <sport id="Toybox.Activity.SPORT_HEALTH_MONITORING" value="60" />
+       <sport id="Toybox.Activity.SPORT_MARINE" value="61" />
+       <sport id="Toybox.Activity.SPORT_HIIT" value="62" />
+       <sport id="Toybox.Activity.SPORT_VIDEO_GAMING" value="63" />
+       <sport id="Toybox.Activity.SPORT_RACKET" value="64" />
+       <sport id="Toybox.Activity.SPORT_WHEELCHAIR_PUSH_WALK" value="65" />
+       <sport id="Toybox.Activity.SPORT_WHEELCHAIR_PUSH_RUN" value="66" />
+       <sport id="Toybox.Activity.SPORT_MEDITATION" value="67" />
+       <sport id="Toybox.Activity.SPORT_PARA_SPORT" value="68" />
+       <sport id="Toybox.Activity.SPORT_DISC_GOLF" value="69" />
+       <sport id="Toybox.Activity.SPORT_TEAM_SPORT" value="70" />
+       <sport id="Toybox.Activity.SPORT_CRICKET" value="71" />
+       <sport id="Toybox.Activity.SPORT_RUGBY" value="72" />
+       <sport id="Toybox.Activity.SPORT_HOCKEY" value="73" />
+       <sport id="Toybox.Activity.SPORT_LACROSSE" value="74" />
+       <sport id="Toybox.Activity.SPORT_VOLLEYBALL" value="75" />
+       <sport id="Toybox.Activity.SPORT_WATER_TUBING" value="76" />
+       <sport id="Toybox.Activity.SPORT_WAKESURFING" value="77" />
+       <sport id="Toybox.Activity.SPORT_INVALID" value="255" />
+    </sports>
+
+    <subsports>
+       <subsport id="Toybox.Activity.SUB_SPORT_GENERIC" value="0" />
+       <subsport id="Toybox.Activity.SUB_SPORT_TREADMILL" value="1" />
+       <subsport id="Toybox.Activity.SUB_SPORT_STREET" value="2" />
+       <subsport id="Toybox.Activity.SUB_SPORT_TRAIL" value="3" />
+       <subsport id="Toybox.Activity.SUB_SPORT_TRACK" value="4" />
+       <subsport id="Toybox.Activity.SUB_SPORT_SPIN" value="5" />
+       <subsport id="Toybox.Activity.SUB_SPORT_INDOOR_CYCLING" value="6" />
+       <subsport id="Toybox.Activity.SUB_SPORT_ROAD" value="7" />
+       <subsport id="Toybox.Activity.SUB_SPORT_MOUNTAIN" value="8" />
+       <subsport id="Toybox.Activity.SUB_SPORT_DOWNHILL" value="9" />
+       <subsport id="Toybox.Activity.SUB_SPORT_RECUMBENT" value="10" />
+       <subsport id="Toybox.Activity.SUB_SPORT_CYCLOCROSS" value="11" />
+       <subsport id="Toybox.Activity.SUB_SPORT_HAND_CYCLING" value="12" />
+       <subsport id="Toybox.Activity.SUB_SPORT_TRACK_CYCLING" value="13" />
+       <subsport id="Toybox.Activity.SUB_SPORT_INDOOR_ROWING" value="14" />
+       <subsport id="Toybox.Activity.SUB_SPORT_ELLIPTICAL" value="15" />
+       <subsport id="Toybox.Activity.SUB_SPORT_STAIR_CLIMBING" value="16" />
+       <subsport id="Toybox.Activity.SUB_SPORT_LAP_SWIMMING" value="17" />
+       <subsport id="Toybox.Activity.SUB_SPORT_OPEN_WATER" value="18" />
+       <subsport id="Toybox.Activity.SUB_SPORT_FLEXIBILITY_TRAINING" value="19" />
+       <subsport id="Toybox.Activity.SUB_SPORT_STRENGTH_TRAINING" value="20" />
+       <subsport id="Toybox.Activity.SUB_SPORT_WARM_UP" value="21" />
+       <subsport id="Toybox.Activity.SUB_SPORT_MATCH" value="22" />
+       <subsport id="Toybox.Activity.SUB_SPORT_EXERCISE" value="23" />
+       <subsport id="Toybox.Activity.SUB_SPORT_CHALLENGE" value="24" />
+       <subsport id="Toybox.Activity.SUB_SPORT_INDOOR_SKIING" value="25" />
+       <subsport id="Toybox.Activity.SUB_SPORT_CARDIO_TRAINING" value="26" />
+       <subsport id="Toybox.Activity.SUB_SPORT_INDOOR_WALKING" value="27" />
+       <subsport id="Toybox.Activity.SUB_SPORT_E_BIKE_FITNESS" value="28" />
+       <subsport id="Toybox.Activity.SUB_SPORT_BMX" value="29" />
+       <subsport id="Toybox.Activity.SUB_SPORT_CASUAL_WALKING" value="30" />
+       <subsport id="Toybox.Activity.SUB_SPORT_SPEED_WALKING" value="31" />
+       <subsport id="Toybox.Activity.SUB_SPORT_BIKE_TO_RUN_TRANSITION" value="32" />
+       <subsport id="Toybox.Activity.SUB_SPORT_RUN_TO_BIKE_TRANSITION" value="33" />
+       <subsport id="Toybox.Activity.SUB_SPORT_SWIM_TO_BIKE_TRANSITION" value="34" />
+       <subsport id="Toybox.Activity.SUB_SPORT_ATV" value="35" />
+       <subsport id="Toybox.Activity.SUB_SPORT_MOTOCROSS" value="36" />
+       <subsport id="Toybox.Activity.SUB_SPORT_BACKCOUNTRY" value="37" />
+       <subsport id="Toybox.Activity.SUB_SPORT_RESORT" value="38" />
+       <subsport id="Toybox.Activity.SUB_SPORT_RC_DRONE" value="39" />
+       <subsport id="Toybox.Activity.SUB_SPORT_WINGSUIT" value="40" />
+       <subsport id="Toybox.Activity.SUB_SPORT_WHITEWATER" value="41" />
+       <subsport id="Toybox.Activity.SUB_SPORT_SKATE_SKIING" value="42" />
+       <subsport id="Toybox.Activity.SUB_SPORT_YOGA" value="43" />
+       <subsport id="Toybox.Activity.SUB_SPORT_PILATES" value="44" />
+       <subsport id="Toybox.Activity.SUB_SPORT_INDOOR_RUNNING" value="45" />
+       <subsport id="Toybox.Activity.SUB_SPORT_GRAVEL_CYCLING" value="46" />
+       <subsport id="Toybox.Activity.SUB_SPORT_E_BIKE_MOUNTAIN" value="47" />
+       <subsport id="Toybox.Activity.SUB_SPORT_COMMUTING" value="48" />
+       <subsport id="Toybox.Activity.SUB_SPORT_MIXED_SURFACE" value="49" />
+       <subsport id="Toybox.Activity.SUB_SPORT_NAVIGATE" value="50" />
+       <subsport id="Toybox.Activity.SUB_SPORT_TRACK_ME" value="51" />
+       <subsport id="Toybox.Activity.SUB_SPORT_MAP" value="52" />
+       <subsport id="Toybox.Activity.SUB_SPORT_SINGLE_GAS_DIVING" value="53" />
+       <subsport id="Toybox.Activity.SUB_SPORT_MULTI_GAS_DIVING" value="54" />
+       <subsport id="Toybox.Activity.SUB_SPORT_GAUGE_DIVING" value="55" />
+       <subsport id="Toybox.Activity.SUB_SPORT_APNEA_DIVING" value="56" />
+       <subsport id="Toybox.Activity.SUB_SPORT_APNEA_HUNTING" value="57" />
+       <subsport id="Toybox.Activity.SUB_SPORT_VIRTUAL_ACTIVITY" value="58" />
+       <subsport id="Toybox.Activity.SUB_SPORT_OBSTACLE" value="59" />
+       <subsport id="Toybox.Activity.SUB_SPORT_ASSISTANCE" value="60" />
+       <subsport id="Toybox.Activity.SUB_SPORT_INCIDENT_DETECTED" value="61" />
+       <subsport id="Toybox.Activity.SUB_SPORT_BREATHING" value="62" />
+       <subsport id="Toybox.Activity.SUB_SPORT_CCR_DIVING" value="63" />
+       <subsport id="Toybox.Activity.SUB_SPORT_AREA_CALC" value="64" />
+       <subsport id="Toybox.Activity.SUB_SPORT_SAIL_RACE" value="65" />
+       <subsport id="Toybox.Activity.SUB_SPORT_EXPEDITION" value="66" />
+       <subsport id="Toybox.Activity.SUB_SPORT_ULTRA" value="67" />
+       <subsport id="Toybox.Activity.SUB_SPORT_INDOOR_CLIMBING" value="68" />
+       <subsport id="Toybox.Activity.SUB_SPORT_BOULDERING" value="69" />
+       <subsport id="Toybox.Activity.SUB_SPORT_HIIT" value="70" />
+       <subsport id="Toybox.Activity.SUB_SPORT_INDOOR_GRINDING" value="71" />
+       <subsport id="Toybox.Activity.SUB_SPORT_HUNTING_WITH_DOGS" value="72" />
+       <subsport id="Toybox.Activity.SUB_SPORT_AMRAP" value="73" />
+       <subsport id="Toybox.Activity.SUB_SPORT_EMOM" value="74" />
+       <subsport id="Toybox.Activity.SUB_SPORT_TABATA" value="75" />
+       <subsport id="Toybox.Activity.SUB_SPORT_FALL_DETECTED" value="76" />
+       <subsport id="Toybox.Activity.SUB_SPORT_ESPORT" value="77" />
+       <subsport id="Toybox.Activity.SUB_SPORT_TRIATHLON" value="78" />
+       <subsport id="Toybox.Activity.SUB_SPORT_DUATHLON" value="79" />
+       <subsport id="Toybox.Activity.SUB_SPORT_BRICK" value="80" />
+       <subsport id="Toybox.Activity.SUB_SPORT_SWIM_RUN" value="81" />
+       <subsport id="Toybox.Activity.SUB_SPORT_ADVENTURE_RACE" value="82" />
+       <subsport id="Toybox.Activity.SUB_SPORT_TRUCKER_WORKOUT" value="83" />
+       <subsport id="Toybox.Activity.SUB_SPORT_PICKLEBALL" value="84" />
+       <subsport id="Toybox.Activity.SUB_SPORT_PADEL" value="85" />
+       <subsport id="Toybox.Activity.SUB_SPORT_INDOOR_WHEELCHAIR_WALK" value="86" />
+       <subsport id="Toybox.Activity.SUB_SPORT_INDOOR_WHEELCHAIR_RUN" value="87" />
+       <subsport id="Toybox.Activity.SUB_SPORT_INDOOR_HAND_CYCLING" value="88" />
+       <subsport id="Toybox.Activity.SUB_SPORT_ANCHOR" value="89" />
+       <subsport id="Toybox.Activity.SUB_SPORT_FIELD" value="90" />
+       <subsport id="Toybox.Activity.SUB_SPORT_ICE" value="91" />
+       <subsport id="Toybox.Activity.SUB_SPORT_ULTIMATE" value="92" />
+       <subsport id="Toybox.Activity.SUB_SPORT_PLATFORM" value="93" />
+       <subsport id="Toybox.Activity.SUB_SPORT_SQUASH" value="94" />
+       <subsport id="Toybox.Activity.SUB_SPORT_BADMINTON" value="95" />
+       <subsport id="Toybox.Activity.SUB_SPORT_RACQUETBALL" value="96" />
+       <subsport id="Toybox.Activity.SUB_SPORT_TABLE_TENNIS" value="97" />
+       <subsport id="Toybox.Activity.SUB_SPORT_INVALID" value="255" />
+    </subsports>
+
+    <activityMap>
+        <activity sport="Toybox.Activity.SPORT_RUNNING" displayname="Running" >
+            <subsports>
+                <subsport id="Toybox.Activity.SUB_SPORT_GENERIC" displayname="Generic" />
+                <subsport id="Toybox.Activity.SUB_SPORT_STREET" displayname="Street Running" />
+                <subsport id="Toybox.Activity.SUB_SPORT_TRACK" displayname="Track Running" />
+                <subsport id="Toybox.Activity.SUB_SPORT_TRAIL" displayname="Trail Running" />
+                <subsport id="Toybox.Activity.SUB_SPORT_TREADMILL" displayname="Treadmill Running" />
+                <subsport id="Toybox.Activity.SUB_SPORT_INDOOR_RUNNING" displayname="Indoor Running" />
+                <subsport id="Toybox.Activity.SUB_SPORT_VIRTUAL_ACTIVITY" displayname="Virtual Run" />
+                <subsport id="Toybox.Activity.SUB_SPORT_OBSTACLE" displayname="Obstacle Run" />
+                <subsport id="Toybox.Activity.SUB_SPORT_ULTRA" displayname="Ultra Run" />
+            </subsports>
+        </activity>
+        <activity sport="Toybox.Activity.SPORT_CYCLING" displayname="Cycling" >
+            <subsports>
+                <subsport id="Toybox.Activity.SUB_SPORT_GENERIC" displayname="Generic" />
+                <subsport id="Toybox.Activity.SUB_SPORT_BMX" displayname="Bmx" />
+                <subsport id="Toybox.Activity.SUB_SPORT_CYCLOCROSS" displayname="Cyclocross" />
+                <subsport id="Toybox.Activity.SUB_SPORT_DOWNHILL" displayname="Downhill Biking" />
+                <subsport id="Toybox.Activity.SUB_SPORT_SPIN" displayname="Spin" />
+                <subsport id="Toybox.Activity.SUB_SPORT_INDOOR_CYCLING" displayname="Indoor Cycling" />
+                <subsport id="Toybox.Activity.SUB_SPORT_MOUNTAIN" displayname="Mountain Biking" />
+                <subsport id="Toybox.Activity.SUB_SPORT_E_BIKE_MOUNTAIN" displayname="eBike Mountain" />
+                <subsport id="Toybox.Activity.SUB_SPORT_E_BIKE_FITNESS" displayname="eBike Fitnes" />
+                <subsport id="Toybox.Activity.SUB_SPORT_RECUMBENT" displayname="Recumbent Cycling" />
+                <subsport id="Toybox.Activity.SUB_SPORT_ROAD" displayname="Road Biking" />
+                <subsport id="Toybox.Activity.SUB_SPORT_TRACK_CYCLING" displayname="Track Cycling" />
+                <subsport id="Toybox.Activity.SUB_SPORT_GRAVEL_CYCLING" displayname="Gravel Cycling" />
+                <subsport id="Toybox.Activity.SUB_SPORT_VIRTUAL_ACTIVITY" displayname="Virtual Ride" />
+                <subsport id="Toybox.Activity.SUB_SPORT_HAND_CYCLING" displayname="Hand Cycling" />
+                <subsport id="Toybox.Activity.SUB_SPORT_INDOOR_HAND_CYCLING" displayname="Indoor Hand Cycling" />
+            </subsports>
+        </activity>
+        <activity sport="Toybox.Activity.SPORT_E_BIKING" displayname="eBiking" >
+            <subsports>
+                <subsport id="Toybox.Activity.SUB_SPORT_E_BIKE_MOUNTAIN" displayname="eBike Mountain" />
+                <subsport id="Toybox.Activity.SUB_SPORT_E_BIKE_FITNESS" displayname="eBike Fitnes" />
+            </subsports>
+        </activity>
+        <activity sport="Toybox.Activity.SPORT_FITNESS_EQUIPMENT" displayname="Fitness Equipment" >
+            <subsports>
+                <subsport id="Toybox.Activity.SUB_SPORT_GENERIC" displayname="Generic" />
+                <subsport id="Toybox.Activity.SUB_SPORT_ELLIPTICAL" displayname="Elliptical" />
+                <subsport id="Toybox.Activity.SUB_SPORT_INDOOR_ROWING" displayname="Indoor Rowing" />
+                <subsport id="Toybox.Activity.SUB_SPORT_CARDIO_TRAINING" displayname="Indoor Cardio" />
+                <subsport id="Toybox.Activity.SUB_SPORT_STAIR_CLIMBING" displayname="Stair Climbing" />
+                <subsport id="Toybox.Activity.SUB_SPORT_STRENGTH_TRAINING" displayname="Strengh Training" />
+                <subsport id="Toybox.Activity.SUB_SPORT_PILATES" displayname="Pilates" />
+            </subsports>
+        </activity>
+        <activity sport="Toybox.Activity.SPORT_TRAINING" displayname="Training" >
+            <subsports>
+                <subsport id="Toybox.Activity.SUB_SPORT_GENERIC" displayname="Generic" />
+                <subsport id="Toybox.Activity.SUB_SPORT_STRENGTH_TRAINING" displayname="Strengh Training" />
+                <subsport id="Toybox.Activity.SUB_SPORT_YOGA" displayname="Yoga" />
+                <subsport id="Toybox.Activity.SUB_SPORT_CARDIO_TRAINING" displayname="Indoor Cardio" />
+                <subsport id="Toybox.Activity.SUB_SPORT_BREATHING" displayname="Breathwork" />
+            </subsports>
+        </activity>
+        <activity sport="Toybox.Activity.SPORT_HIIT" displayname="Hiit" >
+            <subsports>
+                <subsport id="Toybox.Activity.SUB_SPORT_GENERIC" displayname="Generic" />
+            </subsports>
+        </activity>
+        <activity sport="Toybox.Activity.SPORT_GRINDING" displayname="Grinding">
+            <subsports>
+                 <subsport id="Toybox.Activity.SUB_SPORT_GENERIC" displayname="Offshore Grinding" />
+                <subsport id="Toybox.Activity.SUB_SPORT_INDOOR_GRINDING" displayname="Onshore Grinding" />
+            </subsports>
+        </activity>
+        <activity sport="Toybox.Activity.SPORT_HIKING" displayname="Hiking" >
+            <subsports>
+                <subsport id="Toybox.Activity.SUB_SPORT_GENERIC" displayname="Generic" />
+            </subsports>
+        </activity>
+        <activity sport="Toybox.Activity.SPORT_SWIMMING" displayname="Swimming" >
+            <subsports>
+                <subsport id="Toybox.Activity.SUB_SPORT_GENERIC" displayname="Generic" />
+                <subsport id="Toybox.Activity.SUB_SPORT_LAP_SWIMMING" displayname="Lap Swimming" />
+                <subsport id="Toybox.Activity.SUB_SPORT_OPEN_WATER" displayname="Open Water Swimming" />
+            </subsports>
+        </activity>
+        <activity sport="Toybox.Activity.SPORT_WALKING" displayname="Walking" >
+            <subsports>
+                <subsport id="Toybox.Activity.SUB_SPORT_GENERIC" displayname="Generic" />
+                <subsport id="Toybox.Activity.SUB_SPORT_CASUAL_WALKING" displayname="Casual Walking" />
+                <subsport id="Toybox.Activity.SUB_SPORT_SPEED_WALKING" displayname="Speed Walking" />
+                <subsport id="Toybox.Activity.SUB_SPORT_INDOOR_WALKING" displayname="Indoor Walking" />
+            </subsports>
+        </activity>
+        <activity sport="Toybox.Activity.SPORT_WINTER_SPORT" displayname="Winter Sports">
+            <subsports>
+                <subsport id="Toybox.Activity.SUB_SPORT_GENERIC" displayname="Generic" />
+            </subsports>
+        </activity>
+        <activity sport="Toybox.Activity.SPORT_CROSS_COUNTRY_SKIING" displayname="Cross Country Skiing">
+            <subsports>
+                <subsport id="Toybox.Activity.SUB_SPORT_GENERIC" displayname="Generic" />
+                <subsport id="Toybox.Activity.SUB_SPORT_SKATE_SKIING" displayname="Skate Skiing" />
+            </subsports>
+        </activity>
+        <activity sport="Toybox.Activity.SPORT_ICE_SKATING" displayname="Skating">
+            <subsports>
+                <subsport id="Toybox.Activity.SUB_SPORT_GENERIC" displayname="Generic" />
+            </subsports>
+        </activity>
+        <activity sport="Toybox.Activity.SPORT_SNOWMOBILING" displayname="Snowmobiling">
+            <subsports>
+                <subsport id="Toybox.Activity.SUB_SPORT_GENERIC" displayname="Generic" />
+            </subsports>
+        </activity>
+        <activity sport="Toybox.Activity.SPORT_SNOWSHOEING" displayname="Snow Shoeing">
+            <subsports>
+                <subsport id="Toybox.Activity.SUB_SPORT_GENERIC" displayname="Generic" />
+            </subsports>
+        </activity>
+        <activity sport="Toybox.Activity.SPORT_ALPINE_SKIING" displayname="Alpine Skiing">
+            <subsports>
+                <subsport id="Toybox.Activity.SUB_SPORT_GENERIC" displayname="Resort Skiing" />
+                <subsport id="Toybox.Activity.SUB_SPORT_BACKCOUNTRY" displayname="Backcountry Skiing" />
+            </subsports>
+        </activity>
+        <activity sport="Toybox.Activity.SPORT_SNOWBOARDING" displayname="Snowboarding">
+            <subsports>
+                <subsport id="Toybox.Activity.SUB_SPORT_GENERIC" displayname="Resort Snowboarding" />
+                <subsport id="Toybox.Activity.SUB_SPORT_BACKCOUNTRY" displayname="BackCountry Snowboarding" />
+            </subsports>
+        </activity>
+        <activity sport="Toybox.Activity.SPORT_BOATING" displayname="Boating">
+            <subsports>
+                <subsport id="Toybox.Activity.SUB_SPORT_GENERIC" displayname="Generic" />
+            </subsports>
+        </activity>
+        <activity sport="Toybox.Activity.SPORT_FLYING" displayname="Flying" >
+            <subsports>
+                <subsport id="Toybox.Activity.SUB_SPORT_GENERIC" displayname="Generic" />
+                <subsport id="Toybox.Activity.SUB_SPORT_RC_DRONE" displayname="RC Drone" />
+                <subsport id="Toybox.Activity.SUB_SPORT_WINGSUIT" displayname="Wingsuit Flying" />
+            </subsports>
+        </activity>
+        <activity sport="Toybox.Activity.SPORT_GOLF" displayname="Golf" >
+            <subsports>
+                <subsport id="Toybox.Activity.SUB_SPORT_GENERIC" displayname="Generic" />
+            </subsports>
+        </activity>
+        <activity sport="Toybox.Activity.SPORT_HANG_GLIDING" displayname="Hang Gliding" >
+            <subsports>
+                <subsport id="Toybox.Activity.SUB_SPORT_GENERIC" displayname="Generic" />
+            </subsports>
+        </activity>
+        <activity sport="Toybox.Activity.SPORT_HORSEBACK_RIDING" displayname="Horseback Riding" >
+            <subsports>
+                <subsport id="Toybox.Activity.SUB_SPORT_GENERIC" displayname="Generic" />
+            </subsports>
+        </activity>
+        <activity sport="Toybox.Activity.SPORT_INLINE_SKIING" displayname="Inline Skiing" >
+            <subsports>
+                <subsport id="Toybox.Activity.SUB_SPORT_GENERIC" displayname="Generic" />
+            </subsports>
+        </activity>
+        <activity sport="Toybox.Activity.SPORT_MOUNTAINEERING" displayname="Mountaineering" >
+            <subsports>
+                <subsport id="Toybox.Activity.SUB_SPORT_GENERIC" displayname="Generic" />
+            </subsports>
+        </activity>
+        <activity sport="Toybox.Activity.SPORT_PADDLING" displayname="Paddling" >
+            <subsports>
+                <subsport id="Toybox.Activity.SUB_SPORT_GENERIC" displayname="Generic" />
+            </subsports>
+        </activity>
+        <activity sport="Toybox.Activity.SPORT_ROCK_CLIMBING" displayname="Rock Climbing" >
+            <subsports>
+                <subsport id="Toybox.Activity.SUB_SPORT_GENERIC" displayname="Generic" />
+                <subsport id="Toybox.Activity.SUB_SPORT_INDOOR_CLIMBING" displayname="Indoor Climbing" />
+                <subsport id="Toybox.Activity.SUB_SPORT_BOULDERING" displayname="Bouldering" />
+            </subsports>
+        </activity>
+        <activity sport="Toybox.Activity.SPORT_ROWING" displayname="Rowing" >
+            <subsports>
+                <subsport id="Toybox.Activity.SUB_SPORT_GENERIC" displayname="Generic" />
+                <subsport id="Toybox.Activity.SUB_SPORT_INDOOR_ROWING" displayname="Indoor Rowing" />
+            </subsports>
+        </activity>
+        <activity sport="Toybox.Activity.SPORT_SAILING" displayname="Sailing" >
+            <subsports>
+                <subsport id="Toybox.Activity.SUB_SPORT_GENERIC" displayname="Generic" />
+            </subsports>
+        </activity>
+        <activity sport="Toybox.Activity.SPORT_SKY_DIVING"  displayname="Sky Diving">
+            <subsports>
+                <subsport id="Toybox.Activity.SUB_SPORT_GENERIC" displayname="Generic" />
+            </subsports>
+        </activity>
+        <activity sport="Toybox.Activity.SPORT_STAND_UP_PADDLEBOARDING" displayname="Stand up Paddleboarding" >
+            <subsports>
+                <subsport id="Toybox.Activity.SUB_SPORT_GENERIC" displayname="Generic" />
+            </subsports>
+        </activity>
+        <activity sport="Toybox.Activity.SPORT_SURFING" displayname="Surfing" >
+            <subsports>
+                <subsport id="Toybox.Activity.SUB_SPORT_GENERIC" displayname="Generic" />
+            </subsports>
+        </activity>
+        <activity sport="Toybox.Activity.SPORT_WATER_SKIING" displayname="Water Skiing" >
+            <subsports>
+                <subsport id="Toybox.Activity.SUB_SPORT_GENERIC" displayname="Generic" />
+            </subsports>
+        </activity>
+        <activity sport="Toybox.Activity.SPORT_WAKEBOARDING" displayname="Wakeboarding" >
+            <subsports>
+                <subsport id="Toybox.Activity.SUB_SPORT_GENERIC" displayname="Generic" />
+            </subsports>
+        </activity>
+        <activity sport="Toybox.Activity.SPORT_TENNIS" displayname="Tennis" >
+            <subsports>
+                <subsport id="Toybox.Activity.SUB_SPORT_GENERIC" displayname="Generic" />
+                <subsport id="Toybox.Activity.SUB_SPORT_TABLE_TENNIS" displayname="Table Tennis" />
+                <subsport id="Toybox.Activity.SUB_SPORT_PLATFORM" displayname="Platform Tennis" />
+            </subsports>
+        </activity>
+        <activity sport="Toybox.Activity.SPORT_FLOOR_CLIMBING" displayname="Floor Climbing" >
+            <subsports>
+                <subsport id="Toybox.Activity.SUB_SPORT_GENERIC" displayname="Generic" />
+            </subsports>
+        </activity>
+        <activity sport="Toybox.Activity.SPORT_AUTO_RACING" displayname="Auto Racing" >
+            <subsports>
+                <subsport id="Toybox.Activity.SUB_SPORT_GENERIC" displayname="Generic" />
+            </subsports>
+        </activity>
+        <activity sport="Toybox.Activity.SPORT_VIDEO_GAMING" displayname="Video Gaming" >
+            <subsports>
+                <subsport id="Toybox.Activity.SUB_SPORT_ESPORT" displayname="eSport" />
+            </subsports>
+        </activity>
+        <activity sport="Toybox.Activity.SPORT_WINDSURFING" displayname="Windsurfing" >
+            <subsports>
+                <subsport id="Toybox.Activity.SUB_SPORT_GENERIC" displayname="Generic" />
+            </subsports>
+        </activity>
+        <activity sport="Toybox.Activity.SPORT_KITESURFING" displayname="Kiteboarding" >
+            <subsports>
+                <subsport id="Toybox.Activity.SUB_SPORT_GENERIC" displayname="Generic" />
+            </subsports>
+        </activity>
+        <activity sport="Toybox.Activity.SPORT_HUNTING" displayname="Hunting" >
+            <subsports>
+                <subsport id="Toybox.Activity.SUB_SPORT_GENERIC" displayname="Generic" />
+            </subsports>
+        </activity>
+        <activity sport="Toybox.Activity.SPORT_FISHING" displayname="Fishing" >
+            <subsports>
+                <subsport id="Toybox.Activity.SUB_SPORT_GENERIC" displayname="Generic" />
+            </subsports>
+        </activity>
+        <activity sport="Toybox.Activity.SPORT_MOTORCYCLING" displayname="Motorcycling" >
+            <subsports>
+                <subsport id="Toybox.Activity.SUB_SPORT_GENERIC" displayname="Generic" />
+                <subsport id="Toybox.Activity.SUB_SPORT_MOTOCROSS" displayname="Motocross" />
+                <subsport id="Toybox.Activity.SUB_SPORT_ATV" displayname="ATV" />
+            </subsports>
+        </activity>
+        <activity sport="Toybox.Activity.SPORT_TRANSITION" displayname="Transition" >
+            <subsports>
+                <subsport id="Toybox.Activity.SUB_SPORT_GENERIC" displayname="Generic" />
+                <subsport id="Toybox.Activity.SUB_SPORT_SWIM_TO_BIKE_TRANSITION" displayname="Swim to Bike Transition" />
+                <subsport id="Toybox.Activity.SUB_SPORT_BIKE_TO_RUN_TRANSITION" displayname="Bike to Run Transition" />
+                <subsport id="Toybox.Activity.SUB_SPORT_RUN_TO_BIKE_TRANSITION" displayname="Run to Bike Transition" />
+            </subsports>
+        </activity>
+        <activity sport="Toybox.Activity.SPORT_RAFTING" displayname="Whitewater Rafting" >
+            <subsports>
+                <subsport id="Toybox.Activity.SUB_SPORT_GENERIC" displayname="Generic" />
+            </subsports>
+        </activity>
+        <activity sport="Toybox.Activity.SPORT_KAYAKING" displayname="Kayaking" >
+            <subsports>
+                <subsport id="Toybox.Activity.SUB_SPORT_GENERIC" displayname="Generic" />
+            </subsports>
+        </activity>
+        <activity sport="Toybox.Activity.SPORT_DISC_GOLF" displayname="Disc Golf" >
+            <subsports>
+                <subsport id="Toybox.Activity.SUB_SPORT_GENERIC" displayname="Generic" />
+                <subsport id="Toybox.Activity.SUB_SPORT_ULTIMATE" displayname="Ultimate Disc" />
+            </subsports>
+        </activity>
+        <activity sport="Toybox.Activity.SPORT_MEDITATION" displayname="Meditation" >
+            <subsports>
+                <subsport id="Toybox.Activity.SUB_SPORT_GENERIC" displayname="Generic" />
+            </subsports>
+        </activity>
+        <activity sport="Toybox.Activity.SPORT_BOXING" displayname="Boxing" >
+            <subsports>
+                <subsport id="Toybox.Activity.SUB_SPORT_GENERIC" displayname="Generic" />
+            </subsports>
+        </activity>
+        <activity sport="Toybox.Activity.SPORT_SHOOTING" displayname="Shooting" >
+            <subsports>
+                <subsport id="Toybox.Activity.SUB_SPORT_GENERIC" displayname="Generic" />
+            </subsports>
+        </activity>
+        <activity sport="Toybox.Activity.SPORT_MULTISPORT" displayname="Multi Sport" >
+            <subsports>
+                <subsport id="Toybox.Activity.SUB_SPORT_GENERIC" displayname="Generic" />
+            </subsports>
+        </activity>
+        <activity sport="Toybox.Activity.SPORT_PARA_SPORT" displayname="Para Sport" >
+            <subsports>
+                <subsport id="Toybox.Activity.SUB_SPORT_GENERIC" displayname="Generic" />
+            </subsports>
+        </activity>
+        <activity sport="Toybox.Activity.SPORT_WHEELCHAIR_PUSH_RUN" displayname="Wheelchair Push Run" >
+            <subsports>
+                <subsport id="Toybox.Activity.SUB_SPORT_GENERIC" displayname="Generic" />
+                <subsport id="Toybox.Activity.SUB_SPORT_INDOOR_WHEELCHAIR_RUN" displayname="Indoor" />
+            </subsports>
+        </activity>
+        <activity sport="Toybox.Activity.SPORT_WHEELCHAIR_PUSH_WALK" displayname="Wheelchair Push Walk" >
+            <subsports>
+                <subsport id="Toybox.Activity.SUB_SPORT_GENERIC" displayname="Generic" />
+                <subsport id="Toybox.Activity.SUB_SPORT_INDOOR_WHEELCHAIR_WALK" displayname="Indoor" />
+            </subsports>
+        </activity>
+        <activity sport="Toybox.Activity.SPORT_TEAM_SPORT" displayname="Team Sport" >
+            <subsports>
+                <subsport id="Toybox.Activity.SUB_SPORT_GENERIC" displayname="Generic" />
+            </subsports>
+        </activity>
+        <activity sport="Toybox.Activity.SPORT_CRICKET" displayname="Cricket" >
+            <subsports>
+                <subsport id="Toybox.Activity.SUB_SPORT_GENERIC" displayname="Generic" />
+            </subsports>
+        </activity>
+        <activity sport="Toybox.Activity.SPORT_RUGBY" displayname="Rugby" >
+            <subsports>
+                <subsport id="Toybox.Activity.SUB_SPORT_GENERIC" displayname="Generic" />
+            </subsports>
+        </activity>
+        <activity sport="Toybox.Activity.SPORT_HOCKEY" displayname="Hockey" >
+            <subsports>
+                <subsport id="Toybox.Activity.SUB_SPORT_ICE" displayname="Ice Hockey" />
+                <subsport id="Toybox.Activity.SUB_SPORT_FIELD" displayname="Field Hockey" />
+            </subsports>
+        </activity>
+        <activity sport="Toybox.Activity.SPORT_LACROSSE" displayname="Lacrosse" >
+            <subsports>
+                <subsport id="Toybox.Activity.SUB_SPORT_GENERIC" displayname="Generic" />
+            </subsports>
+        </activity>
+        <activity sport="Toybox.Activity.SPORT_VOLLEYBALL" displayname="Volleyball" >
+            <subsports>
+                <subsport id="Toybox.Activity.SUB_SPORT_GENERIC" displayname="Generic" />
+            </subsports>
+        </activity>
+        <activity sport="Toybox.Activity.SPORT_SOFTBALL_FAST_PITCH" displayname="Softball Fast Pitch" >
+            <subsports>
+                <subsport id="Toybox.Activity.SUB_SPORT_GENERIC" displayname="Generic" />
+            </subsports>
+        </activity>
+        <activity sport="Toybox.Activity.SPORT_SOFTBALL_SLOW_PITCH" displayname="Softball Slow Pitch" >
+            <subsports>
+                <subsport id="Toybox.Activity.SUB_SPORT_GENERIC" displayname="Generic" />
+            </subsports>
+        </activity>
+        <activity sport="Toybox.Activity.SPORT_SOCCER" displayname="Soccer" >
+            <subsports>
+                <subsport id="Toybox.Activity.SUB_SPORT_GENERIC" displayname="Generic" />
+            </subsports>
+        </activity>
+        <activity sport="Toybox.Activity.SPORT_AMERICAN_FOOTBALL" displayname="American Football" >
+            <subsports>
+                <subsport id="Toybox.Activity.SUB_SPORT_GENERIC" displayname="Generic" />
+            </subsports>
+        </activity>
+        <activity sport="Toybox.Activity.SPORT_BASKETBALL" displayname="Basketball" >
+            <subsports>
+                <subsport id="Toybox.Activity.SUB_SPORT_GENERIC" displayname="Generic" />
+            </subsports>
+        </activity>
+        <activity sport="Toybox.Activity.SPORT_BASEBALL" displayname="Baseball" >
+            <subsports>
+                <subsport id="Toybox.Activity.SUB_SPORT_GENERIC" displayname="Generic" />
+            </subsports>
+        </activity>
+        <activity sport="Toybox.Activity.SPORT_RACKET" displayname="Racket Sport" >
+            <subsports>
+                <subsport id="Toybox.Activity.SUB_SPORT_GENERIC" displayname="Generic" />
+                <subsport id="Toybox.Activity.SUB_SPORT_RACQUETBALL" displayname="Racquetball" />
+                <subsport id="Toybox.Activity.SUB_SPORT_SQUASH" displayname="Squash" />
+                <subsport id="Toybox.Activity.SUB_SPORT_BADMINTON" displayname="Badminton" />
+                <subsport id="Toybox.Activity.SUB_SPORT_PICKLEBALL" displayname="Pickleball" />
+                <subsport id="Toybox.Activity.SUB_SPORT_PADEL" displayname="Paddelball" />
+            </subsports>
+        </activity>
+        <activity sport="Toybox.Activity.SPORT_WATER_TUBING" displayname="Water Tubing" >
+            <subsports>
+                <subsport id="Toybox.Activity.SUB_SPORT_GENERIC" displayname="Generic" />
+            </subsports>
+        </activity>
+        <activity sport="Toybox.Activity.SPORT_WAKESURFING" displayname="Wakesurfing" >
+            <subsports>
+                <subsport id="Toybox.Activity.SUB_SPORT_GENERIC" displayname="Generic" />
+            </subsports>
+        </activity>
+    </activityMap>
+
+    <newProjectFilePlaceholders>
+        <placeHolder sanitized="false">appName</placeHolder>
+        <placeHolder suffix="App">appClassName</placeHolder>
+        <placeHolder suffix="View">viewClassName</placeHolder>
+        <placeHolder suffix="Delegate">delegateClassName</placeHolder>
+        <placeHolder suffix="MenuDelegate">menuDelegateClassName</placeHolder>
+        <placeHolder suffix="ConfigurePlaybackView">configurePlaybackViewClassName</placeHolder>
+        <placeHolder suffix="ConfigureSyncView">syncConfigurationViewClassName</placeHolder>
+        <placeHolder suffix="ConfigurePlaybackDelegate">configurePlaybackDelegateClassName</placeHolder>
+        <placeHolder suffix="ConfigureSyncDelegate">configureSyncDelegateClassName</placeHolder>
+        <placeHolder suffix="ContentDelegate">contentDelegateClassName</placeHolder>
+        <placeHolder suffix="ContentIterator">contentIteratorClassName</placeHolder>
+        <placeHolder suffix="SyncDelegate">syncDelegateClassName</placeHolder>
+    </newProjectFilePlaceholders>
+
+    <newProjectFilesMaps>
+        <newProjectFileMap appType="watchface" name="Simple" baseDir="templates/watchface/simple"
+            description="A simple watch face that displays the time in a digital format centered in the middle of the screen.">
+            <file type="source">source/App.mc</file>
+            <file type="source">source/View.mc</file>
+            <file type="manifest">manifest.xml</file>
+            <file type="resource">resources/strings/strings.xml</file>
+            <file type="resource">resources/drawables/launcher_icon.svg</file>
+            <file type="resource">resources/drawables/drawables.xml</file>
+            <file type="resource">resources/layouts/layout.xml</file>
+            <file type="resource">monkey.jungle</file>
+        </newProjectFileMap>
+        <newProjectFileMap appType="watchface" name="Simple with Settings" baseDir="templates/watchface/settings"
+            description="A simple watch face that displays the time in a digital format centered in the middle of the screen.&#xA;&#xA;There are also settings for the background color, foreground color and whether or not to draw 24 hour time in a military format.">
+            <file type="source">source/App.mc</file>
+            <file type="source">source/View.mc</file>
+            <file type="source">source/Background.mc</file>
+            <file type="manifest">manifest.xml</file>
+            <file type="resource">resources/strings/strings.xml</file>
+            <file type="resource">resources/settings/properties.xml</file>
+            <file type="resource">resources/settings/settings.xml</file>
+            <file type="resource">resources/drawables/launcher_icon.svg</file>
+            <file type="resource">resources/drawables/drawables.xml</file>
+            <file type="resource">resources/layouts/layout.xml</file>
+            <file type="resource">monkey.jungle</file>
+        </newProjectFileMap>
+        <newProjectFileMap appType="datafield" name="Simple" baseDir="templates/datafield/simple"
+            description="A data field that extends the SimpleDataField class.">
+            <file type="source">source/App.mc</file>
+            <file type="source">source/View.mc</file>
+            <file type="manifest">manifest.xml</file>
+            <file type="resource">resources/strings/strings.xml</file>
+            <file type="resource">resources/drawables/drawables.xml</file>
+            <file type="resource">resources/drawables/launcher_icon.svg</file>
+            <file type="resource">monkey.jungle</file>
+        </newProjectFileMap>
+        <newProjectFileMap appType="datafield" name="Complex" baseDir="templates/datafield/complex"
+            description="A data field that extends the DataField class.&#xA;&#xA;This template uses Connect IQ 1.2.0 APIs and will not run on devices that haven't been updated to support 1.2.0 or higher.">
+            <file type="source">source/App.mc</file>
+            <file type="source">source/View.mc</file>
+            <file type="source">source/Background.mc</file>
+            <file type="manifest">manifest.xml</file>
+            <file type="resource">resources/strings/strings.xml</file>
+            <file type="resource">resources/drawables/launcher_icon.svg</file>
+            <file type="resource">resources/drawables/drawables.xml</file>
+            <file type="resource">resources/strings/strings.xml</file>
+            <file type="resource">resources/layouts/layouts.xml</file>
+            <file type="resource">monkey.jungle</file>
+        </newProjectFileMap>
+        <newProjectFileMap appType="widget" name="Simple" baseDir="templates/widget/simple"
+            description="A simple widget that draws a monkey in the middle of the screen.">
+            <file type="source">source/App.mc</file>
+            <file type="source">source/View.mc</file>
+            <file type="manifest">manifest.xml</file>
+            <file type="resource">resources/strings/strings.xml</file>
+            <file type="resource">resources/drawables/launcher_icon.svg</file>
+            <file type="resource">resources/drawables/monkey.png</file>
+            <file type="resource">resources/drawables/drawables.xml</file>
+            <file type="resource">resources/layouts/layout.xml</file>
+            <file type="resource">monkey.jungle</file>
+        </newProjectFileMap>
+        <newProjectFileMap appType="watch-app" name="Simple" baseDir="templates/watch-app/simple"
+            description="A simple watch app that draws a monkey and implements a menu.">
+            <file type="source">source/App.mc</file>
+            <file type="source">source/View.mc</file>
+            <file type="source">source/Delegate.mc</file>
+            <file type="source">source/MenuDelegate.mc</file>
+            <file type="manifest">manifest.xml</file>
+            <file type="resource">resources/strings/strings.xml</file>
+            <file type="resource">resources/menus/menu.xml</file>
+            <file type="resource">resources/drawables/launcher_icon.svg</file>
+            <file type="resource">resources/drawables/monkey.png</file>
+            <file type="resource">resources/drawables/drawables.xml</file>
+            <file type="resource">resources/layouts/layout.xml</file>
+            <file type="resource">monkey.jungle</file>
+        </newProjectFileMap>
+        <newProjectFileMap appType="audio-content-provider-app" name="Simple" baseDir="templates/audio-content-provider-app/simple"
+            description="A simple audio content provider app.">
+            <file type="source">source/App.mc</file>
+            <file type="source">source/ConfigurePlaybackDelegate.mc</file>
+            <file type="source">source/ConfigurePlaybackView.mc</file>
+            <file type="source">source/ConfigureSyncDelegate.mc</file>
+            <file type="source">source/ConfigureSyncView.mc</file>
+            <file type="source">source/ContentDelegate.mc</file>
+            <file type="source">source/ContentIterator.mc</file>
+            <file type="source">source/SyncDelegate.mc</file>
+            <file type="manifest">manifest.xml</file>
+            <file type="resource">resources/strings/strings.xml</file>
+            <file type="resource">resources/drawables/launcher_icon.svg</file>
+            <file type="resource">resources/drawables/monkey.png</file>
+            <file type="resource">resources/drawables/drawables.xml</file>
+            <file type="resource">resources/layouts/configurePlaybackLayout.xml</file>
+            <file type="resource">resources/layouts/configureSyncLayout.xml</file>
+            <file type="resource">monkey.jungle</file>
+        </newProjectFileMap>
+        <newProjectFileMap appType="barrel" name="Simple" baseDir="templates/barrel/simple"
+            description="A simple monkey barrel.">
+            <file type="source">Barrel.mc</file>
+            <file type="manifest">manifest.xml</file>
+            <file type="resource">monkey.jungle</file>
+        </newProjectFileMap>
+    </newProjectFilesMaps>
+
+</monkeybrains>

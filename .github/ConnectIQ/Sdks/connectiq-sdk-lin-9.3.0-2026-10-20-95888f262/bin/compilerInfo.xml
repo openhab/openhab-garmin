@@ -7,7 +7,7 @@
 
     For example 1.2.0.beta1 would be valid, 1.2.dev is not valid.
     -->
-    <version>8.2.1</version>
+    <version>9.3.0</version>
 
     <!--
     Information about the exit codes the compiler returns.
@@ -62,6 +62,13 @@
         <version supportsBarrels="true" systemLevel="7">5.0.1</version>
         <version supportsBarrels="true" systemLevel="8">5.1.0</version>
         <version supportsBarrels="true" systemLevel="8">5.1.1</version>
+        <version supportsBarrels="true" systemLevel="8">5.2.0</version>
+        <version supportsBarrels="true" systemLevel="8">5.2.1</version>
+        <version supportsBarrels="true" systemLevel="8">5.2.2</version>
+        <version supportsBarrels="true" systemLevel="9">6.0.0</version>
+        <version supportsBarrels="true" systemLevel="9">6.0.2</version>
+        <version supportsBarrels="true" systemLevel="9">6.0.3</version>
+        <version supportsBarrels="true" systemLevel="9">6.0.4</version>
     </targetSdkVersions>
 
 </compilerInfo>

@@ -1,11 +1,14 @@
 #!/bin/bash
 
+# Abort on the first error, so compiler failures actually fail the build
+set -e
+
 # Define colors for output
 BLUE='\033[0;34m'
 NOCOLOR='\033[0m'
 
 # Define path constants
-MONKEYC_COMPILER="$HOME/.Garmin/ConnectIQ/Sdks/connectiq-sdk-lin-8.2.1-2025-06-19-f69b94140/bin/monkeyc"
+MONKEYC_COMPILER="$HOME/.Garmin/ConnectIQ/Sdks/connectiq-sdk-lin-9.3.0-2026-10-20-95888f262/bin/monkeyc"
 PRIVATE_KEY="$RUNNER_TEMP/developer_key.der"
 
 echo -e "${BLUE}Current working directory: $(pwd)${NOCOLOR}"
@@ -25,5 +28,7 @@ echo -e "${BLUE} DONE${NOCOLOR}"
 # Build the MonkeyC project
 echo -e "${BLUE}Compiling with monkeyc ...${NOCOLOR}"
 $MONKEYC_COMPILER -v
-$MONKEYC_COMPILER --jungles .github/ci.jungle --private-key "$PRIVATE_KEY" --typecheck 3 --unit-test --warn --device fenix847mm --output "$RUNNER_TEMP/compiled"
+# Use the project's own jungle file so that the CI build always matches
+# the local build configuration (sources, resources and device settings).
+$MONKEYC_COMPILER --jungles monkey.jungle --private-key "$PRIVATE_KEY" --typecheck 3 --unit-test --warn --device fenix847mm --output "$RUNNER_TEMP/compiled"
 echo -e "${BLUE}Finished compilation.${NOCOLOR}"

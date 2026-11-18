@@ -178,7 +178,8 @@ class BaseCommandRequest extends BaseRequest {
     // Processes the response to the web request
     // If the request was successful, onCommandComplete() is called
     // If there was an error, onCommandException() is being called
-    public function onReceive( responseCode as Number, data as Dictionary<String,Object?> or String or PersistedContent.Iterator or Null ) as Void {
+    // The data type must match the callback signature of Communications.makeWebRequest exactly.
+    public function onReceive( responseCode as Number, data as Dictionary or String or ByteArray or PersistedContent.Iterator or Null ) as Void {
         var item = _weakItem.get() as CommandRequestDelegate?;
         
         if( item == null ) {
