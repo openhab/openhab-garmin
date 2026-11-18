@@ -350,6 +350,9 @@ class SitemapRequest extends BaseRequest {
     public function stop() as Void {
         // Logger.debug( "SitemapRequest.stop" );
         _stopCount++;
+        // Stop a pending timer, so that no request callback fires while
+        // the request loop is stopped (e.g. during app shutdown)
+        _timer.stop();
         // When the SitemapRequest is stopped, all ongoing asynchronous
         // processing is also halted. Tasks in the task queue are atomic
         // in the sense that stopping between tasks will not cause any
@@ -365,7 +368,13 @@ class SitemapRequest extends BaseRequest {
     // successfully processed.
     public function triggerNextRequest( applyErrorMinimumInterval as Boolean ) as Void {
         // Logger.debug( "SitemapRequest.triggerNextRequestInternal" );
-        
+
+        // Do not schedule requests while the loop is stopped, e.g. when a
+        // response arrives after stop() was called during app shutdown
+        if( _stopCount > 0 ) {
+            return;
+        }
+
         // In case of errors, we apply a set minimum interval of 1 seconds
         var delay = _pollingInterval > SITEMAP_ERROR_MINIMUM_POLLING_INTERVAL
                     || ! applyErrorMinimumInterval

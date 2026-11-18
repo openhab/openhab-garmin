@@ -38,6 +38,16 @@ class OHApp extends Application.AppBase {
         // Logger.debug( "OHApp.onStop" );
         if( ! isGlance() ) {
             try {
+                // Cancel in-flight web requests and stop the request loop before
+                // the app terminates, so that no timer or communications callback
+                // runs while the app is being torn down.
+                BaseRequest.cancelAllRequests();
+                SitemapRequest.get().stop();
+                // A command response restarts the sitemap request (see
+                // BaseCommandRequest.onReceive), so cancel once more to catch a
+                // request that was created by the callback above.
+                BaseRequest.cancelAllRequests();
+
                 SitemapStore.persist();
             } catch( ex ) {
                 // Persisting the sitemap must never crash the app on shutdown
