@@ -100,8 +100,11 @@ class CommandConfirmation {
     // Defers the presentation until after the current call stack has unwound,
     // so that a caller popping its own view right after requesting the command
     // does so before the confirmation is pushed.
-    // Non-private so it can be called through an object reference from `show()`.
-    protected function presentDeferred() as Void {
+    //
+    // Public because it is invoked from the static `show()` factory. Monkey C
+    // cannot resolve `protected` methods through an object reference from a
+    // static function and fails at runtime with a "Symbol Not Found" error.
+    public function presentDeferred() as Void {
         // If a presentation is already scheduled but not yet shown, replace it
         // so that confirmations never stack on the view stack.
         if( _pendingPresentation != null ) {
@@ -117,8 +120,8 @@ class CommandConfirmation {
 
     // Prevents this (not yet presented) confirmation from being shown. Used to
     // replace a stale deferred presentation when a newer command is requested.
-    // Non-private so it can be called through an object reference.
-    protected function cancel() as Void {
+    // Public because it is invoked through an object reference.
+    public function cancel() as Void {
         if( _timer != null ) {
             _timer.stop();
             _timer = null;
@@ -129,8 +132,9 @@ class CommandConfirmation {
     }
 
     // Pushes the confirmation dialog onto the view stack.
-    // Non-private so it can be referenced via `method(:present)` for the timer.
-    protected function present() as Void {
+    // Public because it is referenced as `method(:present)` for the timer, and
+    // method references only resolve public symbols.
+    public function present() as Void {
         _timer = null;
         if( _pendingPresentation == self ) {
             _pendingPresentation = null;
