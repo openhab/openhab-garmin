@@ -472,7 +472,8 @@ This is the default behavior when:
 
 - No `mappings` are provided,
 - The item has no command descriptions,
-- The item is **not** of type `Rollershutter`.
+- The item is **not** of type `Rollershutter`,
+- The item is **not** of type `Player`.
 
 The switch simply toggles between `ON` and `OFF`.
 

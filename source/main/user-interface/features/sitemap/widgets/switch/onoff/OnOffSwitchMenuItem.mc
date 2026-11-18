@@ -11,10 +11,14 @@ class OnOffSwitchMenuItem extends SwitchMenuItem {
 
     // Returns true if the given widget matches the type handled by this menu item.
     public static function isMyType( sitemapWidget as SitemapWidget ) as Boolean {
+        // Player items have their own menu item. Excluding them here also
+        // ensures that Player items without mappings do not end up being
+        // treated as ON/OFF switches.
         return 
                sitemapWidget instanceof SitemapSwitch 
             && ! sitemapWidget.hasMappings()
-            && ! sitemapWidget.getSwitchItem().getType().equals( "Rollershutter" );
+            && ! sitemapWidget.getSwitchItem().getType().equals( "Rollershutter" )
+            && ! sitemapWidget.getSwitchItem().getType().equals( "Player" );
     }
 
     // True if the switch is on

@@ -78,7 +78,7 @@ See the [Player section](https://next.openhab.org/docs/apps/garmin/#player) for 
 
 ### Subfolder `switch/`
 
-Contains multiple widgets covering both Switch and Selection sitemap elements. The concrete implementation is chosen based on available commands and item types.
+Contains multiple widgets covering both Switch and Selection sitemap elements. The concrete implementation is chosen based on available commands and item types. The selection is re-evaluated on every sitemap update, so a widget keeps the same representation even when sitemap entries shift positions (e.g. due to `visibility` changes).
 
 - `switch/base/`  
   Provides a shared base class with reusable functionality used by all switch-related widgets.

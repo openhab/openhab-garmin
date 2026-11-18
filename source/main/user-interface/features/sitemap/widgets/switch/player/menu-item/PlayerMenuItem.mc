@@ -105,35 +105,77 @@ class PlayerMenuItem extends SwitchMenuItem {
         }
 
         var currentStateDrawable = getStateDrawable();
-        var currentState = sitemapSwitch.getSwitchItem().getState();
 
-        // This expression returns
-        // true for PLAY
-        // false for PAUSE
-        // a String for any other state        
-        var currentStateParsed = 
-            currentState.equals( SwitchItem.ITEM_STATE_PLAY )
-            ? true
-            : currentState.equals( SwitchItem.ITEM_STATE_PAUSE )
-              ? false
-              : sitemapSwitch.getDisplayState();
+        // true for PLAY, false for PAUSE, null for any other state.
+        // See derivePlayPauseState() for details.
+        var isPlaying = derivePlayPauseState( sitemapSwitch );
 
         // For PLAY/PAUSE ...
-        if( currentStateParsed instanceof Boolean ) {
+        if( isPlaying != null ) {
             // ... we either update the existing Drawable or create a new one ...
             if( currentStateDrawable instanceof PlayerMenuItemStateBitmap ) {
-                currentStateDrawable.setPlaying( currentStateParsed );
+                currentStateDrawable.setPlaying( isPlaying );
             } else {
-                setStateDrawable( new PlayerMenuItemStateBitmap( currentStateParsed ) );
+                setStateDrawable( new PlayerMenuItemStateBitmap( isPlaying ) );
             }
             // ... and do not display a text.
             setStateTextResponsive( null );
-        } else if( currentStateParsed instanceof String ) {
+        } else {
             // And for text we set the Drawable to null and instead
             // show the text
             setStateDrawable( null );
-            setStateTextResponsive( currentStateParsed );
+            setStateTextResponsive( sitemapSwitch.getDisplayState() );
         }
+    }
+
+    /*
+     * Derives the playback state used to select the icon.
+     *
+     * Returns true for PLAY, false for PAUSE and null for any other state.
+     *
+     * If the raw state is neither PLAY nor PAUSE, the display state is
+     * checked against the labels of the PLAY and PAUSE mappings. openHAB
+     * reads the item state several times while it assembles the sitemap
+     * response (once for the item data and again for the label), so the
+     * label's state can briefly disagree with the item state. Preferring
+     * the mapping label in that case prevents the mapping text (e.g. "||")
+     * from being rendered in place of the icon.
+     */
+    private function derivePlayPauseState( 
+        sitemapSwitch as SitemapSwitch 
+    ) as Boolean? {
+        var currentState = sitemapSwitch.getSwitchItem().getState();
+        if( currentState.equals( SwitchItem.ITEM_STATE_PLAY ) ) {
+            return true;
+        } else if( currentState.equals( SwitchItem.ITEM_STATE_PAUSE ) ) {
+            return false;
+        }
+
+        var commandDescriptions = sitemapSwitch.getCommandDescriptions();
+        if( ! commandDescriptions.hasDescriptions() ) {
+            return null;
+        }
+
+        // Labels may be empty for mappings without a label. In that case
+        // the display state is of no use for determining the icon.
+        var displayState = sitemapSwitch.getDisplayState();
+        var pauseLabel = commandDescriptions.lookup( SwitchItem.ITEM_STATE_PAUSE );
+        if( pauseLabel != null 
+            && ! pauseLabel.equals( "" ) 
+            && displayState.equals( pauseLabel ) 
+        ) {
+            return false;
+        }
+
+        var playLabel = commandDescriptions.lookup( SwitchItem.ITEM_STATE_PLAY );
+        if( playLabel != null 
+            && ! playLabel.equals( "" ) 
+            && displayState.equals( playLabel ) 
+        ) {
+            return true;
+        }
+
+        return null;
     }
 
 }

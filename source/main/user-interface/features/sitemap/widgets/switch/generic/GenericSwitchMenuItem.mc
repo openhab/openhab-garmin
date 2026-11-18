@@ -20,12 +20,15 @@ class GenericSwitchMenuItem extends SwitchMenuItem {
     
     // Returns true if the given widget matches the type handled by this menu item.
     public static function isMyType( sitemapWidget as SitemapWidget ) as Boolean {
-        // This menu item applies to all Switches, that
-        // have a mapping defined
+        // This menu item applies to all Switches that have a mapping defined.
+        // Player and Rollershutter items use their dedicated menu items, even
+        // though they may define mappings as well. This keeps the predicates
+        // of the menu item classes mutually exclusive.
         return 
             sitemapWidget instanceof SitemapSwitch 
             && sitemapWidget.hasMappings()
-            && ! sitemapWidget.getSwitchItem().getType().equals( "Rollershutter" );
+            && ! sitemapWidget.getSwitchItem().getType().equals( "Rollershutter" )
+            && ! sitemapWidget.getSwitchItem().getType().equals( "Player" );
     }
 
     // Constructor
