@@ -26,6 +26,11 @@ class SitemapStore  {
     private static const STORAGE_JSON as String = "sitemapJson";
     private static const STORAGE_LABEL as String = "sitemapLabel";
 
+    // Only JSON data taking less than 80kB in memory is written to Storage.
+    // Testing has shown that somewhere around 90kB, Storage.setValue
+    // fails, independent of free memory.
+    private static const STORAGE_JSON_MAX_SIZE as Number = 81920;
+
     // Current JSON/label
     // The JSON is stored together with a numeric timestamp
     typedef StoredJson as [JsonObject, Number];
@@ -33,12 +38,18 @@ class SitemapStore  {
     private static var _title as String?;
     private static var _estimatedSitemapSize as Number = 0;
 
+    // True if _json was received from a sitemap request and therefore differs
+    // from the JSON in Storage. A JSON that was read from Storage must not be
+    // written back, as its size is unknown and the write could fail.
+    private static var _isJsonModified as Boolean = false;
+
     // Deletes the sitemap from Storage to invalidate it in case of a fatal
     // error during a sitemap request. After such an error, the sitemap should
     // only be shown again once fresh data has been successfully retrieved.
     public static function deleteSitemapFromStorage() as Void {
         Storage.deleteValue( STORAGE_JSON );
         _json = null;
+        _isJsonModified = false;
     }
 
     // Accessor functions for the label
@@ -99,6 +110,7 @@ class SitemapStore  {
     (:typecheck(disableGlanceCheck))
     public static function getSitemapFromStorage() as SitemapHomepage? {
         _json = Storage.getValue( STORAGE_JSON ) as StoredJson?;
+        _isJsonModified = false;
         return getSitemapFromMemory( isSitemapFresh() );
     }
 
@@ -120,25 +132,62 @@ class SitemapStore  {
     }
 
     // Persist the current data to storage
-    // This function is called by OHApp wenn the application is stopped
+    // This function is called by OHApp when the application is stopped
+    (:typecheck(disableGlanceCheck))
     public static function persist() as Void {
-        if( _title != null ) {
-            Storage.setValue( STORAGE_LABEL, _title );
-            _title = null;
-        }
-        
-        // Logger.debugMemory( _estimatedSitemapSize );
+        try {
+            if( _title != null ) {
+                Storage.setValue( STORAGE_LABEL, _title );
+                _title = null;
+            }
 
-        // Only write to memory if the JSON takes less than 80kB in memory
-        // Testing has shown that somewher around 90kB, Storage.setValue
-        // will crash, independent of free memory
-        if( _json != null && _estimatedSitemapSize <= 81920 ) {
-            // Logger.debug( "SitemapStore: persisting JSON" );
-            Storage.setValue( STORAGE_JSON, _json );
+            // Logger.debugMemory( _estimatedSitemapSize );
+
+            if( ! _isJsonModified ) {
+                return;
+            }
+
+            // Storage writes allocate memory. This turns an out-of-memory
+            // error, which would otherwise be uncatchable, into an exception.
+            MemoryManager.ensureSufficientMemory();
+
+            if( _json != null && _estimatedSitemapSize <= STORAGE_JSON_MAX_SIZE ) {
+                // Logger.debug( "SitemapStore: persisting JSON" );
+                Storage.setValue( STORAGE_JSON, _json );
+            } else if( _estimatedSitemapSize > STORAGE_JSON_MAX_SIZE ) {
+                // Logger.debug( "SitemapStore: not persisting, JSON too large" );
+                Storage.deleteValue( STORAGE_JSON );
+            }
             _json = null;
-        } else if ( _estimatedSitemapSize > 81920 ) {
-            // Logger.debug( "SitemapStore: not persisting, JSON too large" );
-            deleteSitemapFromStorage();
+            _isJsonModified = false;
+        } catch( ex ) {
+            _json = null;
+            _isJsonModified = false;
+
+            // OutOfMemoryException is thrown by MemoryManager.ensureSufficientMemory()
+            // when free memory is already low. It is a normal, catchable exception;
+            // the engine's own out-of-memory error is not catchable and would have
+            // terminated the app before reaching this handler.
+            // In this case the Storage itself is fine, so keep the sitemap that is
+            // already stored there instead of throwing away the offline cache.
+            if( ex instanceof OutOfMemoryException ) {
+                return;
+            }
+
+            // The Storage is full. Without this handling, the exception would
+            // escape the system's onStop() callback and crash the app. Free the
+            // space occupied by the sitemap and write the label again, so at
+            // least the glance keeps its label. The next start behaves like a
+            // first start instead of displaying outdated data.
+            try {
+                Storage.deleteValue( STORAGE_JSON );
+                if( _title != null ) {
+                    Storage.setValue( STORAGE_LABEL, _title );
+                }
+            } catch( ex2 ) {
+                // Nothing left to do, the label is lost but the app keeps running
+            }
+            _title = null;
         }
     }
 
@@ -150,6 +199,7 @@ class SitemapStore  {
     ) as SitemapHomepage {
         _json = incomingJson.getForStorage();
         _estimatedSitemapSize = incomingJson.estimatedSize;
+        _isJsonModified = true;
         var isSyncInProgress = SafeSitemapSyncDelegate.isSyncInProgress();
         var homepage = new SitemapHomepage( 
             new JsonAdapter( incomingJson.json ), 

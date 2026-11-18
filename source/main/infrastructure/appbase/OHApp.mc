@@ -37,7 +37,12 @@ class OHApp extends Application.AppBase {
     public function onStop(state as Dictionary?) as Void {
         // Logger.debug( "OHApp.onStop" );
         if( ! isGlance() ) {
-            SitemapStore.persist();
+            try {
+                SitemapStore.persist();
+            } catch( ex ) {
+                // Persisting the sitemap must never crash the app on shutdown
+                // Logger.debug( "OHApp.onStop: persisting sitemap failed" );
+            }
         }
     }
 
