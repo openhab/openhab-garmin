@@ -6,9 +6,10 @@ import Toybox.WatchUi;
  * Present a `Toybox.WatchUi.Confirmation` dialog before a command is sent.
  *
  * Sitemap widgets may declare a `commandConfirmMessage` (see `SitemapWidget`).
- * If such a message is present and non-empty, the command must not be sent
- * immediately. Instead, a confirmation dialog showing exactly that message is
- * presented to the user:
+ * If such a message is present, the command must not be sent immediately.
+ * `CommandMenuItem.sendCommand()` therefore calls this class instead of sending
+ * the command directly whenever the message is non-empty. A confirmation
+ * dialog showing exactly that message is presented to the user:
  *
  * - If the user confirms, the preserved command is sent exactly once.
  * - If the user cancels, no command is sent.
@@ -62,23 +63,23 @@ class CommandConfirmation {
     private static var _pendingPresentation as CommandConfirmation?;
 
     /*
-     * Presents a confirmation dialog for the given command, or dispatches the
-     * command immediately if no confirmation message is set.
+     * Presents a confirmation dialog for the given command.
+     *
+     * Callers must only invoke this when the widget declares a non-empty
+     * confirmation message; commands without a message are dispatched directly
+     * by `CommandMenuItem.sendCommand()`.
      *
      * @param delegate - The `CommandMenuItem` that will dispatch the command.
      * @param command - The command to send (String or Float).
-     * @param message - The confirmation message; an empty string means no
-     *                  confirmation is required.
+     * @param message - The confirmation message to display; must not be empty.
      */
     public static function show(
         delegate as CommandMenuItem,
         command as Item.ItemState,
         message as String
     ) as Void {
-        // No message -> existing immediate behavior
         if( message.equals( "" ) ) {
-            delegate.dispatchCommand( command );
-            return;
+            throw new GeneralException( "CommandConfirmation requires a non-empty confirmation message." );
         }
 
         var confirmation = new CommandConfirmation( delegate, command, message );

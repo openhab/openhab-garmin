@@ -110,19 +110,22 @@ class CommandMenuItem extends WidgetMenuItem {
     // confirmation dialog is shown first and the command is only sent after
     // the user confirms it. Otherwise the command is dispatched immediately.
     public function sendCommand( command as Item.ItemState ) as Void {
-        if( _commandRequest != null ) {
-            CommandConfirmation.show(
-                self,
-                command,
-                getSitemapWidget().getCommandConfirmMessage()
-            );
+        if( _commandRequest == null ) {
+            return;
+        }
+
+        var confirmMessage = getSitemapWidget().getCommandConfirmMessage();
+        if( confirmMessage.equals( "" ) ) {
+            dispatchCommand( command );
+        } else {
+            CommandConfirmation.show( self, command, confirmMessage );
         }
     }
 
     // Dispatches a command via the CommandRequest without any confirmation.
-    // This is the low-level command submission used both for the immediate
-    // path (no confirmation message) and by CommandConfirmation after the
-    // user confirms, so a confirmed command is never confirmed again.
+    // This is the low-level command submission used for commands that require
+    // no confirmation and by CommandConfirmation after the user confirms, so a
+    // confirmed command is never confirmed again.
     public function dispatchCommand( command as Item.ItemState ) as Void {
         if( _commandRequest != null ) {
             _pendingCommand = command;
