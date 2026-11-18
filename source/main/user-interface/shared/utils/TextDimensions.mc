@@ -26,16 +26,14 @@ class TextDimensions {
     // and creates it, if it does not exist yet
     private static function get() as BufferedBitmap {
         if( _bufferedBitmap == null ) {
-            var options = { :width => 1, :height => 1 };
-            if( Graphics has :createBufferedBitmap ) {
-                // CIQ >= 4 uses a graphics pool and resource references
-                // We store the BufferedBitmap, not the BufferedBitmap reference,
-                // to ensure that the BufferedBitmap stays available
-                _bufferedBitmap = Graphics.createBufferedBitmap( options ).get() as BufferedBitmap;
-            } else {
-                // CIQ < 4 creates buffered bitmaps in the app heap
-                _bufferedBitmap = new BufferedBitmap( options );
-            }
+            // The factory creates the BufferedBitmap using the appropriate API
+            // for the device: CIQ >= 4 uses a graphics pool and resource
+            // references, CIQ < 4 creates the bitmap in the app heap.
+            // We store the BufferedBitmap, not the BufferedBitmap reference,
+            // to ensure that the BufferedBitmap stays available.
+            _bufferedBitmap = BufferedBitmapFactory.createBufferedBitmap( 
+                { :width => 1, :height => 1 } 
+            );
         }
         return _bufferedBitmap as BufferedBitmap;
     }
