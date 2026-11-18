@@ -211,6 +211,17 @@ class RefreshUiTask extends BaseSitemapProcessorTask {
 
         var homepage = HomepageMenu.get();
 
+        // A confirmation dialog is a modal view owned by the system until the
+        // user responds. Changing the view stack underneath it would dismiss or
+        // re-show the dialog on every sitemap update, so the UI refresh is
+        // skipped in that case. The menu data has already been updated at this
+        // point; the display is refreshed once the dialog is closed.
+        if( ViewStack.getCurrentView()[0] instanceof WatchUi.Confirmation ) {
+            // Logger.debug( "RefreshUiTask.invoke: confirmation showing, skipping UI refresh" );
+            AsyncTaskQueue.get().add( new TriggerNextRequestTask() );
+            return;
+        }
+
         // If we are in the settings menu, we do nothing
         if( ! SettingsMenuManager.isShowingSettings() ) {
             // We reset to the root homepage view if:

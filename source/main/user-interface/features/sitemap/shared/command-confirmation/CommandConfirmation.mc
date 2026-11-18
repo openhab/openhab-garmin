@@ -155,9 +155,11 @@ class CommandConfirmation {
         }
         _handled = true;
 
-        // Pop the confirmation dialog. Since it was pushed via ViewStack, we
-        // pop it there as well to keep the app's view stack in sync.
-        ViewStack.popView( WatchUi.SLIDE_IMMEDIATE );
+        // The system dismisses the Confirmation view itself once a response is
+        // selected. Only the tracked view stack needs to be updated here.
+        // Popping the system view as well would remove the view underneath it,
+        // and popping the base page of a widget terminates the widget.
+        ViewStack.discardTopView();
 
         if( response == WatchUi.CONFIRM_YES ) {
             // Dispatch the preserved command exactly once, without re-entering
