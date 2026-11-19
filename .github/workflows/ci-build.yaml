@@ -71,3 +71,18 @@ jobs:
         run: |
           echo "::error::Files have changed: $CHANGED_FILES"
           exit 1
+
+  # The branch ruleset requires a status check named "CI Build". The matrix
+  # jobs are named individually, so this job aggregates their results into
+  # that single required check.
+  ci-build:
+    name: CI Build
+    needs: build
+    if: always()
+    runs-on: 'ubuntu-latest'
+    steps:
+      - name: Verify all device builds succeeded
+        if: needs.build.result != 'success'
+        run: |
+          echo "::error::Device build matrix result: ${{ needs.build.result }}"
+          exit 1
