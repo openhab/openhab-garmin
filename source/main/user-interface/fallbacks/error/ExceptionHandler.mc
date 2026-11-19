@@ -156,7 +156,7 @@ public class ExceptionHandler {
                 WarningToastHandler.showWarning( ex.getToastMessage() );
             } else {
                 // In case of a fatal UI error we stop doing sitemap requests
-                SitemapRequest.get().stop();
+                SitemapRequest.get().fail();
                 
                 // If the exception is not already a FatalUserInterfaceException, we wrap
                 // it in one

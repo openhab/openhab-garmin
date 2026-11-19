@@ -141,7 +141,7 @@ class BaseCommandRequest extends BaseRequest {
             // after sync mode has been completed by a asynchronous task
             if( ! _syncMode ) {
                 // Logger.debug( "BaseCommandRequest.makeWebRequest: stopping sitemap request" );
-                SitemapRequest.get().stop();
+                SitemapRequest.get().beginCommand();
             }
             
             // If there is more than one open request for this item,
@@ -168,7 +168,7 @@ class BaseCommandRequest extends BaseRequest {
             // In sync mode, the sitemap request is restarted by a task scheduled by the `SyncDelegate`
             if( ! _syncMode ) {
                 // Logger.debug( "BaseCommandRequest.makeWebRequest: restarting sitemap request after error" );
-                SitemapRequest.get().start();
+                SitemapRequest.get().endCommand();
             }
             
             throw ex;
@@ -195,7 +195,7 @@ class BaseCommandRequest extends BaseRequest {
                 // after sync mode has been completed by a asynchronous task
                 if( ! _syncMode ) {
                     // Logger.debug( "BaseCommandRequest.onReceive: restarting sitemap request" );
-                    SitemapRequest.get().start();
+                    SitemapRequest.get().endCommand();
                 }
 
                 if( checkResponseCode( responseCode, CommunicationException.EX_SOURCE_COMMAND ) ) {

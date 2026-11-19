@@ -280,6 +280,12 @@ class BaseSyncDelegate extends SyncDelegate {
             _isSyncInProgress = false;
             _lastSyncState[0] = true;
  
+            // Unblock the sitemap request loop. The request itself is issued
+            // by PostSyncTask, because it must not run on the Wi-Fi connection
+            // of the sync. Unblocking here keeps the state consistent if that
+            // task is lost: the next resume()/endCommand() resumes polling.
+            SitemapRequest.get().endSync( false );
+
             AsyncTaskQueue.get().add( new PostSyncTask() );
  
             // See the class-level comment on onStopSync() for details.
@@ -301,11 +307,12 @@ class BaseSyncDelegate extends SyncDelegate {
     // and requests sync mode from the CIQ API.
     public function startSync( msg as String ) as Void {
         // Logger.debug( "BaseSyncDelegate.startSync" );
+        var syncStarted = false;
         try {
             // Logger.debugConnectionInfo();
             
             _currentSyncDelegate = self;
-            SitemapRequest.get().stop();
+            syncStarted = SitemapRequest.get().beginSync();
 
             // Newer API versions support displaying a custom message in the sync view
             if( Communications has :startSync2 ) {
@@ -320,7 +327,10 @@ class BaseSyncDelegate extends SyncDelegate {
             _hasSyncFinished = false;
         } catch( ex ) {
             // Logger.debug( "BaseSyncDelegate.startSync: exception, restarting sitemap request" );
-            SitemapRequest.get().start();
+            // Do not unblock a sync that was already in progress
+            if( syncStarted ) {
+                SitemapRequest.get().endSync( true );
+            }
             throw ex;
         }
     }

@@ -18,10 +18,10 @@ import Toybox.Timer;
  *     - start(): initiates the first web request.
  *     - After each response, schedules the next request based on the polling interval.
  *       If the polling interval is 0, the next request is triggered immediately.
- *     - stop(): halts all further web requests.
- *       If a request is already in progress, its response will be ignored after stop() is called.
- *     - pause(): suspends the loop while the app is hidden by the system (inactive lifecycle state).
- *     - resume(): continues the loop once the app is visible again.
+ *     - Polling is suspended while the app is hidden, while a command request is
+ *       in flight and while a Wi-Fi sync runs, and stopped permanently on shutdown
+ *       or after a fatal error. See start(), pause()/resume(), beginCommand()/
+ *       endCommand(), beginSync()/endSync(), fail() and shutdown().
  *
  * - Implements onReceive() to process responses:
  *     - On success, forwards the incoming JSON to the `SitemapProcessor`.
@@ -73,25 +73,25 @@ class SitemapRequest extends BaseRequest {
     // The assembled URL for the request
     private var _url as String;
     
-    // Members for controlling the behavior when stopped.
-    // if _stopCount is > 0, no further requests will be allowed
-    // Each stop will increase the stop count, and only after
-    // one start was called for each stop, requests are continued
-    // We start stopped, so the initial value is 1
-    private var _stopCount as Number = 1;
+    // Reasons why the polling loop must not issue or schedule requests.
+    // Polling is allowed only when none of them applies. The state is static
+    // because SitemapRequest has a separate instance for sync mode, but there
+    // is only one polling loop.
+    private static var _isStarted as Boolean = false;    // getInitialView() has run
+    private static var _isHidden as Boolean = false;     // app is inactive
+    private static var _isSyncing as Boolean = false;    // Wi-Fi sync in progress
+    private static var _isFatal as Boolean = false;      // latched after a fatal error
+    private static var _isShutdown as Boolean = false;   // latched on termination
+    private static var _commandsInFlight as Number = 0;  // command requests, may overlap
 
-    // Requests are also suspended while the app is hidden by the system
-    // (API level 4.2.3+ active/inactive lifecycle, see `pause()`/`resume()`).
-    // This is tracked separately from _stopCount because it is not a
-    // start/stop pair but a state that lasts until the app is visible again.
-    // Static, because the singleton has a separate instance for sync mode.
-    private static var _isAppActive as Boolean = true;
+    // Cached result of canPoll(), used to detect state transitions.
+    private static var _isPollingAllowed as Boolean = false;
 
     // _hasPendingRequest is true if we are inbetween a makeRequest()
     // and an onReceive
     private var _hasPendingRequest as Boolean = false;
-    // If stop() is called and there is a pending request, this
-    // is set to true to instrucht onReceive() to ignore the
+    // If polling becomes blocked and there is a pending request, this
+    // is set to true to instruct onReceive() to ignore the
     // next incoming response.
     private var _ignoreNextResponse as Boolean = false;
 
@@ -174,10 +174,11 @@ class SitemapRequest extends BaseRequest {
     // Makes the web request
     private function makeRequestInternal( singleRequest as Boolean ) as Void {
         // We make the request only if
-        // - we are not stopped and the app is active
-        // - or it is a single request, which does not the timer to be started
+        // - polling is allowed (started, visible, no command or sync in
+        //   progress and not stopped permanently)
+        // - or it is a single request, which does not use the timer
         // - and there is no pending request
-        if( ( ( _stopCount <= 0 && _isAppActive ) || singleRequest ) && ! _hasPendingRequest ) {
+        if( ( canPoll() || singleRequest ) && ! _hasPendingRequest ) {
             _requestCount++;
             // Logger.debug( "SitemapRequest.makeRequestInternal (#" + _requestCount + ")" );
             // Logger.debugMemory( null );
@@ -235,7 +236,7 @@ class SitemapRequest extends BaseRequest {
         _responseCount++;
         // Logger.debug( "SitemapRequest.onReceive: start (#" + _responseCount + ")" );
 
-        // When stop() is called, and there is a pending request, then
+        // When polling becomes blocked while a request is pending,
         // _ignoreNextResponse is set true. onReceive() acts on this,
         // ignores the next response and resets the member
         if( _ignoreNextResponse ) {
@@ -338,84 +339,137 @@ class SitemapRequest extends BaseRequest {
         taskQueue.add( new ProcessIncomingJsonTask( incomingJson ) );
     }
 
-    // Start the request loop
-    // Starting an already running loop is a no-op. This makes the call safe
-    // from both getInitialView() and onActive(), whose call order is not
-    // guaranteed when the app is resumed by the system.
-    public function start() as Void {
-        // Logger.debug( "SitemapRequest.start" );
-        if( _stopCount <= 0 ) {
-            // Logger.debug( "SitemapRequest.start: already running" );
+    // True if the polling loop may issue and schedule requests.
+    // Requests made with makeRequestSingle() are not affected.
+    private static function canPoll() as Boolean {
+        return _isStarted
+               && ! _isHidden
+               && ! _isSyncing
+               && ! _isFatal
+               && ! _isShutdown
+               && _commandsInFlight == 0;
+    }
+
+    // Re-evaluates the polling state after one of the block flags changed.
+    // On the transition to blocked the timer is stopped and a pending response
+    // is ignored, so nothing runs while polling is not allowed. On the
+    // transition to allowed a request is issued if requestNow is true.
+    private function updatePollingState( requestNow as Boolean ) as Void {
+        var allowed = canPoll();
+        if( allowed == _isPollingAllowed ) {
             return;
         }
-        _stopCount--;
-        // Logger.debug( "SitemapRequest.start: new count=" + _stopCount );
-        if( _stopCount == 0 && _isAppActive ) {
-            // Logger.debug( "SitemapRequest.start: making request" );
-            makeRequestPeriodic();
+        _isPollingAllowed = allowed;
+
+        if( allowed ) {
+            if( requestNow && ! _hasPendingRequest ) {
+                // Logger.debug( "SitemapRequest: polling resumed" );
+                makeRequestPeriodic();
+            }
+        } else {
+            // Logger.debug( "SitemapRequest: polling suspended" );
+            _timer.stop();
+            if( _hasPendingRequest ) {
+                _ignoreNextResponse = true;
+            }
+            // Asynchronous processing is discarded, unless a Wi-Fi sync is in
+            // progress: the sync relies on its tasks, which use the same queue.
+            if( ! _isSyncing ) {
+                AsyncTaskQueue.get().removeAll();
+            }
         }
     }
 
-    // Stops the request loop
-    // If there is a pending request, onReceive() is instructed to
-    // ignore the next response
-    public function stop() as Void {
-        // Logger.debug( "SitemapRequest.stop" );
-        _stopCount++;
-        // Stop a pending timer, so that no request callback fires while
-        // the request loop is stopped (e.g. during app shutdown)
-        _timer.stop();
-        // When the SitemapRequest is stopped, all ongoing asynchronous
-        // processing is also halted. Tasks in the task queue are atomic
-        // in the sense that stopping between tasks will not cause any
-        // data inconsistencies.
+    // Starts the request loop. Called from getInitialView().
+    // Calling this more than once is a no-op.
+    public function start() as Void {
+        // Logger.debug( "SitemapRequest.start" );
+        _isStarted = true;
+        updatePollingState( true );
+    }
+
+    // Stops the request loop permanently. Called from OHApp.onStop().
+    public function shutdown() as Void {
+        // Logger.debug( "SitemapRequest.shutdown" );
+        _isShutdown = true;
+        updatePollingState( false );
+        // Nothing may run during teardown, even if a sync was in progress
         AsyncTaskQueue.get().removeAll();
-        if( _hasPendingRequest ) {
-            // Logger.debug( "SitemapRequest.stop: pending request, will ignore the next response" );
-            _ignoreNextResponse = true;
-        }
+    }
+
+    // Stops the request loop permanently after a fatal error.
+    // Only an app restart resumes polling.
+    public function fail() as Void {
+        // Logger.debug( "SitemapRequest.fail" );
+        _isFatal = true;
+        updatePollingState( false );
     }
 
     // Suspends the request loop while the app is hidden by the system.
-    // Called from OHApp.onInactive() on devices that support the
-    // active/inactive app lifecycle.
-    //
-    // In the inactive state access to system resources is limited, so no
-    // requests are made and no asynchronous sitemap processing is left
-    // running. Unlike stop(), this does not consume a start/stop pair:
-    // resume() continues the loop once the app is visible again.
+    // Called from OHApp.onInactive().
     public function pause() as Void {
         // Logger.debug( "SitemapRequest.pause" );
-        if( ! _isAppActive ) {
-            return;
-        }
-        _isAppActive = false;
-        _timer.stop();
-        // Do not discard asynchronous tasks while a sync is in progress; the
-        // sync relies on them. Otherwise the queue is emptied so that no
-        // sitemap processing continues while the app is hidden.
-        if( ! SafeSitemapSyncDelegate.isSyncInProgress() ) {
-            AsyncTaskQueue.get().removeAll();
-        }
-        if( _hasPendingRequest ) {
-            // The response of a request that was in flight when the app was
-            // hidden is not processed; the next request after resume()
-            // delivers fresh data.
-            _ignoreNextResponse = true;
-        }
+        _isHidden = true;
+        updatePollingState( false );
     }
 
-    // Resumes the request loop after the app became visible again.
+    // Resumes the request loop when the app becomes visible again.
     // Called from OHApp.onActive().
     public function resume() as Void {
         // Logger.debug( "SitemapRequest.resume" );
-        if( _isAppActive ) {
-            return;
+        _isHidden = false;
+        updatePollingState( true );
+    }
+
+    // Suspends the request loop while a command request is in flight.
+    // Called from BaseCommandRequest. Several commands may overlap.
+    public function beginCommand() as Void {
+        // Logger.debug( "SitemapRequest.beginCommand" );
+        _commandsInFlight++;
+        updatePollingState( false );
+    }
+
+    // Called when a command request has completed (response, error or cancel).
+    public function endCommand() as Void {
+        // Logger.debug( "SitemapRequest.endCommand" );
+        if( _commandsInFlight > 0 ) {
+            _commandsInFlight--;
         }
-        _isAppActive = true;
-        // Do not resume a loop that was stopped independently, e.g. while a
-        // command was sent or after a fatal error.
-        if( _stopCount <= 0 ) {
+        updatePollingState( true );
+    }
+
+    // Suspends the request loop while a Wi-Fi sync is in progress.
+    // Called from BaseSyncDelegate.startSync().
+    // Returns true if this call started the sync block, false if a sync was
+    // already in progress. Only the caller that started it may end it.
+    public function beginSync() as Boolean {
+        // Logger.debug( "SitemapRequest.beginSync" );
+        if( _isSyncing ) {
+            return false;
+        }
+        _isSyncing = true;
+        // Queued sitemap processing belongs to the regular loop and must not
+        // run against the sync instance.
+        AsyncTaskQueue.get().removeAll();
+        updatePollingState( false );
+        return true;
+    }
+
+    // Called when the Wi-Fi sync has ended.
+    // With requestImmediately = false the loop is unblocked but no request is
+    // issued. PostSyncTask then calls requestNow() once the Wi-Fi connection of
+    // the sync is gone. If that task is lost, the next resume(), endCommand()
+    // or start() re-evaluates the state and resumes polling.
+    public function endSync( requestImmediately as Boolean ) as Void {
+        // Logger.debug( "SitemapRequest.endSync" );
+        _isSyncing = false;
+        updatePollingState( requestImmediately );
+    }
+
+    // Issues a request now if polling is allowed. Used by PostSyncTask.
+    public function requestNow() as Void {
+        // Logger.debug( "SitemapRequest.requestNow" );
+        if( canPoll() && ! _hasPendingRequest ) {
             makeRequestPeriodic();
         }
     }
@@ -425,10 +479,10 @@ class SitemapRequest extends BaseRequest {
     public function triggerNextRequest( applyErrorMinimumInterval as Boolean ) as Void {
         // Logger.debug( "SitemapRequest.triggerNextRequestInternal" );
 
-        // Do not schedule requests while the loop is stopped, e.g. when a
-        // response arrives after stop() was called during app shutdown,
-        // or while the app is hidden by the system
-        if( _stopCount > 0 || ! _isAppActive ) {
+        // Do not schedule requests while polling is not allowed, e.g. when a
+        // response arrives after shutdown, while the app is hidden or while a
+        // command or sync is in progress
+        if( ! canPoll() ) {
             return;
         }
 
