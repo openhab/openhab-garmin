@@ -6,8 +6,9 @@ import Toybox.Graphics;
  * A menu item that displays the current state of an item as text
  * and sends a command when selected.
  *
- * Intended for use with `Switch` sitemap elements, where possible
- * commands are defined via the element's `mappings` property.
+ * Intended for use with `Switch` sitemap elements. The available commands
+ * are defined via the element's `mappings` property or via command
+ * descriptions on the item.
  *
  * Behavior on selection:
  * - If only one command is defined, it is sent immediately.
@@ -20,13 +21,14 @@ class GenericSwitchMenuItem extends SwitchMenuItem {
     
     // Returns true if the given widget matches the type handled by this menu item.
     public static function isMyType( sitemapWidget as SitemapWidget ) as Boolean {
-        // This menu item applies to all Switches that have a mapping defined.
-        // Player and Rollershutter items use their dedicated menu items, even
-        // though they may define mappings as well. This keeps the predicates
-        // of the menu item classes mutually exclusive.
+        // This menu item applies to all Switches with available commands,
+        // unless the available commands represent an ON/OFF toggle. Player and
+        // Rollershutter items use their dedicated menu items, even though they
+        // may define mappings as well.
         return 
             sitemapWidget instanceof SitemapSwitch 
             && sitemapWidget.hasMappings()
+            && ! sitemapWidget.hasToggleSwitchMappings()
             && ! sitemapWidget.getSwitchItem().getType().equals( "Rollershutter" )
             && ! sitemapWidget.getSwitchItem().getType().equals( "Player" );
     }

@@ -461,24 +461,26 @@ As a result, `Selection` is treated as a **synonym for `Switch`**, and both beha
 
 The widget supports four usage variants:
 
-1. **Toggle Switch** – for binary items (`ON`/`OFF`) and `Dimmer` items.
+1. **Toggle Switch** – for `Switch` and `Dimmer` items without any available commands, and whenever the available commands are exactly `ON` and `OFF`.
 1. **Rollershutter Control** – a full-screen view for `Rollershutter` items with `UP`, `DOWN`, and `STOP` buttons.
 1. **Player Control** – a full-screen view for `Player` items with `PLAY`/`PAUSE`, `NEXT`, and `PREVIOUS` buttons.
 1. **Generic Switch** – for items with custom or multiple commands, defined via `mappings` or item metadata.
 
 ##### Toggle Switch
 
-This is the default behavior when:
+The toggle switch is used when **any** of the following applies:
 
-- No `mappings` are provided,
-- The item has no command descriptions,
-- The item is **not** of type `Rollershutter`,
-- The item is **not** of type `Player`.
+- The item is of type `Switch` or `Dimmer` and no commands are available at all, i.e. neither `mappings` nor item command descriptions are defined.
+- The available commands consist of exactly `ON` and `OFF`, regardless of their order.
+  This includes `ON`/`OFF` commands defined via `mappings` or item command descriptions.
+
+In all cases, the item must **not** be of type `Rollershutter` or `Player`.
 
 The switch simply toggles between `ON` and `OFF`.
 
-**Note:** If an item of type `Dimmer` is linked to a `Switch` and no state mappings are defined, a toggle switch will be displayed.
-The toggle will send `ON` and `OFF` commands. For display purposes, a `Dimmer` state of `0` is treated as `OFF`, while any value from `1` to `100` is considered `ON`.
+**Note:** If a `Dimmer` item is rendered as a toggle switch, the toggle sends `ON` and `OFF` commands. For display purposes, a `Dimmer` state of `0` is treated as `OFF`, while any value from `1` to `100` is considered `ON`.
+
+**Note:** A `Switch` or `Dimmer` item without available commands is rendered as a toggle switch. Other item types without available commands are not supported by this widget.
 
 **Example:**
 
@@ -492,6 +494,31 @@ Frame label="Switches" {
 
 <div class="garmin-screenshot-container">
   <img src="images/app/06-switches-1-toggle.png"/>
+</div>
+
+**Example with `ON`/`OFF` Mapping Entries:**
+
+Because mappings consisting of exactly `ON` and `OFF` are treated as a toggle switch, they can be combined with custom labels.
+A typical use case is a garage door opener that acts as a toggle switch: sending an `ON` command triggers the gate to open or close, and the switch automatically resets to `OFF` after one second.
+
+```java
+sitemap garmin_demo label="My Home" {
+ Frame label="Entrance Gates" {
+  Switch item=EntranceGates_Operation label="Open/Close" mappings=[OFF="", ON="OK"]
+  Text item=EntranceGates_Status label="Status"
+ }
+}
+```
+
+In this configuration:
+
+- The switch typically stays in the `OFF` state, where the `"Open/Close"` label is sufficient.
+- When pressed, it sends the `ON` command and then returns to `OFF`.
+
+Here’s how the interface appears when the switch is in the `OFF` state:
+
+<div class="garmin-screenshot-container">
+  <img src="images/app/06-switches-3-generic-3.png">
 </div>
 
 ##### Rollershutter
@@ -542,12 +569,15 @@ Frame label="Switches" {
 
 ##### Generic Switch
 
-This variant is used for items that don’t fall under the previous two cases.
+This variant is used for items that don’t fall under the previous cases and whose available commands exist but are **not** exactly `ON` and `OFF`.
 
 It supports multiple custom commands, defined either via:
 
 - `mappings` in the sitemap,
 - or command/state descriptions on the item (e.g., from a channel or metadata).
+
+If the available commands are exactly `ON` and `OFF`, the widget is always displayed as a toggle switch, regardless of whether these commands come from `mappings` or item metadata.
+To force a generic switch for an item that also supports `ON` and `OFF`, define at least one additional command via `mappings`.
 
 In the menu, the widget displays the current state as text:
 
@@ -580,32 +610,6 @@ Frame label="Switches" {
 
 **Note:** The action menu shown in the right screenshot is a **mockup**.
 The actual appearance may vary depending on the device, as it uses a native UI component.
-
-**Example with Empty Mapping Entry:**
-
-Consider a garage door opener that acts as a toggle switch: sending an `ON` command triggers the gate to open or close, and the switch automatically resets to `OFF` after one second.
-
-This can be configured in the sitemap like so:
-
-```java
-sitemap garmin_demo label="My Home" {
- Frame label="Entrance Gates" {
-  Switch item=EntranceGates_Operation label="Open/Close" mappings=[OFF="", ON="OK"]
-  Text item=EntranceGates_Status label="Status"
- }
-}
-```
-
-In this configuration:
-
-- The switch typically stays in the `OFF` state, where the `"Open/Close"` label is sufficient.
-- When pressed, it sends the `ON` command, briefly displays `"OK"` as feedback, then returns to `OFF`.
-
-Here’s how the interface appears when the switch is in the `OFF` state:
-
-<div class="garmin-screenshot-container">
-  <img src="images/app/06-switches-3-generic-3.png">
-</div>
 
 #### `Setpoint` and `Slider`
 

@@ -22,10 +22,9 @@ class MenuItemFactory {
     /*
      * Determines the menu item class that represents the given sitemap element.
      *
-     * The checks are ordered from the most specific to the most generic class,
-     * because the isMyType() predicates of the menu item classes are not
-     * mutually exclusive. For example, a Switch for a Player item satisfies
-     * both PlayerMenuItem.isMyType() and GenericSwitchMenuItem.isMyType().
+     * The checks are ordered from the most specific to the most generic class.
+     * The isMyType() predicates of the menu item classes are mutually
+     * exclusive, so at most one of them matches a given sitemap element.
      *
      * This function is the single source of truth for the type selection. It is
      * used both when a menu item is created and when an existing menu item is
@@ -60,10 +59,9 @@ class MenuItemFactory {
      * represents the given menu item type.
      *
      * Menu items are reused by position when a sitemap update is applied.
-     * Reuse is only valid if the existing menu item is of the class that
-     * would be created for the new sitemap element. Checking isMyType()
-     * alone is not sufficient because those predicates overlap between
-     * classes (e.g. GenericSwitchMenuItem accepts a Player switch as well).
+     * Reuse is only valid if the existing menu item is of the exact class
+     * that would be created for the new sitemap element. This ensures that
+     * a menu item is never reused for a different widget type.
      */
     public static function isMenuItemType( 
         menuItem as WidgetMenuItem, 

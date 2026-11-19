@@ -84,13 +84,13 @@ Contains multiple widgets covering both Switch and Selection sitemap elements. T
   Provides a shared base class with reusable functionality used by all switch-related widgets.
 
 - `generic/`  
-  Used for items with one or more generic commands.  
+  Used for items with one or more generic commands that do not represent an ON/OFF toggle.  
   - If only one command is available, it is sent directly when the menu item is selected.  
   - If two commands are available, selecting the menu item toggles between them.  
   - If more than two commands are available, a command selection menu is displayed.
 
 - `onoff/`  
-  For items with ON/OFF state. Displays an interactive toggle switch directly within the menu item.
+  For `Switch` and `Dimmer` items without any commands and for items whose available commands are exactly ON and OFF. Displays an interactive toggle switch directly within the menu item.
 
 - `player/`  
   For Player items. Displays the PLAY or PAUSE state in the menu item and opens a full-screen control view with PLAY, PAUSE, NEXT, and PREVIOUS controls when selected.

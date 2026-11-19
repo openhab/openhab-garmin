@@ -68,12 +68,10 @@ class AddOrUpdateMenuItemTask extends BaseSitemapProcessorTask {
             var item = _pageMenu.getItem( _index );
 
             // An existing menu item can only be reused if it is an instance
-            // of the class that MenuItemFactory would create for the new
-            // sitemap element. The isMyType() predicates of the menu item
-            // classes are not mutually exclusive (e.g. a Player switch also
-            // matches GenericSwitchMenuItem), so checking only isMyType()
-            // could silently turn an item into a different representation
-            // when sitemap positions shift (e.g. due to visibility changes).
+            // of the exact class that MenuItemFactory would create for the new
+            // sitemap element. This prevents an item from silently changing
+            // its representation when sitemap positions shift (e.g. due to
+            // visibility changes).
             if( item instanceof WidgetMenuItem
                 && MenuItemFactory.isMenuItemType( 
                     item, 

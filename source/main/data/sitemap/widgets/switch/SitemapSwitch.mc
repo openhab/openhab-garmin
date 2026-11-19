@@ -108,6 +108,29 @@ class SitemapSwitch extends SitemapWidget {
         return _commandDescriptions.hasDescriptions();
     }
 
+    // Returns true if the available command descriptions represent an ON/OFF
+    // toggle switch. Explicit sitemap mappings take precedence over the item's
+    // command descriptions, see the constructor.
+    public function hasToggleSwitchMappings() as Boolean {
+        if( _commandDescriptions.size() != 2 ) {
+            return false;
+        }
+
+        var hasOn = false;
+        var hasOff = false;
+        for( var i = 0; i < _commandDescriptions.size(); i++ ) {
+            var command = _commandDescriptions.getCommandDescription( i ).getCommand();
+            if( command.equals( SwitchItem.ITEM_STATE_ON ) ) {
+                hasOn = true;
+            } else if( command.equals( SwitchItem.ITEM_STATE_OFF ) ) {
+                hasOff = true;
+            } else {
+                return false;
+            }
+        }
+        return hasOn && hasOff;
+    }
+
     // Transforms the raw state into a descriptive form for display.
     //
     // The transformation uses these sources in the following priority:
