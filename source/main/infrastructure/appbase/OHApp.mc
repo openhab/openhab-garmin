@@ -8,6 +8,10 @@ import Toybox.Timer;
  * the initial view for both glance and widget modes, as well
  * as handling logic that runs during app startup and shutdown.
  *
+ * It also implements the active/inactive lifecycle that devices with
+ * API level 4.2.3 and later use when the app is hidden by the system
+ * instead of being terminated (e.g. when the watch face is shown).
+ *
  * This class also includes logic executed when the app is updated
  * or when settings are changed.
  */
@@ -29,10 +33,61 @@ class OHApp extends Application.AppBase {
     // onStart() is called on application start up
     public function onStart(state as Dictionary?) as Void {
         // this could be used for startup logic that is common to
-        // glance and widget. Currently there is none
+        // glance and widget. Currently there is none.
+        //
+        // If state contains :resume, the app was terminated while it was
+        // suspended. In that case the app starts fresh: the sitemap is
+        // restored from storage and the request loop is started by
+        // getInitialView(), so there is nothing to restore here.
     }
 
-    // onStop() is called when the application is exiting
+    // onActive() is called when the app becomes visible again.
+    // Only invoked on devices with the active/inactive lifecycle (API level
+    // 4.2.3+); on older devices the app is terminated instead of hidden.
+    (:typecheck(disableGlanceCheck))
+    public function onActive(state as Dictionary?) as Void {
+        // Logger.debug( "OHApp.onActive" );
+
+        // The glance process is not affected by the foreground lifecycle
+        if( isGlance() ) {
+            return;
+        }
+
+        AppLifecycle.setActive();
+
+        // Continue the request loop that was paused in onInactive().
+        // If the app is started for the first time, getInitialView() starts
+        // the loop and this is a no-op.
+        SitemapRequest.get().resume();
+
+        // Redraw the current view, since data may have changed while
+        // updates were suspended
+        if( ViewStack.getCurrentView()[0] != null ) {
+            WatchUi.requestUpdate();
+        }
+    }
+
+    // onInactive() is called when the app is hidden by the system, e.g. when
+    // the watch face is shown after inactivity. The app keeps running in this
+    // state, but access to system resources is limited. Polling and
+    // asynchronous sitemap processing are therefore suspended until the app
+    // becomes visible again.
+    (:typecheck(disableGlanceCheck))
+    public function onInactive(state as Dictionary?) as Void {
+        // Logger.debug( "OHApp.onInactive" );
+
+        // The glance process is not affected by the foreground lifecycle
+        if( isGlance() ) {
+            return;
+        }
+
+        AppLifecycle.setInactive();
+        SitemapRequest.get().pause();
+    }
+
+    // onStop() is called when the application is exiting.
+    // This is also the case when the app is suspended (state :suspend),
+    // i.e. terminated by the system to free resources while it was hidden.
     (:typecheck(disableGlanceCheck))
     public function onStop(state as Dictionary?) as Void {
         // Logger.debug( "OHApp.onStop" );

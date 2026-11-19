@@ -32,6 +32,13 @@ public class WarningToastHandler {
 
     // Show a warning toast
     public static function showWarning( warning as String ) as Void {
+        // A toast is a UI overlay. While the app is hidden by the system
+        // (inactive lifecycle state) it must not be shown; the next sitemap
+        // update after the app becomes visible again reports the error.
+        if( ! AppLifecycle.isActive() ) {
+            return;
+        }
+
         WatchUi.showToast( 
             warning.toUpper(), 
             { :icon => Rez.Drawables.iconWarning } );

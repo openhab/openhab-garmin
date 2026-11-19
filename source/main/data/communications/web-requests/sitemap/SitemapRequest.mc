@@ -20,6 +20,8 @@ import Toybox.Timer;
  *       If the polling interval is 0, the next request is triggered immediately.
  *     - stop(): halts all further web requests.
  *       If a request is already in progress, its response will be ignored after stop() is called.
+ *     - pause(): suspends the loop while the app is hidden by the system (inactive lifecycle state).
+ *     - resume(): continues the loop once the app is visible again.
  *
  * - Implements onReceive() to process responses:
  *     - On success, forwards the incoming JSON to the `SitemapProcessor`.
@@ -77,6 +79,13 @@ class SitemapRequest extends BaseRequest {
     // one start was called for each stop, requests are continued
     // We start stopped, so the initial value is 1
     private var _stopCount as Number = 1;
+
+    // Requests are also suspended while the app is hidden by the system
+    // (API level 4.2.3+ active/inactive lifecycle, see `pause()`/`resume()`).
+    // This is tracked separately from _stopCount because it is not a
+    // start/stop pair but a state that lasts until the app is visible again.
+    // Static, because the singleton has a separate instance for sync mode.
+    private static var _isAppActive as Boolean = true;
 
     // _hasPendingRequest is true if we are inbetween a makeRequest()
     // and an onReceive
@@ -165,10 +174,10 @@ class SitemapRequest extends BaseRequest {
     // Makes the web request
     private function makeRequestInternal( singleRequest as Boolean ) as Void {
         // We make the request only if
-        // - we are not stopped
+        // - we are not stopped and the app is active
         // - or it is a single request, which does not the timer to be started
         // - and there is no pending request
-        if( ( _stopCount <= 0 || singleRequest ) && ! _hasPendingRequest ) {
+        if( ( ( _stopCount <= 0 && _isAppActive ) || singleRequest ) && ! _hasPendingRequest ) {
             _requestCount++;
             // Logger.debug( "SitemapRequest.makeRequestInternal (#" + _requestCount + ")" );
             // Logger.debugMemory( null );
@@ -330,15 +339,18 @@ class SitemapRequest extends BaseRequest {
     }
 
     // Start the request loop
+    // Starting an already running loop is a no-op. This makes the call safe
+    // from both getInitialView() and onActive(), whose call order is not
+    // guaranteed when the app is resumed by the system.
     public function start() as Void {
         // Logger.debug( "SitemapRequest.start" );
         if( _stopCount <= 0 ) {
-            throw new GeneralException( "Tried to start already running sitemap request" );
-        } else {
-            _stopCount--;
-            // Logger.debug( "SitemapRequest.start: new count=" + _stopCount );
+            // Logger.debug( "SitemapRequest.start: already running" );
+            return;
         }
-        if( _stopCount == 0 ) {
+        _stopCount--;
+        // Logger.debug( "SitemapRequest.start: new count=" + _stopCount );
+        if( _stopCount == 0 && _isAppActive ) {
             // Logger.debug( "SitemapRequest.start: making request" );
             makeRequestPeriodic();
         }
@@ -364,14 +376,59 @@ class SitemapRequest extends BaseRequest {
         }
     }
 
+    // Suspends the request loop while the app is hidden by the system.
+    // Called from OHApp.onInactive() on devices that support the
+    // active/inactive app lifecycle.
+    //
+    // In the inactive state access to system resources is limited, so no
+    // requests are made and no asynchronous sitemap processing is left
+    // running. Unlike stop(), this does not consume a start/stop pair:
+    // resume() continues the loop once the app is visible again.
+    public function pause() as Void {
+        // Logger.debug( "SitemapRequest.pause" );
+        if( ! _isAppActive ) {
+            return;
+        }
+        _isAppActive = false;
+        _timer.stop();
+        // Do not discard asynchronous tasks while a sync is in progress; the
+        // sync relies on them. Otherwise the queue is emptied so that no
+        // sitemap processing continues while the app is hidden.
+        if( ! SafeSitemapSyncDelegate.isSyncInProgress() ) {
+            AsyncTaskQueue.get().removeAll();
+        }
+        if( _hasPendingRequest ) {
+            // The response of a request that was in flight when the app was
+            // hidden is not processed; the next request after resume()
+            // delivers fresh data.
+            _ignoreNextResponse = true;
+        }
+    }
+
+    // Resumes the request loop after the app became visible again.
+    // Called from OHApp.onActive().
+    public function resume() as Void {
+        // Logger.debug( "SitemapRequest.resume" );
+        if( _isAppActive ) {
+            return;
+        }
+        _isAppActive = true;
+        // Do not resume a loop that was stopped independently, e.g. while a
+        // command was sent or after a fatal error.
+        if( _stopCount <= 0 ) {
+            makeRequestPeriodic();
+        }
+    }
+
     // Used to trigger the next request after the current response has been
     // successfully processed.
     public function triggerNextRequest( applyErrorMinimumInterval as Boolean ) as Void {
         // Logger.debug( "SitemapRequest.triggerNextRequestInternal" );
 
         // Do not schedule requests while the loop is stopped, e.g. when a
-        // response arrives after stop() was called during app shutdown
-        if( _stopCount > 0 ) {
+        // response arrives after stop() was called during app shutdown,
+        // or while the app is hidden by the system
+        if( _stopCount > 0 || ! _isAppActive ) {
             return;
         }
 

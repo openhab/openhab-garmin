@@ -26,6 +26,13 @@ Connect IQ does not support subscribing to sitemap updates from openHAB. Therefo
 
 The polling interval can be configured by the user in the app settings.
 
+Polling is suspended while the app is hidden by the system. On devices with the
+active/inactive app lifecycle (API level 4.2.3 and later), such as fēnix 8/9 or
+Venu 3/4, returning to the watch face does not terminate the app; it keeps
+running with limited access to system resources. The app pauses its request
+loop in this state and resumes it, with an immediate update, when it becomes
+visible again.
+
 ### Commands
 
 Commands are sent using a dedicated command web request. This request is triggered by the menu items representing the corresponding sitemap elements.
