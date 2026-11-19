@@ -30,4 +30,6 @@ Since querying the API’s night mode state is relatively costly, the `NightMode
 
 It maintains its own internal view stack in parallel with the Connect IQ API’s view stack. This enables advanced behavior, such as replacing the entire stack with a new base view, and works around a known issue on certain newer devices where calling `WatchUi.getCurrentView()` can lead to crashes.
 
+`ViewStack.popView()` only removes views above the base view. Leaving the app is therefore handled explicitly in `HomepageMenuDelegate.onBack()`, so that a stray or duplicate back event cannot discard the base view and terminate the app. An attempted pop below the base view is reported as a non-fatal UI exception, which is shown to the user as a toast.
+
 See GitHub ticket [#274](https://github.com/openhab/openhab-garmin/issues/274) for details.

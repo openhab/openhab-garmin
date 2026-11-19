@@ -195,6 +195,10 @@ class CommandConfirmation {
     // Public because it is referenced via method(:leaveView).
     public function leaveView() as Void {
         _timer = null;
-        ViewStack.popView( WatchUi.SLIDE_RIGHT );
+        try {
+            ViewStack.popView( WatchUi.SLIDE_RIGHT );
+        } catch( ex ) {
+            ExceptionHandler.handleUserInterfaceException( ex );
+        }
     }
 }

@@ -57,8 +57,12 @@ class NumericPickerOpenConfirmationDelegate extends WatchUi.ConfirmationDelegate
             // Cancel: close the dialog, then drop the picker entry because the
             // system's dismissal pop then removes the picker, which is the top
             // view once the dialog is gone.
-            ViewStack.popView( WatchUi.SLIDE_RIGHT );
-            ViewStack.discardTopView();
+            try {
+                ViewStack.popView( WatchUi.SLIDE_RIGHT );
+                ViewStack.discardTopView();
+            } catch( ex ) {
+                ExceptionHandler.handleUserInterfaceException( ex );
+            }
         }
 
         return true;

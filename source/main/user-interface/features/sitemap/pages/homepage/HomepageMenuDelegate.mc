@@ -30,6 +30,15 @@ class HomepageMenuDelegate extends PageMenuDelegate {
     }
 
     /*
+    * The homepage is the base view of the widget, so pressing back leaves the app.
+    * This is done explicitly here, because ViewStack.popView() never pops below
+    * the base view.
+    */
+    public function onBack() as Void {
+        System.exit();
+    }
+
+    /*
     * On button-based devices, event handlers trigger the opening of the settings menu.
     * The `slideType` indicates which settings menu item should be focused.
     *

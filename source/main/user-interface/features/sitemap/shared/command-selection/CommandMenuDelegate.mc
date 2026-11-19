@@ -42,6 +42,10 @@ class CommandMenuDelegate extends Menu2InputDelegate {
 
     // On back, return to the parent view without sending a command
     public function onBack() as Void {
-        ViewStack.popView( WatchUi.SLIDE_RIGHT );
+        try {
+            ViewStack.popView( WatchUi.SLIDE_RIGHT );
+        } catch( ex ) {
+            ExceptionHandler.handleUserInterfaceException( ex );
+        }
     }
 }

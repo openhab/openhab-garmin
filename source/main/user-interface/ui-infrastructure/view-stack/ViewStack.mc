@@ -36,7 +36,18 @@ import Toybox.WatchUi;
     }
     
     // Pops a view from the stack, replacing WatchUi.popView().
+    //
+    // The base view is never popped. Leaving the app is done explicitly in
+    // HomepageMenuDelegate.onBack(), so that a stray or duplicate back event
+    // (or any other unintended pop) cannot discard the base view and with it
+    // the app. Such a pop is reported as a non-fatal UI exception, which is
+    // shown to the user as a toast.
     public static function popView( transition as SlideType ) as Void {
+        if( _viewStack.size() <= 1 ) {
+            throw new NonFatalUserInterfaceException( 
+                NonFatalUserInterfaceException.EX_POP_VIEW_ON_EMPTY_STACK 
+            );
+        }
         WatchUi.popView( transition );
         _viewStack = _viewStack.slice( 0, _viewStack.size() - 1 );
         // Logger.debug( "ViewStack.popView: new stack size=" + _viewStack.size() );
