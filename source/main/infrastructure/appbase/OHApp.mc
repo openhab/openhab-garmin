@@ -55,6 +55,11 @@ class OHApp extends Application.AppBase {
 
         AppLifecycle.setActive();
 
+        // Display a fatal error that occurred while the app was hidden.
+        // Done before resuming so that a newer error detected by the
+        // resumed request is not overwritten by the deferred one.
+        ExceptionHandler.showPendingException();
+
         // Continue the request loop that was paused in onInactive().
         // If the app is started for the first time, getInitialView() starts
         // the loop and this is a no-op.

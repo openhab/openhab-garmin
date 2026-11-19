@@ -12,28 +12,42 @@ import Toybox.Math;
  *   individual items and do not compromise the entire sitemap view.
  * - Displaying a full-screen error view immediately for all other errors.
  *
+ * Errors that cannot be displayed at the moment they occur (no view exists
+ * yet, or the app is hidden by the system) are deferred and presented by
+ * `consumeStartupException()` or `showPendingException()`.
+ *
  * Full-screen errors are managed by `ErrorView`, while toast notifications are handled by `WarningToastHandler`.
  */
 public class ExceptionHandler {
     /*
-    * Note on STARTUP EXCEPTIONS:
+    * Note on DEFERRED EXCEPTIONS:
+    *
+    * An exception is deferred when it cannot be presented at the moment it
+    * occurs: when no view exists yet (startup), or when the app is hidden by
+    * the system (inactive lifecycle state), because no view must be switched
+    * in while the app is not visible.
     *
     * Most exceptions during startup are handled directly by `OHApp`, which starts 
     * into an error view if needed. However, startup also triggers the first sitemap request. 
     * If this request fails immediately (e.g., with error -104: no phone), `onReceive()` 
     * may be called before any view is ready to display the error.
     *
-    * To handle this, such exceptions are stored by `handleException()` and later consumed 
-    * by one of the two views that may be loaded initially: `LoadingView` or `HomepageMenu`.
+    * The deferred value is a tuple consisting of the exception itself and a
+    * flag indicating whether it must be shown as a full-screen error view
+    * instead of a toast.
     *
-    * The stored value is a tuple consisting of the exception itself and a flag indicating 
-    * whether it should already be treated as fatal.
+    * A deferred exception is presented by
+    * - consumeStartupException(), called by `OHApp.getInitialView()` when no
+    *   view exists yet, or
+    * - showPendingException(), called by `OHApp.onActive()` when the app
+    *   becomes visible again.
     *
-    * NOTE: The "non-fatal" flag in this tuple is not necessarily the same as `exception.isFatal()`.
+    * NOTE: The "force view" flag is not necessarily the same as `exception.isFatal()`.
     * An exception might not be inherently fatal, but may still be treated as such 
     * if it has persisted beyond a configured threshold.
     */
-    private static var _startupException as [Exception, Boolean]?;
+    typedef DeferredException as [Exception, Boolean];
+    private static var _deferredException as DeferredException?;
     
     /*
     * Used for handling communication and general errors happening during background processing.
@@ -84,10 +98,11 @@ public class ExceptionHandler {
             // Logger.debug( "ExceptionHandler: non-fatal error: " + ex.getToastMessage().toUpper() );
             
             // If there is no view yet, the exception is stored
-            // as startup exception, otherwise the toast will be shown
+            // as deferred exception, otherwise the toast will be shown.
+            // While the app is hidden, WarningToastHandler suppresses it.
             if( ViewStack.getCurrentView()[0] == null ) {
-                // Logger.debug( "ExceptionHandler: storing non-fatal startup exception" );
-                _startupException = [ex, false];
+                // Logger.debug( "ExceptionHandler: storing non-fatal deferred exception" );
+                _deferredException = [ex, false];
             } else {
                 WarningToastHandler.showWarning( ex.getToastMessage() );
             }
@@ -102,14 +117,9 @@ public class ExceptionHandler {
             // error view until valid data is received.
             SitemapStore.deleteSitemapFromStorage();
             
-            // If no view is currently active, the exception is stored as a startup exception.
-            // Otherwise, the full-screen error view is shown immediately.
-            if( ViewStack.getCurrentView()[0] == null ) {
-                // Logger.debug( "ExceptionHandler: storing fatal startup exception" );
-                _startupException = [ex, true];
-            } else {
-                ErrorView.showOrUpdate( ex );
-            }
+            // Without a view, or while the app is hidden, the error must not
+            // be displayed now. It is presented as soon as possible.
+            showOrDefer( ex );
         }
     }
 
@@ -125,14 +135,8 @@ public class ExceptionHandler {
         // Logger.debug( "ExceptionHandler.handleSyncException" );
         Logger.debugException( ex );
 
-        // If no view is currently active, the exception is stored as a startup exception.
-        // Otherwise, the full-screen error view is shown immediately.
-        if( ViewStack.getCurrentView()[0] == null ) {
-            // Logger.debug( "ExceptionHandler: storing sync startup exception" );
-            _startupException = [ex, true];
-        } else {
-            ErrorView.showOrUpdate( ex );
-        }
+        // Without a view, or while the app is hidden, the error is deferred.
+        showOrDefer( ex );
     }
 
 
@@ -161,8 +165,23 @@ public class ExceptionHandler {
                 }
                 
                 // Show the error view
-                ErrorView.showOrUpdate( ex );
+                showOrDefer( ex );
             }
+        }
+    }
+
+
+    /*
+    * Presents a full-screen error, or defers it when no view exists yet
+    * (startup) or while the app is hidden by the system. Deferred errors are
+    * presented by consumeStartupException() or showPendingException().
+    */
+    public static function showOrDefer( ex as Exception ) as Void {
+        if( ViewStack.getCurrentView()[0] == null || ! AppLifecycle.isActive() ) {
+            // Logger.debug( "ExceptionHandler: deferring exception" );
+            _deferredException = [ex, true];
+        } else {
+            ErrorView.showOrUpdate( ex );
         }
     }
 
@@ -175,21 +194,57 @@ public class ExceptionHandler {
     * error view.
     */
     public static function consumeStartupException( useToast as Boolean ) as ErrorView? {
-        if( _startupException != null ) {
-            var startupException = _startupException;
-            _startupException = null;
-            var ex = startupException[0];
+        if( _deferredException != null ) {
+            var deferredException = _deferredException as DeferredException;
+            _deferredException = null;
+            var ex = deferredException[0];
             
             /*
-            * A toast is shown if the startup exception is a non-fatal 
+            * A toast is shown if the deferred exception is a non-fatal 
             * communication error and the calling view has enabled toast notifications.
             */
-            if( useToast && !startupException[1] && ex instanceof CommunicationBaseException ) {
+            if( useToast && !deferredException[1] && ex instanceof CommunicationBaseException ) {
                 WarningToastHandler.showWarning( ex.getToastMessage() );
             } else {
                 return ErrorView.createOrUpdate( ex );
             }
         }
         return null;
+    }
+
+    /*
+    * Presents an exception that was deferred while the app was hidden.
+    * Must be called when the app becomes visible again, see OHApp.onActive().
+    *
+    * A deferred startup exception stays deferred: it is presented by
+    * consumeStartupException() together with the initial view, because there
+    * is no view to switch to yet.
+    */
+    public static function showPendingException() as Void {
+        if( _deferredException == null ) {
+            return;
+        }
+
+        if( ! AppLifecycle.isActive() ) {
+            return;
+        }
+
+        if( ViewStack.getCurrentView()[0] == null ) {
+            // Still in startup, consumeStartupException() takes over
+            return;
+        }
+
+        var deferredException = _deferredException as DeferredException;
+        _deferredException = null;
+        var ex = deferredException[0];
+
+        if( ! deferredException[1]
+            && WarningToastHandler.useToasts()
+            && ex instanceof CommunicationBaseException
+        ) {
+            WarningToastHandler.showWarning( ex.getToastMessage() );
+        } else {
+            ErrorView.showOrUpdate( ex );
+        }
     }
 }

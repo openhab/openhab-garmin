@@ -261,7 +261,7 @@ import Toybox.Time;
             // state, except if we are offline and there is no HomepageMenu,
             // in which case we switch to an error view.
             if( _state == OFFLINE && ! HomepageMenu.exists() ) {
-                ErrorView.showOrUpdate( new OfflineWithoutSitemapException() );
+                ExceptionHandler.showOrDefer( new OfflineWithoutSitemapException() );
             } else {
                 // Redraw the connection mode indicators
                 ConnectionModeIndicator.update();

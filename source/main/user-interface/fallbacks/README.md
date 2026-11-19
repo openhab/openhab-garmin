@@ -14,7 +14,7 @@ Manages the detection, handling, and presentation of exceptions within the app.
   A full-screen view used to display fatal exceptions. Provides static helper methods to show or hide the view.
 
 - `ExceptionHandler`  
-  Offers reusable methods for handling exceptions throughout the app. Its primary responsibility is to determine whether an error should be presented as a toast notification for non-fatal issues or as a full-screen error view for fatal ones. It also contains logic to escalate non-fatal errors to fatal errors if they persist beyond a defined duration.
+  Offers reusable methods for handling exceptions throughout the app. Its primary responsibility is to determine whether an error should be presented as a toast notification for non-fatal issues or as a full-screen error view for fatal ones. It also contains logic to escalate non-fatal errors to fatal errors if they persist beyond a defined duration. Errors that cannot be presented immediately — before the initial view exists or while the app is hidden by the system — are deferred and presented by `getInitialView()` or when the app becomes visible again.
 
 - `WarningToastHandler`  
   Determines whether a non-fatal error should be displayed as a toast notification and provides the functionality to show these notifications.
