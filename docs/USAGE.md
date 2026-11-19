@@ -421,6 +421,28 @@ Frame label="Entrance Gates" {
 The ➡️ [`Group`]({{base}}/ui/sitemaps.html#element-type-group) Sitemap Widget will present a submenu containing all the items in the associated item of type `Group`.
 This also works recursively, if the `Group` item itself contains other `Group` items, those will again open their own submenus.
 
+If the group type maps to a widget the app can control (`Switch`, `Rollershutter`, or `Dimmer`), the submenu contains an additional first entry that represents the Group item itself.
+This allows you to send a command to the group as a whole (for example, switching all lights at once) without leaving the submenu.
+The entry uses the group label by default.
+
+You can define a different label for this entry by appending it to the group label, separated by a pipe:
+
+```java
+Group item=CC_House_Lights label="All Lights|All Lights Switch"
+```
+
+For group types without a control entry, the label is used unchanged.
+
+This is a Garmin-specific convention, not an openHAB feature. Other sitemap-based UIs will display the pipe and the complete label.
+The label is only split if both sides are non-empty and there is no additional pipe; otherwise the label is used unchanged.
+The optional state pattern must remain at the end of the label, because that is where openHAB appends the formatted state:
+
+```java
+Group item=CC_House_Lights label="All Lights|All Lights Switch [%s]"
+```
+
+In this example, the group entry in the parent menu and the submenu header are labelled "All Lights", while the control entry in the submenu is labelled "All Lights Switch" and shows the group state.
+
 ##### Example configuration:
 
 In this example, the `CC_House_Lights` item represents a hierarchical structure: it contains groups for each floor (e.g., the first floor), which in turn contain groups for individual rooms, and those room groups include the actual light switch items.

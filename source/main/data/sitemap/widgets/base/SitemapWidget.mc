@@ -56,7 +56,24 @@ class SitemapWidget extends SitemapElement {
 
         _type = json.getString( "type", "Widget without type" );
 
-        var fullLabel = parseLabelState( json, "label", "Widget label is missing" );
+        var jsonLinkedPage = json.getOptionalObject( "linkedPage" );
+
+        // Controllable Group elements get an additional widget representing
+        // the Group item itself on the linked page. Such a widget is created
+        // from the Group element, but without the linked page.
+        var isControllableGroup =
+            _type.equals( "Group" )
+            && ( linkedPage != null || jsonLinkedPage != null )
+            && SitemapWidgetFactory.isControllableGroup( json );
+
+        var groupControlLabel = null;
+        var rawLabel = json.getString( "label", "Widget label is missing" );
+        if( isControllableGroup ) {
+            var splitLabel = splitGroupLabel( rawLabel );
+            rawLabel = splitLabel[0];
+            groupControlLabel = splitLabel[1];
+        }
+        var fullLabel = parseLabelStateFromString( rawLabel );
         _label = fullLabel[0];
 
         // We fill the states only if the sitemap is fresh,
@@ -97,9 +114,16 @@ class SitemapWidget extends SitemapElement {
 
         if( linkedPage != null ) {
             _linkedPage = linkedPage;
-        } else {
-            var jsonLinkedPage = json.getOptionalObject( "linkedPage" );
-            if( jsonLinkedPage != null ) {
+        } else if( jsonLinkedPage != null ) {
+            if( isControllableGroup ) {
+                _linkedPage = new SitemapGroupPage(
+                    jsonLinkedPage,
+                    json,
+                    groupControlLabel,
+                    isSitemapFresh,
+                    taskQueue
+                );
+            } else {
                 _linkedPage = new SitemapPage( jsonLinkedPage, isSitemapFresh, taskQueue );
             }
         }

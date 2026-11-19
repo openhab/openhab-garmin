@@ -16,6 +16,8 @@ As a general rule, the sitemap data structure is not modified after it has been 
 
 There is one exception to this rule. When a command is sent successfully, the UI immediately reflects the expected new state without waiting for the next server response. This behavior is controlled by the corresponding menu items, which update the sitemap data structure locally to match the anticipated state. We refer to this as an internal update.
 
+There is one additional, deliberate deviation from the server data. For Group elements whose item type maps to a controllable widget, the group page contains a derived widget representing the Group item itself. It is created from a shallow copy of the Group element without its `linkedPage`, so it acts as a command entry instead of a navigation entry. The server-provided JSON is not modified. The derived widget uses the group label by default; the Garmin-specific `Group label|Control label` convention can override it. See `SitemapGroupPage`, `SitemapWidgetFactory.createGroupControl()`, and `SitemapElement.splitGroupLabel()`.
+
 ---
 
 ## Folder Structure

@@ -161,4 +161,25 @@ class JsonAdapter {
         return value;
     }
 
+    // Returns a shallow copy of the wrapped object without the given key.
+    // Used by derived sitemap elements, which must not inherit properties
+    // such as a linked page from the server-provided element.
+    public function copyWithout( excludedId as String ) as JsonAdapter {
+        var copy = {} as JsonObject;
+        var keys = _jsonObject.keys();
+        for( var i = 0; i < keys.size(); i++ ) {
+            var key = keys[i];
+            if( ! key.equals( excludedId ) ) {
+                copy[key] = _jsonObject[key];
+            }
+        }
+        return new JsonAdapter( copy );
+    }
+
+    // Sets a String value in the wrapped object. Intended for derived
+    // elements whose label is computed by the app.
+    public function setString( id as String, value as String ) as Void {
+        _jsonObject[id] = value;
+    }
+
 }
