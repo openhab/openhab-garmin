@@ -22,34 +22,54 @@ class MenuItemFactory {
     /*
      * Determines the menu item class that represents the given sitemap element.
      *
-     * The checks are ordered from the most specific to the most generic class.
-     * The isMyType() predicates of the menu item classes are mutually
-     * exclusive, so at most one of them matches a given sitemap element.
-     *
-     * This function is the single source of truth for the type selection. It is
-     * used both when a menu item is created and when an existing menu item is
-     * checked for reuse during a sitemap update. See AddOrUpdateMenuItemTask.
+     * The selection logic is centralized here so that menu item creation and
+     * reuse during sitemap updates always apply the same rules. See
+     * AddOrUpdateMenuItemTask.
      */
     public static function getMenuItemType( 
         sitemapWidget as SitemapWidget 
     ) as MenuItemType {
-        if( ContainerMenuItem.isMyType( sitemapWidget ) ) {
+        if( sitemapWidget instanceof SitemapFrame
+            || sitemapWidget instanceof SitemapGroup ) {
             return CONTAINER;
-        } else if( OnOffSwitchMenuItem.isMyType( sitemapWidget ) ) {
-            return ON_OFF_SWITCH;
-        } else if( TextMenuItem.isMyType( sitemapWidget ) ) {
+        } else if( sitemapWidget instanceof SitemapText ) {
             return TEXT;
-        } else if( NumericMenuItem.isMyType( sitemapWidget ) ) {
+        } else if( sitemapWidget instanceof SitemapNumeric ) {
             return NUMERIC;
-        } else if( RollershutterMenuItem.isMyType( sitemapWidget ) ) {
-            return ROLLERSHUTTER;
-        } else if( PlayerMenuItem.isMyType( sitemapWidget ) ) {
-            return PLAYER;
-        } else if( GenericSwitchMenuItem.isMyType( sitemapWidget ) ) {
-            return GENERIC_SWITCH;
+        } else if( sitemapWidget instanceof SitemapSwitch ) {
+            return getSwitchMenuItemType( sitemapWidget );
         } else {
             throw new JsonParsingException( 
                 "Element '" + sitemapWidget.getLabel() + "' is not supported" 
+            );
+        }
+    }
+
+    /*
+     * Determines the menu item type for Switch sitemap elements.
+     *
+     * The checks are ordered so that dedicated full-screen controls take
+     * precedence over the toggle and generic-switch representations.
+     */
+    private static function getSwitchMenuItemType( 
+        sitemapSwitch as SitemapSwitch 
+    ) as MenuItemType {
+        var itemType = sitemapSwitch.getSwitchItem().getType();
+
+        if( itemType.equals( "Player" ) ) {
+            return PLAYER;
+        } else if( itemType.equals( "Rollershutter" ) ) {
+            return ROLLERSHUTTER;
+        } else if( sitemapSwitch.hasToggleSwitchMappings() ) {
+            return ON_OFF_SWITCH;
+        } else if( ( itemType.equals( "Switch" ) || itemType.equals( "Dimmer" ) )
+                   && ! sitemapSwitch.hasMappings() ) {
+            return ON_OFF_SWITCH;
+        } else if( sitemapSwitch.hasMappings() ) {
+            return GENERIC_SWITCH;
+        } else {
+            throw new JsonParsingException( 
+                "Element '" + sitemapSwitch.getLabel() + "' is not supported" 
             );
         }
     }

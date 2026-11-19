@@ -11,11 +11,6 @@ import Toybox.WatchUi;
  */
 class TextMenuItem extends WidgetMenuItem {
     
-    // Returns true if the given widget matches the type handled by this menu item.
-    public static function isMyType( sitemapWidget as SitemapWidget ) as Boolean {
-        return sitemapWidget instanceof SitemapText;
-    }
-
     // Constructor
     public function initialize( 
         sitemapText as SitemapText,

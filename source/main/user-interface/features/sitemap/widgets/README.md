@@ -46,7 +46,7 @@ See also [Frames](https://next.openhab.org/docs/apps/garmin/#frame) and [Nested 
 
 ### Subfolder `factory/`
 
-Contains the `MenuItemFactory`, which determines which concrete menu item class to instantiate for a given `SitemapElement`.
+Contains the `MenuItemFactory`, which is the single source of truth for selecting the concrete menu item class for a given sitemap element. The same selection is used when creating a menu item and when checking whether an existing menu item can be reused during a sitemap update.
 
 ---
 

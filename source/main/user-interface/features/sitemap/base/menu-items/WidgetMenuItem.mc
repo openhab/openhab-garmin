@@ -87,13 +87,6 @@ class WidgetMenuItem extends StructuredMenuItem {
     }
     
 
-    // Subclasses must override this method to determine whether the given
-    // `SitemapWidget` instance is compatible with this menu item type.
-    public static function isMyType( sitemapWidget as SitemapWidget ) as Boolean { 
-        throw new AbstractMethodException( "StructuredMenuItem.getItemType" );
-    }
-
-
     /*
      * Subclasses can to override this method to process state changes.
      * Note: this is triggered only when the state has changed. If updates

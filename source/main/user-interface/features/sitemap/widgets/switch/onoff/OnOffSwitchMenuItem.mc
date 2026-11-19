@@ -9,22 +9,6 @@ import Toybox.Graphics;
  */
 class OnOffSwitchMenuItem extends SwitchMenuItem {
 
-    // Returns true if the given widget matches the type handled by this menu item.
-    public static function isMyType( sitemapWidget as SitemapWidget ) as Boolean {
-        // Render as a toggle switch if the available commands are ON/OFF,
-        // or if the underlying Item is a Switch or Dimmer without mappings.
-        // Items with non-ON/OFF mappings, as well as Player and Rollershutter
-        // Items, are handled separately.
-        return
-            sitemapWidget instanceof SitemapSwitch
-            && ( sitemapWidget.hasToggleSwitchMappings()
-                || ( ( sitemapWidget.getSwitchItem().getType().equals( "Switch" )
-                       || sitemapWidget.getSwitchItem().getType().equals( "Dimmer" ) )
-                    && ! sitemapWidget.hasMappings() ) )
-            && ! sitemapWidget.getSwitchItem().getType().equals( "Rollershutter" )
-            && ! sitemapWidget.getSwitchItem().getType().equals( "Player" );
-    }
-
     // True if the switch is on
     private var _isEnabled as Boolean?;
 

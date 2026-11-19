@@ -8,13 +8,6 @@ import Toybox.WatchUi;
  */
 class RollershutterMenuItem extends SwitchMenuItem {
 
-    // Returns true if the given widget matches the type handled by this menu item.
-    public static function isMyType( sitemapWidget as SitemapWidget ) as Boolean {
-        return 
-            sitemapWidget instanceof SitemapSwitch
-            && sitemapWidget.getSwitchItem().getType().equals( "Rollershutter" );
-    }
-
     // The full-screen view is instantiated only when the
     // menu item is selected
     private var _rollershutterView as RollershutterView?;

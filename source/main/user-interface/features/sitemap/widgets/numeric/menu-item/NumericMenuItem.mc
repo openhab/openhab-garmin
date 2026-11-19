@@ -14,11 +14,6 @@ import Toybox.WatchUi;
  */
 class NumericMenuItem extends CommandMenuItem {
 
-    // Returns true if the given widget matches the type handled by this menu item.
-    public static function isMyType( sitemapWidget as SitemapWidget ) as Boolean {
-        return sitemapWidget instanceof SitemapNumeric;
-    }
-
     // Constructor
     // Initializes the BaseCommandRequest used for changing the state,
     // the Drawable for the displayed state and the base class

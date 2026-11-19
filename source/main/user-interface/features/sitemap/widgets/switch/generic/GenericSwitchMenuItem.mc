@@ -19,20 +19,6 @@ import Toybox.Graphics;
  */
 class GenericSwitchMenuItem extends SwitchMenuItem {
     
-    // Returns true if the given widget matches the type handled by this menu item.
-    public static function isMyType( sitemapWidget as SitemapWidget ) as Boolean {
-        // This menu item applies to all Switches with available commands,
-        // unless the available commands represent an ON/OFF toggle. Player and
-        // Rollershutter items use their dedicated menu items, even though they
-        // may define mappings as well.
-        return 
-            sitemapWidget instanceof SitemapSwitch 
-            && sitemapWidget.hasMappings()
-            && ! sitemapWidget.hasToggleSwitchMappings()
-            && ! sitemapWidget.getSwitchItem().getType().equals( "Rollershutter" )
-            && ! sitemapWidget.getSwitchItem().getType().equals( "Player" );
-    }
-
     // Constructor
     public function initialize( 
         sitemapSwitch as SitemapSwitch,
