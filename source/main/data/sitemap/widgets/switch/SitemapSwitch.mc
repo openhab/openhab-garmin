@@ -25,6 +25,11 @@ class SitemapSwitch extends SitemapWidget {
     // This is either the mappings from the sitemap widget, or
     // the command descriptions from the openHAB item 
     private var _commandDescriptions as CommandDescriptions;
+
+    // Cached toggle mapping checks. The command descriptions are immutable
+    // after construction, so these only need to be computed once.
+    private var _hasToggleSwitchMappings as Boolean = false;
+    private var _hasToggleSwitchMappingsWithoutDescriptions as Boolean = false;
     
     // The openHAB item associated with this widget
     private var _switchItem as SwitchItem;
@@ -66,8 +71,13 @@ class SitemapSwitch extends SitemapWidget {
             taskQueue
         );
 
-        // Read the mappings ...
-        _mappings = new CommandDescriptions( json.getOptionalArray( "mappings" ) );
+        // Read the mappings. For Switch items, normalize them to exactly
+        // ON/OFF; unsupported or incomplete mappings are discarded.
+        var jsonMappings = json.getOptionalArray( "mappings" );
+        if( _switchItem.getType().equals( "Switch" ) ) {
+            jsonMappings = SwitchItem.normalizeSwitchCommandOptions( jsonMappings );
+        }
+        _mappings = new CommandDescriptions( jsonMappings );
 
         // ... and decide which command descriptions are to be used
         // If there are no widget mappings but there are
@@ -78,6 +88,10 @@ class SitemapSwitch extends SitemapWidget {
         } else {
             _commandDescriptions = _mappings;
         }
+
+        // The command descriptions are immutable after construction, so cache
+        // the toggle checks here instead of recomputing them during selection.
+        initializeToggleSwitchMappings();
 
         // For switch items, the mappings take precedence over the
         // display state provided in the sitemap element
@@ -112,23 +126,55 @@ class SitemapSwitch extends SitemapWidget {
     // toggle switch. Explicit sitemap mappings take precedence over the item's
     // command descriptions, see the constructor.
     public function hasToggleSwitchMappings() as Boolean {
+        return _hasToggleSwitchMappings;
+    }
+
+    // Returns true if the available command descriptions represent an ON/OFF
+    // toggle switch and none of the commands has a description/label.
+    public function hasToggleSwitchMappingsWithoutDescriptions() as Boolean {
+        return _hasToggleSwitchMappingsWithoutDescriptions;
+    }
+
+    // Returns true if the available command descriptions represent an ON/OFF
+    // toggle switch and at least one command has a description/label.
+    public function hasDescribedToggleSwitchMappings() as Boolean {
+        return _hasToggleSwitchMappings 
+            && ! _hasToggleSwitchMappingsWithoutDescriptions;
+    }
+
+    // Determines and caches the toggle mapping checks. The command
+    // descriptions are immutable after construction.
+    private function initializeToggleSwitchMappings() as Void {
+        _hasToggleSwitchMappings = false;
+        _hasToggleSwitchMappingsWithoutDescriptions = false;
+
         if( _commandDescriptions.size() != 2 ) {
-            return false;
+            return;
         }
 
         var hasOn = false;
         var hasOff = false;
+        var hasDescriptions = false;
         for( var i = 0; i < _commandDescriptions.size(); i++ ) {
-            var command = _commandDescriptions.getCommandDescription( i ).getCommand();
+            var description = _commandDescriptions.getCommandDescription( i );
+            if( ! description.getLabel().equals( "" ) ) {
+                hasDescriptions = true;
+            }
+
+            var command = description.getCommand();
             if( command.equals( SwitchItem.ITEM_STATE_ON ) ) {
                 hasOn = true;
             } else if( command.equals( SwitchItem.ITEM_STATE_OFF ) ) {
                 hasOff = true;
             } else {
-                return false;
+                return;
             }
         }
-        return hasOn && hasOff;
+
+        if( hasOn && hasOff ) {
+            _hasToggleSwitchMappings = true;
+            _hasToggleSwitchMappingsWithoutDescriptions = ! hasDescriptions;
+        }
     }
 
     // Transforms the raw state into a descriptive form for display.

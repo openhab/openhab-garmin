@@ -49,7 +49,12 @@ class MenuItemFactory {
      * Determines the menu item type for Switch sitemap elements.
      *
      * The checks are ordered so that dedicated full-screen controls take
-     * precedence over the toggle and generic-switch representations.
+     * precedence. Switch items are normalized in the data layer to either no
+     * mappings or exactly ON/OFF mappings. They use the generic switch only
+     * when those mappings have descriptions; otherwise they use the toggle.
+     * For other items, ON/OFF commands are only treated as a toggle if they
+     * have no descriptions; otherwise the generic switch is used so the
+     * descriptions can be displayed.
      */
     private static function getSwitchMenuItemType( 
         sitemapSwitch as SitemapSwitch 
@@ -60,10 +65,16 @@ class MenuItemFactory {
             return PLAYER;
         } else if( itemType.equals( "Rollershutter" ) ) {
             return ROLLERSHUTTER;
-        } else if( sitemapSwitch.hasToggleSwitchMappings() ) {
+        } else if( itemType.equals( "Switch" ) ) {
+            // Switch items are normalized in the data layer to either no
+            // mappings or exactly ON/OFF mappings. Use the generic switch
+            // only when those mappings have descriptions.
+            return sitemapSwitch.hasDescribedToggleSwitchMappings()
+                ? GENERIC_SWITCH
+                : ON_OFF_SWITCH;
+        } else if( itemType.equals( "Dimmer" ) && ! sitemapSwitch.hasMappings() ) {
             return ON_OFF_SWITCH;
-        } else if( ( itemType.equals( "Switch" ) || itemType.equals( "Dimmer" ) )
-                   && ! sitemapSwitch.hasMappings() ) {
+        } else if( sitemapSwitch.hasToggleSwitchMappingsWithoutDescriptions() ) {
             return ON_OFF_SWITCH;
         } else if( sitemapSwitch.hasMappings() ) {
             return GENERIC_SWITCH;

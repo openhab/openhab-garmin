@@ -7,6 +7,9 @@ import Toybox.WatchUi;
  * Switch is the only item type that requires both command and state descriptions.
  * If present, these are used to determine the available commands and to display
  * the current state. See `SwitchItem.updateDisplayState` for details.
+ *
+ * For item type `Switch`, command descriptions are normalized to exactly `ON`
+ * and `OFF`. Unsupported or incomplete command sets are discarded.
  */
 class SwitchItem extends Item {
 
@@ -40,9 +43,11 @@ class SwitchItem extends Item {
         // Then we read the item's command descriptions, if there are any ...
         var jsonCommandDescriptions = json.getOptionalObject( "commandDescription" );
         if( jsonCommandDescriptions != null ) {
-            _commandDescriptions = new CommandDescriptions( 
-                jsonCommandDescriptions.getOptionalArray( "commandOptions" ) 
-            );
+            var commandOptions = jsonCommandDescriptions.getOptionalArray( "commandOptions" );
+            if( getType().equals( "Switch" ) ) {
+                commandOptions = normalizeSwitchCommandOptions( commandOptions );
+            }
+            _commandDescriptions = new CommandDescriptions( commandOptions );
         }
 
         // ... and do the same for the state descriptions
@@ -57,6 +62,42 @@ class SwitchItem extends Item {
     // Returns the command descriptions
     public function getCommandDescriptions() as CommandDescriptions? {
         return _commandDescriptions;
+    }
+
+    // Normalizes command options for a Switch item.
+    //
+    // A Switch item only supports ON and OFF. Unsupported commands are
+    // removed. If the result is not exactly one ON and one OFF command,
+    // the whole set is discarded.
+    public static function normalizeSwitchCommandOptions( 
+        commandOptions as JsonAdapterArray? 
+    ) as JsonAdapterArray? {
+        if( commandOptions == null ) {
+            return null;
+        }
+
+        var filtered = new Array<JsonAdapter>[0];
+        var hasOn = false;
+        var hasOff = false;
+        for( var i = 0; i < commandOptions.size(); i++ ) {
+            var commandOption = commandOptions[i];
+            var command = commandOption.getString( 
+                "command", 
+                "Switch: command is missing from mapping/command description" 
+            );
+            if( command.equals( ITEM_STATE_ON ) ) {
+                filtered.add( commandOption );
+                hasOn = true;
+            } else if( command.equals( ITEM_STATE_OFF ) ) {
+                filtered.add( commandOption );
+                hasOff = true;
+            }
+        }
+
+        if( hasOn && hasOff && filtered.size() == 2 ) {
+            return filtered;
+        }
+        return null;
     }
 
     // Returns the state descriptions
