@@ -208,11 +208,19 @@ class StructuredMenuItem extends BaseMenuItem {
                 && rightSideDrawable instanceof TextArea 
                 && _stateTextResponsive != null
             ) {
-                rightSideDrawable.setSize( 
-                    ( ( rightX - leftX - spacing )
+                var availableWidth = rightX - leftX - spacing;
+
+                // Reserve at least 40% of the available width for the label
+                // so that a long state text cannot squeeze it out.
+                var maxStateTextWidth = ( availableWidth * 0.6 ).toNumber();
+                var stateTextWidth = 
+                    ( availableWidth
                         * TextDimensions.getWidthRatio( 
                             _stateTextResponsive[0], 
-                            _label ) ).toNumber(),
+                            _label ) ).toNumber();
+
+                rightSideDrawable.setSize( 
+                    CustomMath.min( stateTextWidth, maxStateTextWidth ).toNumber(),
                     dcHeight * 0.8 
                 );
             }
