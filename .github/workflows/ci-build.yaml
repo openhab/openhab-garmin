@@ -15,9 +15,23 @@ on:
 
 jobs:
   build:
-    name: CI Build
+    name: CI Build (${{ matrix.device }})
     runs-on: 'ubuntu-24.04'
     timeout-minutes: 5
+    strategy:
+      fail-fast: false
+      matrix:
+        # Representative subset covering the supported CIQ API levels and
+        # input/display families. No supported device runs CIQ 4.x, so venu2
+        # (API level 5.0) represents the lowest annotCiq400Plus tier.
+        # The device definitions in .github/ConnectIQ/Devices are reduced to
+        # the files needed for compilation.
+        device:
+          - fenix6pro   # CIQ 3.4, button-based Fenix
+          - venu2       # CIQ 5.0, touch-based Venu
+          - venu3       # CIQ 5.2, touch-based Venu
+          - fenix847mm  # CIQ 6.0, button-based Fenix (default device)
+          - edge540     # CIQ 6.0, Edge cycling computer
     steps:
       - name: Checkout
         if: github.head_ref == ''
@@ -38,6 +52,8 @@ jobs:
       - name: Build
         id: build
         run: './.github/scripts/monkeyc-build'
+        env:
+          DEVICE: ${{ matrix.device }}
 
       # this will identify modifications to files under source control during the workflow run;
       # untracked files will be included as well!

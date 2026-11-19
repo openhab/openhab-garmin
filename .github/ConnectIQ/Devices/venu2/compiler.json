@@ -1,0 +1,423 @@
+{
+    "alphaBlendingSupport": true,
+    "appTypes": [
+        {
+            "memoryLimit": 524288,
+            "type": "audioContentProvider"
+        },
+        {
+            "memoryLimit": 65536,
+            "type": "background"
+        },
+        {
+            "memoryLimit": 262144,
+            "type": "datafield"
+        },
+        {
+            "memoryLimit": 65536,
+            "type": "glance"
+        },
+        {
+            "memoryLimit": 786432,
+            "type": "watchApp"
+        },
+        {
+            "memoryLimit": 131072,
+            "type": "watchFace"
+        }
+    ],
+    "bitsPerPixel": 16,
+    "complicationIcon": {
+        "height": 46,
+        "width": 46
+    },
+    "deviceFamily": "round-416x416",
+    "deviceGroup": "API level 5.0",
+    "deviceId": "venu2",
+    "deviceVersion": "3d0fb192a2cf01699aefd0f384af3f527e5885bd",
+    "displayName": "Venu® 2",
+    "displayType": "amoled",
+    "enhancedGraphicSupport": true,
+    "faceIt": {
+        "analogHandles": [
+            "style1",
+            "style2",
+            "style3",
+            "style4",
+            "style5"
+        ],
+        "digitalFonts": [
+            "sourceSansPro",
+            "leagueGothic",
+            "notoSansCJKTC",
+            "qumpellkaNO12"
+        ],
+        "fontColors": [
+            "00000000",
+            "FFAA00",
+            "FF5500",
+            "FF0000",
+            "AA0000",
+            "00FF00",
+            "00AA00",
+            "00AAFF",
+            "5500AA",
+            "FF00FF"
+        ],
+        "templates": [
+            "roundAnalogTemplate1",
+            "roundDigitalTemplate1",
+            "roundAnalogTemplate2",
+            "roundDigitalTemplate2",
+            "roundAnalogTemplate3",
+            "roundDigitalTemplate3",
+            "roundAnalogTemplate4",
+            "roundDigitalTemplate4"
+        ]
+    },
+    "hardwarePartNumber": "010-02430-01",
+    "imageFormats": [
+        "yuv",
+        "jpg",
+        "png"
+    ],
+    "imageUrl": "https://res.garmin.com/en/products/010-02430-01/v/cf-sm-9d304379-e44e-4cd9-b877-69096b753348.jpg",
+    "launcherIcon": {
+        "height": 70,
+        "width": 70
+    },
+    "orientation": 0,
+    "partNumbers": [
+        {
+            "connectIQVersion": "5.0.0",
+            "firmwareVersion": 1905,
+            "languages": [
+                {
+                    "code": "ara",
+                    "fontSet": "ww"
+                },
+                {
+                    "code": "bul",
+                    "fontSet": "ww"
+                },
+                {
+                    "code": "ces",
+                    "fontSet": "ww"
+                },
+                {
+                    "code": "dan",
+                    "fontSet": "ww"
+                },
+                {
+                    "code": "deu",
+                    "fontSet": "ww"
+                },
+                {
+                    "code": "dut",
+                    "fontSet": "ww"
+                },
+                {
+                    "code": "eng",
+                    "fontSet": "ww"
+                },
+                {
+                    "code": "est",
+                    "fontSet": "ww"
+                },
+                {
+                    "code": "fin",
+                    "fontSet": "ww"
+                },
+                {
+                    "code": "fre",
+                    "fontSet": "ww"
+                },
+                {
+                    "code": "gre",
+                    "fontSet": "ww"
+                },
+                {
+                    "code": "heb",
+                    "fontSet": "ww"
+                },
+                {
+                    "code": "hrv",
+                    "fontSet": "ww"
+                },
+                {
+                    "code": "hun",
+                    "fontSet": "ww"
+                },
+                {
+                    "code": "ita",
+                    "fontSet": "ww"
+                },
+                {
+                    "code": "lav",
+                    "fontSet": "ww"
+                },
+                {
+                    "code": "lit",
+                    "fontSet": "ww"
+                },
+                {
+                    "code": "nob",
+                    "fontSet": "ww"
+                },
+                {
+                    "code": "pol",
+                    "fontSet": "ww"
+                },
+                {
+                    "code": "por",
+                    "fontSet": "ww"
+                },
+                {
+                    "code": "ron",
+                    "fontSet": "ww"
+                },
+                {
+                    "code": "rus",
+                    "fontSet": "ww"
+                },
+                {
+                    "code": "slo",
+                    "fontSet": "ww"
+                },
+                {
+                    "code": "slv",
+                    "fontSet": "ww"
+                },
+                {
+                    "code": "spa",
+                    "fontSet": "ww"
+                },
+                {
+                    "code": "swe",
+                    "fontSet": "ww"
+                },
+                {
+                    "code": "tur",
+                    "fontSet": "ww"
+                },
+                {
+                    "code": "ukr",
+                    "fontSet": "ww"
+                }
+            ],
+            "number": "006-B3703-00"
+        },
+        {
+            "connectIQVersion": "5.0.0",
+            "firmwareVersion": 1905,
+            "languages": [
+                {
+                    "code": "eng",
+                    "fontSet": "ww"
+                },
+                {
+                    "code": "ind",
+                    "fontSet": "ww"
+                },
+                {
+                    "code": "zsm",
+                    "fontSet": "ww"
+                },
+                {
+                    "code": "vie",
+                    "fontSet": "ww"
+                },
+                {
+                    "code": "zhs",
+                    "fontSet": "apac_chn"
+                },
+                {
+                    "code": "zht",
+                    "fontSet": "apac_twn"
+                },
+                {
+                    "code": "jpn",
+                    "fontSet": "apac_jpn"
+                },
+                {
+                    "code": "kor",
+                    "fontSet": "apac_kor"
+                },
+                {
+                    "code": "tha",
+                    "fontSet": "apac_tha"
+                }
+            ],
+            "number": "006-B3950-00"
+        },
+        {
+            "connectIQVersion": "5.0.0",
+            "firmwareVersion": 1905,
+            "languages": [
+                {
+                    "code": "ara",
+                    "fontSet": "ww"
+                },
+                {
+                    "code": "bul",
+                    "fontSet": "ww"
+                },
+                {
+                    "code": "ces",
+                    "fontSet": "ww"
+                },
+                {
+                    "code": "dan",
+                    "fontSet": "ww"
+                },
+                {
+                    "code": "deu",
+                    "fontSet": "ww"
+                },
+                {
+                    "code": "dut",
+                    "fontSet": "ww"
+                },
+                {
+                    "code": "eng",
+                    "fontSet": "ww"
+                },
+                {
+                    "code": "est",
+                    "fontSet": "ww"
+                },
+                {
+                    "code": "fin",
+                    "fontSet": "ww"
+                },
+                {
+                    "code": "fre",
+                    "fontSet": "ww"
+                },
+                {
+                    "code": "gre",
+                    "fontSet": "ww"
+                },
+                {
+                    "code": "heb",
+                    "fontSet": "ww"
+                },
+                {
+                    "code": "hrv",
+                    "fontSet": "ww"
+                },
+                {
+                    "code": "hun",
+                    "fontSet": "ww"
+                },
+                {
+                    "code": "ita",
+                    "fontSet": "ww"
+                },
+                {
+                    "code": "lav",
+                    "fontSet": "ww"
+                },
+                {
+                    "code": "lit",
+                    "fontSet": "ww"
+                },
+                {
+                    "code": "nob",
+                    "fontSet": "ww"
+                },
+                {
+                    "code": "pol",
+                    "fontSet": "ww"
+                },
+                {
+                    "code": "por",
+                    "fontSet": "ww"
+                },
+                {
+                    "code": "ron",
+                    "fontSet": "ww"
+                },
+                {
+                    "code": "rus",
+                    "fontSet": "ww"
+                },
+                {
+                    "code": "slo",
+                    "fontSet": "ww"
+                },
+                {
+                    "code": "slv",
+                    "fontSet": "ww"
+                },
+                {
+                    "code": "spa",
+                    "fontSet": "ww"
+                },
+                {
+                    "code": "swe",
+                    "fontSet": "ww"
+                },
+                {
+                    "code": "tur",
+                    "fontSet": "ww"
+                },
+                {
+                    "code": "ukr",
+                    "fontSet": "ww"
+                }
+            ],
+            "number": "006-B4171-00"
+        },
+        {
+            "connectIQVersion": "5.0.0",
+            "firmwareVersion": 1905,
+            "languages": [
+                {
+                    "code": "eng",
+                    "fontSet": "ww"
+                },
+                {
+                    "code": "ind",
+                    "fontSet": "ww"
+                },
+                {
+                    "code": "zsm",
+                    "fontSet": "ww"
+                },
+                {
+                    "code": "vie",
+                    "fontSet": "ww"
+                },
+                {
+                    "code": "zhs",
+                    "fontSet": "apac_chn"
+                },
+                {
+                    "code": "zht",
+                    "fontSet": "apac_twn"
+                },
+                {
+                    "code": "jpn",
+                    "fontSet": "apac_jpn"
+                },
+                {
+                    "code": "kor",
+                    "fontSet": "apac_kor"
+                },
+                {
+                    "code": "tha",
+                    "fontSet": "apac_tha"
+                }
+            ],
+            "number": "006-B4180-00"
+        }
+    ],
+    "resolution": {
+        "height": 416,
+        "width": 416
+    },
+    "screenRotationSupport": false,
+    "webDocDeviceGroup": "Watches/Wearables",
+    "worldWidePartNumber": "006-B3703-00"
+}

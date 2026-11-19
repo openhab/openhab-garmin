@@ -1,0 +1,170 @@
+{
+    "alphaBlendingSupport": true,
+    "appTypes": [
+        {
+            "memoryLimit": 32768,
+            "type": "background"
+        },
+        {
+            "memoryLimit": 131072,
+            "type": "datafield"
+        },
+        {
+            "memoryLimit": 65536,
+            "type": "glance"
+        },
+        {
+            "memoryLimit": 1048576,
+            "type": "watchApp"
+        }
+    ],
+    "bitsPerPixel": 16,
+    "codePageSize": 4096,
+    "controlBarSupport": true,
+    "deviceFamily": "rectangle-246x322",
+    "deviceGroup": "API level 6.0",
+    "deviceId": "edge540",
+    "deviceVersion": "9db5420c33d6cadc5276a6ed767d321da28f1ebb",
+    "displayName": "Edge® 540 / 540 Solar",
+    "displayType": "lcd",
+    "hardwarePartNumber": "010-02694-00",
+    "imageFormats": [
+        "png",
+        "jpg"
+    ],
+    "imageUrl": "https://res.garmin.com/en/products/010-02694-00/g/cf-sm.jpg",
+    "launcherIcon": {
+        "height": 35,
+        "width": 35
+    },
+    "maxPrgFilespace": 128000000,
+    "orientation": 0,
+    "partNumbers": [
+        {
+            "connectIQVersion": "6.0.0",
+            "firmwareVersion": 3133,
+            "languages": [
+                {
+                    "code": "hrv",
+                    "fontSet": "ww"
+                },
+                {
+                    "code": "ces",
+                    "fontSet": "ww"
+                },
+                {
+                    "code": "dan",
+                    "fontSet": "ww"
+                },
+                {
+                    "code": "dut",
+                    "fontSet": "ww"
+                },
+                {
+                    "code": "eng",
+                    "fontSet": "ww"
+                },
+                {
+                    "code": "fin",
+                    "fontSet": "ww"
+                },
+                {
+                    "code": "fre",
+                    "fontSet": "ww"
+                },
+                {
+                    "code": "deu",
+                    "fontSet": "ww"
+                },
+                {
+                    "code": "gre",
+                    "fontSet": "ww"
+                },
+                {
+                    "code": "heb",
+                    "fontSet": "ww"
+                },
+                {
+                    "code": "hun",
+                    "fontSet": "ww"
+                },
+                {
+                    "code": "ita",
+                    "fontSet": "ww"
+                },
+                {
+                    "code": "nob",
+                    "fontSet": "ww"
+                },
+                {
+                    "code": "pol",
+                    "fontSet": "ww"
+                },
+                {
+                    "code": "por",
+                    "fontSet": "ww"
+                },
+                {
+                    "code": "rus",
+                    "fontSet": "ww"
+                },
+                {
+                    "code": "slo",
+                    "fontSet": "ww"
+                },
+                {
+                    "code": "slv",
+                    "fontSet": "ww"
+                },
+                {
+                    "code": "spa",
+                    "fontSet": "ww"
+                },
+                {
+                    "code": "swe",
+                    "fontSet": "ww"
+                },
+                {
+                    "code": "ind",
+                    "fontSet": "ww"
+                },
+                {
+                    "code": "zsm",
+                    "fontSet": "ww"
+                },
+                {
+                    "code": "vie",
+                    "fontSet": "ww"
+                },
+                {
+                    "code": "zhs",
+                    "fontSet": "apac_chn"
+                },
+                {
+                    "code": "zht",
+                    "fontSet": "apac_twn"
+                },
+                {
+                    "code": "jpn",
+                    "fontSet": "apac_jpn"
+                },
+                {
+                    "code": "kor",
+                    "fontSet": "apac_kor"
+                },
+                {
+                    "code": "tha",
+                    "fontSet": "apac_tha"
+                }
+            ],
+            "number": "006-B4061-00"
+        }
+    ],
+    "resolution": {
+        "height": 322,
+        "width": 246
+    },
+    "screenRotationSupport": false,
+    "webDocDeviceGroup": "Edge",
+    "worldWidePartNumber": "006-B4061-00"
+}

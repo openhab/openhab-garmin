@@ -3,6 +3,16 @@
 # Abort on the first error, so compiler failures actually fail the build
 set -e
 
+# Device to compile for. The CI workflow sets this via the build matrix;
+# it defaults to the primary development device when run locally.
+DEVICE="${DEVICE:-fenix847mm}"
+
+# Jungle file generated from monkey.jungle for the selected device.
+# The SDK copy committed to this repository only contains the device
+# definitions used by CI, so monkeyc rejects the qualifiers of all
+# other devices in monkey.jungle.
+GENERATED_JUNGLE="ci.generated.jungle"
+
 # Define colors for output
 BLUE='\033[0;34m'
 NOCOLOR='\033[0m'
@@ -10,6 +20,49 @@ NOCOLOR='\033[0m'
 # Define path constants
 MONKEYC_COMPILER="$HOME/.Garmin/ConnectIQ/Sdks/connectiq-sdk-lin-9.3.0-2026-10-20-95888f262/bin/monkeyc"
 PRIVATE_KEY="$RUNNER_TEMP/developer_key.der"
+
+# Writes a jungle file that only contains the configuration of the selected
+# device. Device sections referenced by the selected device (for example
+# venu2.excludeAnnotations = $(d2airx10.excludeAnnotations)) are resolved
+# transitively and kept as well.
+generate_jungle() {
+  local device="$1"
+  local output="$2"
+
+  python3 - "$device" "$output" <<'PY'
+import re
+import sys
+
+device, output = sys.argv[1], sys.argv[2]
+property_pattern = re.compile(
+    r'^([a-z][a-z0-9]*)\.(resourcePath|excludeAnnotations|sourcePath)\s*='
+)
+reference_pattern = re.compile(r'\$\(([a-z][a-z0-9]*)\.')
+
+with open('monkey.jungle', encoding='utf-8') as jungle:
+    lines = jungle.read().splitlines()
+
+required = {'base', device}
+changed = True
+while changed:
+    changed = False
+    for line in lines:
+        match = property_pattern.match(line)
+        if not match or match.group(1) not in required:
+            continue
+        for reference in reference_pattern.findall(line):
+            if reference not in required:
+                required.add(reference)
+                changed = True
+
+with open(output, 'w', encoding='utf-8', newline='\n') as generated:
+    for line in lines:
+        match = property_pattern.match(line)
+        if match and match.group(1) not in required:
+            continue
+        generated.write(f'{line}\n')
+PY
+}
 
 echo -e "${BLUE}Current working directory: $(pwd)${NOCOLOR}"
 
@@ -25,10 +78,16 @@ mkdir -p "$HOME/.Garmin"
 cp -r .github/ConnectIQ "$HOME/.Garmin/"
 echo -e "${BLUE} DONE${NOCOLOR}"
 
+# Generate the device-specific build configuration and clean it up on exit
+trap 'rm -f "$GENERATED_JUNGLE"' EXIT
+echo -e "${BLUE}Generating build configuration for ${DEVICE} ...${NOCOLOR}"
+generate_jungle "$DEVICE" "$GENERATED_JUNGLE"
+echo -e "${BLUE} DONE${NOCOLOR}"
+
 # Build the MonkeyC project
-echo -e "${BLUE}Compiling with monkeyc ...${NOCOLOR}"
+echo -e "${BLUE}Compiling ${DEVICE} with monkeyc ...${NOCOLOR}"
 $MONKEYC_COMPILER -v
-# Use the project's own jungle file so that the CI build always matches
-# the local build configuration (sources, resources and device settings).
-$MONKEYC_COMPILER --jungles monkey.jungle --private-key "$PRIVATE_KEY" --typecheck 3 --unit-test --warn --device fenix847mm --output "$RUNNER_TEMP/compiled"
+# The generated jungle is derived from monkey.jungle, so the CI build always
+# matches the local build configuration (sources, resources and settings).
+$MONKEYC_COMPILER --jungles "$GENERATED_JUNGLE" --private-key "$PRIVATE_KEY" --typecheck 3 --unit-test --warn --device "$DEVICE" --output "$RUNNER_TEMP/compiled"
 echo -e "${BLUE}Finished compilation.${NOCOLOR}"

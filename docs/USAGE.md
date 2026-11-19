@@ -462,12 +462,12 @@ As a result, `Selection` is treated as a **synonym for `Switch`**, and both beha
 The widget supports four rendering variants, selected based on the underlying Item type and the available command descriptions. The following conditions are evaluated in order, from top to bottom. The first matching variant is used:
 
 1. **Player Control** – A full-screen control for `Player` Items, providing `PLAY`/`PAUSE`, `NEXT`, and `PREVIOUS` buttons.
-2. **Rollershutter Control** – A full-screen control for `Rollershutter` Items, providing `UP`, `DOWN`, and `STOP` buttons.
-3. **Toggle Switch** – A two-state toggle control used when:
+1. **Rollershutter Control** – A full-screen control for `Rollershutter` Items, providing `UP`, `DOWN`, and `STOP` buttons.
+1. **Toggle Switch** – A two-state toggle control used when:
    - The underlying Item is of type `Switch`, and its available commands are not an `ON`/`OFF` pair with descriptions.
    - The underlying Item is of type `Dimmer`, and no command descriptions or sitemap mappings are available.
    - The underlying Item is not of type `Switch`, and its available commands consist of exactly `ON` and `OFF` without descriptions.
-4. **Generic Switch** – A selection control used for `Switch` Items with an `ON`/`OFF` pair with descriptions, and for non-`Switch` Items whose available commands are not an undescribed `ON`/`OFF` pair.
+1. **Generic Switch** – A selection control used for `Switch` Items with an `ON`/`OFF` pair with descriptions, and for non-`Switch` Items whose available commands are not an undescribed `ON`/`OFF` pair.
 
 Valid explicit sitemap mappings take precedence over command descriptions provided by the Item's metadata. If none of the conditions match, the widget is not supported.
 
