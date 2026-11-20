@@ -87,11 +87,14 @@ class HomepageMenu extends BasePageMenu {
     // Hides the states by retrieving the cached sitemap, marking all states as
     // stale, and updating the menu.
     //
+    // The menu is updated synchronously: when the app becomes visible again
+    // after it was hidden by the system, the invalidated states must be part
+    // of the first frame. An asynchronous update would show the previous
+    // states until the task queue has worked through the menu.
+    //
     // The states of the rebuilt model no longer match the stored JSON, so the
     // divergence is recorded here: without it, an incoming response with an
     // unchanged JSON would be skipped and the states would never come back.
-    // Because update() rebuilds the menu asynchronously, a redraw is requested
-    // afterwards.
     //
     // Returns true if states were hidden. The menu can exist without a sitemap
     // in memory, e.g. after a fatal error cleared it, so this is a no-op then.
@@ -101,9 +104,12 @@ class HomepageMenu extends BasePageMenu {
             return false;
         }
 
-        update( sitemap );
+        var taskQueue = new SyncTaskQueue();
+        updateWithQueue( sitemap, taskQueue );
+        taskQueue.executeTasks();
+
         SitemapStore.noteModelDivergence();
-        AsyncTaskQueue.get().add( new RequestUiUpdateTask() );
+        WatchUi.requestUpdate();
 
         return true;
     }

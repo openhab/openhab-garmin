@@ -160,14 +160,29 @@ class BasePageMenu extends BaseMenu {
     * array indices instead.
     */
     public function update( sitemapContainer as SitemapContainerImplementation ) as Void {
+        updateWithQueue( sitemapContainer, AsyncTaskQueue.get() );
+    }
+
+    /*
+    * Same as update(), but the tasks are queued in the provided queue instead
+    * of the AsyncTaskQueue.
+    *
+    * A SyncTaskQueue is used when the update must be visible with the next
+    * frame, e.g. when hiding expired states before the app is drawn again
+    * after it was hidden by the system. The caller is responsible for
+    * executing the tasks, see HomepageMenu.hideStates().
+    *
+    * The algorithm described above is not affected by the queue type.
+    */
+    protected function updateWithQueue( 
+        sitemapContainer as SitemapContainerImplementation,
+        taskQueue as TaskQueue
+    ) as Void {
         // Logger.debug( "PageMenu.update: updating page '" + _title + "'" );
 
         // Update the title of the menu
         _title = sitemapContainer.title;
         setTitleAsString( _title );
-
-        // The update is done by asynchronously executed tasks
-        var taskQueue = AsyncTaskQueue.get();
 
         // Since the `SitemapProcessor` has already added tasks that should run
         // AFTER the menu update, we prepend all tasks to the queue.
