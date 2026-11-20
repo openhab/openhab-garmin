@@ -33,7 +33,7 @@ It defines shared properties and common parsing logic used by all concrete sitem
 The Connect IQ API delivers JSON data as a dictionary.  
 `JsonObjectAdapter` provides type-safe accessors for retrieving objects, arrays, strings, numbers, and booleans from the JSON structure.
 
-`JsonComparer` provides a recursive structural comparison of two JSON values. It is used to detect that a received sitemap is identical to the stored one, so that the data layer and the menu do not need to be rebuilt.
+`JsonComparer` provides a recursive structural comparison of two JSON values. `SitemapComparison` builds on it to compare a received sitemap with the stored one. The comparison is split over several asynchronous tasks (the root first, then one task per top level element), so that no single task blocks the UI for the whole sitemap. It is used to detect that a received sitemap is identical to the stored one, so that the data layer and the menu do not need to be rebuilt.
 
 This layer isolates JSON handling details from the higher-level sitemap model.
 

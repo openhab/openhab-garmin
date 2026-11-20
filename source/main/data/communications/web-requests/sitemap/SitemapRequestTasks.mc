@@ -14,6 +14,17 @@ import Toybox.Lang;
  *    Triggered by `SitemapRequest` with a JSON dictionary as input.
  *    It creates a `SitemapHomepage` and schedules the next task in the sequence.
  *
+ *    If the menu already displays the stored JSON (i.e. nothing has diverged,
+ *    see SitemapStore.noteModelDivergence()), the response is compared with the
+ *    stored one first. The comparison is split over several tasks:
+ *      1.0) CompareSitemapTask:
+ *           Compares the root of both sitemaps and schedules one
+ *           CompareSitemapElementTask per top level element, followed by
+ *           FinishSitemapComparisonTask.
+ *
+ *    If the response is unchanged, it is dropped and the next request is
+ *    triggered. Otherwise the menu is created or updated as described below.
+ *
  *    If no menu exists yet, this task initiates:
  *      1.1) CreateHomepageTask:
  *           Initializes the menu structure using asynchronous tasks.
@@ -81,32 +92,97 @@ class ProcessIncomingJsonTask extends BaseSitemapProcessorTask {
         if( ! isSyncInProgress
             && HomepageMenu.exists()
             && SitemapStore.isModelInSync()
-            && SitemapStore.matchesStored( _json.json )
         ) {
-            // The JSON is unchanged, but its age must be refreshed so that
-            // the data does not expire while no update is applied.
-            SitemapStore.refreshStored( _json );
-            Logger.debug( "ProcessIncomingJsonTask: update dropped, sitemap unchanged" );
-            AsyncTaskQueue.get().add( new TriggerNextRequestTask() );
+            AsyncTaskQueue.get().add( new CompareSitemapTask( _json ) );
             return;
         }
 
-        Logger.debug( "ProcessIncomingJsonTask: new data layer constructed" );
+        SitemapApplier.apply( _json );
+    }
+}
 
-        var sitemapHomepage = SitemapStore.updateSitemapFromJson( _json );
+// 1.0)
+// Compares the received sitemap with the stored one. The comparison is split
+// into several tasks, so that no single task blocks the user interface for the
+// whole sitemap: this task compares the root and schedules one task per top
+// level element, followed by a task that decides what to do with the response.
+class CompareSitemapTask extends BaseSitemapProcessorTask {
 
-        if( ! HomepageMenu.exists() ) {
-            // No menu exists yet, so we process the JSON and transition 
-            // from the LoadingView to the menu.
-            // This can also happen after an out-of-memory exception,
-            // where the menu was cleared — in that case, we switch
-            // from the ErrorView to the new menu.
-            AsyncTaskQueue.get().add( new CreateHomepageTask( sitemapHomepage ) );
-        } else {
-            // There is already a menu, so we update it,
-            // asynchronously to not block the UI
-            AsyncTaskQueue.get().add( new UpdateHomepageTask( sitemapHomepage ) );
+    private var _json as SitemapJsonIncoming;
+
+    public function initialize( json as SitemapJsonIncoming ) {
+        BaseSitemapProcessorTask.initialize();
+        _json = json;
+    }
+
+    public function invoke() as Void {
+        var comparison = SitemapStore.createComparison( _json.json );
+
+        // Without a stored JSON, or if the root already differs, there is
+        // nothing left to compare
+        if( comparison == null || ( comparison as SitemapComparison ).compareRoot() ) {
+            SitemapApplier.apply( _json );
+            return;
         }
+
+        var taskQueue = AsyncTaskQueue.get();
+        var elementCount = ( comparison as SitemapComparison ).getElementCount();
+        for( var i = 0; i < elementCount; i++ ) {
+            taskQueue.add( new CompareSitemapElementTask( comparison, i ) );
+        }
+        taskQueue.add( new FinishSitemapComparisonTask( _json, comparison ) );
+    }
+}
+
+// 1.0.1)
+// Compares a single top level element of both sitemaps. If a difference has
+// already been found, this task returns without doing any work.
+class CompareSitemapElementTask extends BaseSitemapProcessorTask {
+
+    private var _comparison as SitemapComparison;
+    private var _index as Number;
+
+    public function initialize( comparison as SitemapComparison, index as Number ) {
+        BaseSitemapProcessorTask.initialize();
+        _comparison = comparison;
+        _index = index;
+    }
+
+    public function invoke() as Void {
+        _comparison.compareElement( _index );
+    }
+}
+
+// 1.0.2)
+// Decides what to do with the response once the comparison is complete.
+class FinishSitemapComparisonTask extends BaseSitemapProcessorTask {
+
+    private var _json as SitemapJsonIncoming;
+    private var _comparison as SitemapComparison;
+
+    public function initialize( 
+        json as SitemapJsonIncoming, 
+        comparison as SitemapComparison 
+    ) {
+        BaseSitemapProcessorTask.initialize();
+        _json = json;
+        _comparison = comparison;
+    }
+
+    public function invoke() as Void {
+        // The model can diverge while the comparison is running, e.g. if a
+        // command is sent in the meantime. In that case the response must be
+        // applied even if it is unchanged. See SitemapStore.noteModelDivergence().
+        if( _comparison.isDifferent || ! SitemapStore.isModelInSync() ) {
+            SitemapApplier.apply( _json );
+            return;
+        }
+
+        // The JSON is unchanged, but its age must be refreshed so that
+        // the data does not expire while no update is applied.
+        SitemapStore.refreshStored( _json );
+        Logger.debug( "FinishSitemapComparisonTask: update dropped, sitemap unchanged" );
+        AsyncTaskQueue.get().add( new TriggerNextRequestTask() );
     }
 }
 
@@ -275,5 +351,32 @@ class TriggerNextRequestTask extends BaseSitemapProcessorTask {
     public function invoke() as Void {
         // Logger.debug( "TriggerNextRequestTask.invoke" );
         SitemapRequest.get().triggerNextRequest( false );
+    }
+}
+
+// Applies a received sitemap: builds the new data layer, which schedules its
+// own tasks, and then creates or updates the menu.
+class SitemapApplier {
+    public static function apply( json as SitemapJsonIncoming ) as Void {
+        // Logger.debug( "SitemapApplier.apply" );
+
+        // Note: SitemapStore.updateSitemapFromJson also refreshes the stored
+        // JSON and marks the model as applied
+        var sitemapHomepage = SitemapStore.updateSitemapFromJson( json );
+
+        Logger.debug( "SitemapApplier: new data layer constructed" );
+
+        if( ! HomepageMenu.exists() ) {
+            // No menu exists yet, so we process the JSON and transition 
+            // from the LoadingView to the menu.
+            // This can also happen after an out-of-memory exception,
+            // where the menu was cleared — in that case, we switch
+            // from the ErrorView to the new menu.
+            AsyncTaskQueue.get().add( new CreateHomepageTask( sitemapHomepage ) );
+        } else {
+            // There is already a menu, so we update it,
+            // asynchronously to not block the UI
+            AsyncTaskQueue.get().add( new UpdateHomepageTask( sitemapHomepage ) );
+        }
     }
 }

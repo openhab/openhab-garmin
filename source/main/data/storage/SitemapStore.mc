@@ -243,10 +243,13 @@ class SitemapStore  {
         }
     }
 
-    // Returns true if the given JSON equals the currently stored JSON.
+    // Creates a comparison between the given JSON and the currently stored
+    // JSON. Returns null if there is no stored JSON to compare with.
     (:typecheck(disableGlanceCheck))
-    public static function matchesStored( json as JsonObject ) as Boolean {
-        return _json != null && JsonComparer.areEqual( ( _json as StoredJson )[0], json );
+    public static function createComparison( receivedJson as JsonObject ) as SitemapComparison? {
+        return _json != null
+               ? new SitemapComparison( ( _json as StoredJson )[0], receivedJson )
+               : null;
     }
 
     // Keeps the stored JSON but refreshes its timestamp and size estimate,
