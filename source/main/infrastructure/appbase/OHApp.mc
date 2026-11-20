@@ -55,22 +55,28 @@ class OHApp extends Application.AppBase {
 
         AppLifecycle.setActive();
 
-        // Display a fatal error that occurred while the app was hidden.
-        // Done before resuming so that a newer error detected by the
-        // resumed request is not overwritten by the deferred one.
-        ExceptionHandler.showPendingException();
+        try {
+            // Display a fatal error that occurred while the app was hidden.
+            // Done before resuming so that a newer error detected by the
+            // resumed request is not overwritten by the deferred one.
+            ExceptionHandler.showPendingException();
 
-        // States captured before the app was hidden are only shown if they are
-        // still within the expiration time. Otherwise they stay hidden until
-        // the resumed request delivers data.
-        if( HomepageMenu.exists() ) {
-            HomepageMenu.get().hideStatesIfStale();
+            // States captured before the app was hidden are only shown if they are
+            // still within the expiration time. Otherwise they stay hidden until
+            // the resumed request delivers data.
+            if( HomepageMenu.exists() ) {
+                HomepageMenu.get().hideStatesIfStale();
+            }
+
+            // Continue the request loop that was paused in onInactive().
+            // If the app is started for the first time, getInitialView() starts
+            // the loop and this is a no-op.
+            SitemapRequest.get().resume();
+        } catch( ex ) {
+            // An exception must not escape a lifecycle callback, as it would
+            // terminate the app. It is reported by the regular error handling.
+            ExceptionHandler.handleBackgroundException( ex );
         }
-
-        // Continue the request loop that was paused in onInactive().
-        // If the app is started for the first time, getInitialView() starts
-        // the loop and this is a no-op.
-        SitemapRequest.get().resume();
 
         // Redraw the current view, since data may have changed while
         // updates were suspended
@@ -94,7 +100,14 @@ class OHApp extends Application.AppBase {
         }
 
         AppLifecycle.setInactive();
-        SitemapRequest.get().pause();
+
+        try {
+            SitemapRequest.get().pause();
+        } catch( ex ) {
+            // An exception must not escape a lifecycle callback, as it would
+            // terminate the app. It is reported by the regular error handling.
+            ExceptionHandler.handleBackgroundException( ex );
+        }
     }
 
     // onStop() is called when the application is exiting.
