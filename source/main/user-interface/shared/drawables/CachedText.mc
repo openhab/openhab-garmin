@@ -36,6 +36,10 @@ class CachedText extends Text {
 
     private var _cache as TextCache;
 
+    // The entry currently used by this drawable. Kept to avoid the pool lookup
+    // on every draw; it is validated before use, see TextCache.acquire().
+    private var _entry as TextCacheEntry?;
+
     // The font is required to determine the size of the rendered text when
     // no explicit width or height has been set. It is only known after the
     // SDK initialization has completed, see initialize().
@@ -121,7 +125,8 @@ class CachedText extends Text {
             return;
         }
 
-        var entry = _cache.acquire( self, w, h );
+        _entry = _cache.acquire( self, _entry, w, h );
+        var entry = _entry;
         if( entry == null ) {
             // Cache disabled or not enough memory
             Text.draw( dc );

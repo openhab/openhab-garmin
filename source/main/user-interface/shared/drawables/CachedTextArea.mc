@@ -34,6 +34,10 @@ class CachedTextArea extends TextArea {
 
     private var _cache as TextCache;
 
+    // The entry currently used by this drawable. Kept to avoid the pool lookup
+    // on every draw; it is validated before use, see TextCache.acquire().
+    private var _entry as TextCacheEntry?;
+
     public function initialize( options as Options ) {
         // The cache must exist before the SDK initializer runs, because the
         // SDK calls setText() from within its own initialization.
@@ -69,7 +73,8 @@ class CachedTextArea extends TextArea {
             return;
         }
 
-        var entry = _cache.acquire( self, w, h );
+        _entry = _cache.acquire( self, _entry, w, h );
+        var entry = _entry;
         if( entry == null ) {
             // Cache disabled or not enough memory
             TextArea.draw( dc );

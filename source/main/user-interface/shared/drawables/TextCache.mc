@@ -68,12 +68,31 @@ class TextCache {
         _version++;
     }
 
-    // Returns the entry to render into, or null if caching is disabled
+    /*
+     * Returns the entry to render into, or null if caching is disabled.
+     *
+     * If the caller passes the entry it obtained on a previous call, it is
+     * reused when still valid. Looking up an entry in the pool requires a
+     * linear scan over all entries; since a displayed drawable is drawn
+     * repeatedly with the same size, that scan is avoided and the pool is only
+     * consulted when the entry was recycled for another drawable.
+     */
     public function acquire( 
         owner as Object, 
+        entry as TextCacheEntry?, 
         width as Number, 
         height as Number 
     ) as TextCacheEntry? {
+        if( entry != null
+            && entry.owner == owner
+            && entry.width == width
+            && entry.height == height
+            && entry.bitmap != null
+        ) {
+            // Keep the LRU order up to date, see TextBitmapPool.touch()
+            TextBitmapPool.get().touch( entry );
+            return entry;
+        }
         return TextBitmapPool.get().acquire( owner, width, height );
     }
 

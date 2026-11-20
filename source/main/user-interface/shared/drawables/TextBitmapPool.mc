@@ -69,6 +69,18 @@ class TextBitmapPool {
     }
 
     /*
+     * Marks an entry as used without looking it up.
+     *
+     * Drawables that reuse their entry do not call acquire(), so without this
+     * the LRU order would become stale and a miss would recycle an entry that
+     * is still displayed, forcing that drawable to render again.
+     */
+    public function touch( entry as TextCacheEntry ) as Void {
+        _clock++;
+        entry.lastUsed = _clock;
+    }
+
+    /*
      * Returns the entry that shall be used to draw an owner's text of the given
      * size, or null if the cache is disabled or no bitmap could be allocated.
      *
