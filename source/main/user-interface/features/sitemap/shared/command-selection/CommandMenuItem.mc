@@ -13,7 +13,7 @@ class CommandOptionMenuItem extends BaseMenuItem {
     // The values and Drawable
     private var _label as String;
     private var _command as String;
-    private var _labelTextArea as Text?;
+    private var _labelTextArea as CachedText?;
 
     /*
     * Constructor.
@@ -45,7 +45,7 @@ class CommandOptionMenuItem extends BaseMenuItem {
         var width = dcWidth - locX - ( dcWidth * Config.UI_MENU_ITEM_PADDING_RIGHT_FACTOR ).toNumber();
 
         // Create the Drawables
-        _labelTextArea = new Text( {
+        _labelTextArea = new CachedText( {
             :text => _label,
             :font => font,
             :locX => locX,
@@ -62,10 +62,11 @@ class CommandOptionMenuItem extends BaseMenuItem {
     */
     public function onUpdate( dc as Dc ) as Void {
         var theme = getCurrentTheme();
-        if( _labelTextArea != null ) {
-            _labelTextArea.setColor( theme.textColor );
-            _labelTextArea.setBackgroundColor( theme.menuItemBackgroundColor );
-            _labelTextArea.draw( dc );
+        var labelTextArea = _labelTextArea;
+        if( labelTextArea != null ) {
+            labelTextArea.setColor( theme.textColor );
+            labelTextArea.setBackgroundColor( theme.menuItemBackgroundColor );
+            labelTextArea.draw( dc );
         }
     }
 }

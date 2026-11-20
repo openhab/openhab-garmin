@@ -71,7 +71,7 @@ class StructuredMenuItem extends BaseMenuItem {
     // cannot guarantee that it is always set. To satisfy the type checker,
     // we initialize the label with an empty string.
     private var _label as String = ""; 
-    private var _labelTextArea as TextArea;
+    private var _labelTextArea as CachedTextArea;
     private var _allowLabelLineBreaks as Boolean;
 
     // Color of the label
@@ -91,7 +91,7 @@ class StructuredMenuItem extends BaseMenuItem {
     // The text and its corresponding TextArea are stored as a tuple, similar 
     // to how the icon is handled. The text is retained to allow 
     // setStateTextResponsive() to determine whether it has actually changed.
-    private var _stateTextResponsive as [String, TextArea]?;
+    private var _stateTextResponsive as [String, CachedTextArea]?;
 
     // Color of the state
     private var _stateColor as ColorType?;
@@ -100,7 +100,7 @@ class StructuredMenuItem extends BaseMenuItem {
     protected function initialize( options as Options ) {
         var label = options[:label];
         BaseMenuItem.initialize( label );
-        _labelTextArea = new TextArea( {
+        _labelTextArea = new CachedTextArea( {
             :font => Config.UI_MENU_ITEM_FONTS,
             :justification => Graphics.TEXT_JUSTIFY_LEFT | Graphics.TEXT_JUSTIFY_VCENTER
         } );
@@ -422,7 +422,7 @@ class StructuredMenuItem extends BaseMenuItem {
                 // If the next was newly added, we create the tuple ...
                 _stateTextResponsive = [
                     text,
-                    new TextArea( {
+                    new CachedTextArea( {
                         :text => text,
                         :font => Config.UI_MENU_ITEM_FONTS,
                         :locY => WatchUi.LAYOUT_VALIGN_CENTER,

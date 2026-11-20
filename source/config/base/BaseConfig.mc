@@ -110,6 +110,21 @@ class BaseConfig {
     // An appropriate font size is chosen based on available space and text length.
     public static const UI_MENU_ITEM_FONTS as Array<FontDefinition> = [Graphics.FONT_SMALL, Graphics.FONT_TINY, Graphics.FONT_GLANCE, Graphics.FONT_XTINY];
 
+    /*
+    * Maximum number of text bitmaps kept in the shared cache.
+    *
+    * Text rendering is the dominant cost when drawing menu items, especially
+    * while scrolling on touch devices. The labels and state texts of the menu
+    * items (and the menu title) are therefore cached in BufferedBitmaps and
+    * blitted on subsequent draws.
+    *
+    * The value should cover all texts that are drawn at the same time: up to
+    * five menu items with a label and a state text, plus the menu title. A
+    * value of 0 disables the cache entirely, in which case texts are rendered
+    * on every draw. Devices with little memory may use a smaller value.
+    */
+    public static const UI_TEXT_CACHE_SIZE as Number = 12;
+
     // If set to true, a divider will be rendered at the bottom of each 
     // menu item. The color of the divider is set in Theme.menuItemDividerColor
     public static const UI_MENU_ITEM_SHOW_DIVIDER as Boolean = false;

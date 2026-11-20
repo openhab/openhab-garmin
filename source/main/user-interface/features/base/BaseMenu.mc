@@ -22,7 +22,7 @@ typedef BaseMenuOptions as {
 class BaseMenu extends CustomMenu {
 
     // The Drawable for the title
-    private var _title as Text;
+    private var _title as CachedText;
     
     // The Drawable for the connection mode indicator
     private var _cmi as ConnectionModeIndicator = new ConnectionModeIndicator( ConnectionModeIndicator.LOCATION_MENU );
@@ -35,7 +35,7 @@ class BaseMenu extends CustomMenu {
         // Logger.debug( "BaseMenu.initialize: Settings=" + ( self instanceof SettingsMenu ) );
         // A title string is provided as input, and this section creates 
         // the corresponding `Drawable` required by the `CustomMenu` base class.
-        _title = new Text( {
+        _title = new CachedText( {
             :text => options[:title] as String,
             :font => Config.UI_MENU_TITLE_FONT
         } );

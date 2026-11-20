@@ -11,8 +11,8 @@ class LabelMenuItem extends BaseMenuItem {
     // The values and Drawables
     private var _title as String;
     private var _subLabel as String;
-    private var _labelTextArea as Text?;
-    private var _subLabelTextArea as TextArea?;
+    private var _labelTextArea as CachedText?;
+    private var _subLabelTextArea as CachedTextArea?;
 
     /*
     * Constructor.
@@ -37,7 +37,7 @@ class LabelMenuItem extends BaseMenuItem {
         // Create the Drawables
         // locY for label is set for the text to be on top of the center line,
         //      using the font height
-        _labelTextArea = new Text( {
+        _labelTextArea = new CachedText( {
             :text => _title,
             :font => Config.UI_MENU_ITEM_FONTS[0],
             :locX => locX,
@@ -48,7 +48,7 @@ class LabelMenuItem extends BaseMenuItem {
             :width => width,
             :height => yCenter
         } );
-        _subLabelTextArea = new TextArea( {
+        _subLabelTextArea = new CachedTextArea( {
             :text => _subLabel,
             :font => Config.UI_MENU_ITEM_FONTS,
             :locX => locX,
@@ -69,14 +69,16 @@ class LabelMenuItem extends BaseMenuItem {
         // could happen anytime
         var color = getCurrentTheme().textColor;
 
-        if( _labelTextArea != null ) {
-            _labelTextArea.setColor( color );
-            _labelTextArea.draw( dc );
+        var labelTextArea = _labelTextArea;
+        if( labelTextArea != null ) {
+            labelTextArea.setColor( color );
+            labelTextArea.draw( dc );
         }
 
-        if( _subLabelTextArea != null ) {
-            _subLabelTextArea.setColor( color );
-            _subLabelTextArea.draw( dc );
+        var subLabelTextArea = _subLabelTextArea;
+        if( subLabelTextArea != null ) {
+            subLabelTextArea.setColor( color );
+            subLabelTextArea.draw( dc );
         }
     }
 
