@@ -67,11 +67,32 @@ class ProcessIncomingJsonTask extends BaseSitemapProcessorTask {
     public function invoke() as Void {
         // Logger.debug( "ProcessIncomingJsonTask.invoke" );
 
+        var isSyncInProgress = SafeSitemapSyncDelegate.isSyncInProgress();
+
         // In sync mode, update the progress bar
-        if( SafeSitemapSyncDelegate.isSyncInProgress() ) {
+        if( isSyncInProgress ) {
             Communications.notifySyncProgress( 60 );
         }
-        
+
+        // An unchanged sitemap does not change anything on screen. Rebuilding
+        // the data layer and the menu is the most expensive part of the
+        // polling cycle, so skip it as long as the displayed model is in sync
+        // with the stored JSON. See SitemapStore.noteModelDivergence().
+        if( ! isSyncInProgress
+            && HomepageMenu.exists()
+            && SitemapStore.isModelInSync()
+            && SitemapStore.matchesStored( _json.json )
+        ) {
+            // The JSON is unchanged, but its age must be refreshed so that
+            // the data does not expire while no update is applied.
+            SitemapStore.refreshStored( _json );
+            Logger.debug( "ProcessIncomingJsonTask: update dropped, sitemap unchanged" );
+            AsyncTaskQueue.get().add( new TriggerNextRequestTask() );
+            return;
+        }
+
+        Logger.debug( "ProcessIncomingJsonTask: new data layer constructed" );
+
         var sitemapHomepage = SitemapStore.updateSitemapFromJson( _json );
 
         if( ! HomepageMenu.exists() ) {

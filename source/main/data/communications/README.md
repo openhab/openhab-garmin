@@ -83,6 +83,8 @@ These requests are used for both BLE communication and Wi-Fi mode. In addition t
   `SitemapRequest` periodically fetches sitemap data from openHAB and processes the retrieved JSON representation.
   To keep the UI responsive and avoid limitations such as the Watchdog timeout for long-running code and stack size restrictions caused by recursive processing, responses are processed asynchronously and non-recursively. The work is split into small tasks that are executed by the task queue implementation.
 
+  A response whose JSON is identical to the stored one is skipped entirely (`ProcessIncomingJsonTask`), so an unchanged sitemap neither rebuilds the data layer nor redraws the menu. The stored timestamp is refreshed in that case, so the data does not expire. The update is applied nevertheless while the displayed model temporarily differs from the stored JSON, for example after a command has been applied locally, after returning from Wi-Fi/offline mode, or when the model was restored from stale data at startup. See `SitemapStore.noteModelDivergence()`.
+
 #### Further Reading
 
 - [User Manual – Sending Commands](https://next.openhab.org/docs/apps/garmin/#sending-commands-2)  

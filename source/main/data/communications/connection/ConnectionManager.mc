@@ -221,6 +221,13 @@ import Toybox.Time;
         if( oldState != newState ) {
             _state = newState;
 
+            // When returning to phone mode, the states had been hidden before,
+            // so the next response must be applied even if its JSON is
+            // unchanged, to bring them back.
+            if( newState == BLUETOOTH_CONNECTED ) {
+                SitemapStore.noteModelDivergence();
+            }
+
             // When leaving phone mode and a HomepageMenu is available,
             // i/nvalidate the current states even if they are still fresh.
             // States must not be displayed while in Wi-Fi or offline mode,

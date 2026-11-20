@@ -43,6 +43,20 @@ class SitemapStore  {
     // written back, as its size is unknown and the write could fail.
     private static var _isJsonModified as Boolean = false;
 
+    /*
+     * Update gating
+     *
+     * The model shown in the menu can temporarily differ from the stored JSON:
+     * - a command has been applied locally (optimistic state),
+     * - the states have been hidden because the phone connection was lost,
+     * - the model was restored from stale data at startup.
+     * While such a divergence exists, an incoming JSON that is identical to
+     * the stored one must still be applied to bring the model back in sync.
+     * See ProcessIncomingJsonTask.
+     */
+    private static var _divergenceSince as Moment?;
+    private static var _divergenceHold as Duration?;
+
     // Deletes the sitemap from Storage to invalidate it in case of a fatal
     // error during a sitemap request. After such an error, the sitemap should
     // only be shown again once fresh data has been successfully retrieved.
@@ -111,7 +125,14 @@ class SitemapStore  {
     public static function getSitemapFromStorage() as SitemapHomepage? {
         _json = Storage.getValue( STORAGE_JSON ) as StoredJson?;
         _isJsonModified = false;
-        return getSitemapFromMemory( isSitemapFresh() );
+
+        var isFresh = isSitemapFresh();
+        if( ! isFresh ) {
+            // States are hidden while the stored data is stale, so the next
+            // response must be applied even if its JSON is identical.
+            noteModelDivergence();
+        }
+        return getSitemapFromMemory( isFresh );
     }
 
     // Returns true if the currently held JSON's age is 
@@ -191,6 +212,54 @@ class SitemapStore  {
         }
     }
 
+    // Records that the current model no longer matches the stored JSON and
+    // that the next response must be applied even if its JSON is unchanged.
+    public static function noteModelDivergence() as Void {
+        noteModelDivergenceFor( new Duration( 0 ) );
+    }
+
+    // Same as noteModelDivergence(), but the divergence cannot be reconciled
+    // before `hold` has elapsed. Used after a command, because the affected
+    // item ignores updates during the configured post-command hold time.
+    public static function noteModelDivergenceFor( hold as Duration ) as Void {
+        _divergenceSince = Time.now();
+        _divergenceHold = hold;
+    }
+
+    // True if the model can be assumed to match the stored JSON.
+    public static function isModelInSync() as Boolean {
+        return _divergenceSince == null;
+    }
+
+    // Called whenever an incoming JSON has been applied.
+    public static function markModelApplied() as Void {
+        if( _divergenceSince == null ) {
+            return;
+        }
+        var hold = _divergenceHold as Duration;
+        if( ! Time.now().lessThan( ( _divergenceSince as Moment ).add( hold ) ) ) {
+            _divergenceSince = null;
+            _divergenceHold = null;
+        }
+    }
+
+    // Returns true if the given JSON equals the currently stored JSON.
+    (:typecheck(disableGlanceCheck))
+    public static function matchesStored( json as JsonObject ) as Boolean {
+        return _json != null && JsonComparer.areEqual( ( _json as StoredJson )[0], json );
+    }
+
+    // Keeps the stored JSON but refreshes its timestamp and size estimate,
+    // e.g. when an identical response is received. The data must not age out,
+    // see isSitemapFresh().
+    (:typecheck(disableGlanceCheck))
+    public static function refreshStored( incomingJson as SitemapJsonIncoming ) as Void {
+        if( _json != null ) {
+            ( _json as StoredJson )[1] = incomingJson.timestamp;
+            _estimatedSitemapSize = incomingJson.estimatedSize;
+        }
+    }
+
     // Creates a new sitemap and updates the JSON
     // as well as the label
     (:typecheck(disableGlanceCheck))
@@ -207,6 +276,7 @@ class SitemapStore  {
             isSyncInProgress ? false : true  // in sync mode, we use synchronous processing, otherwise asynchronous processing
         );
         _title = homepage.title;
+        markModelApplied();
         return homepage;
     }
 }
