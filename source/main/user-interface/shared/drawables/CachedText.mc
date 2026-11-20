@@ -118,6 +118,21 @@ class CachedText extends Text {
             return;
         }
 
+        /*
+         * Drawables with an explicit size are not cached.
+         *
+         * Rendering a Text with an explicit width and height into an offscreen
+         * bitmap does not produce the same result on all devices: the label of
+         * the settings menu items (see LabelMenuItem) is not drawn at all on
+         * the Fenix 9 Pro, while the same code works in the simulator. Since
+         * these drawables are rare compared to the menu item labels, drawing
+         * them directly is both simpler and safer.
+         */
+        if( width.toNumber() > 0 || height.toNumber() > 0 ) {
+            Text.draw( dc );
+            return;
+        }
+
         var w = getRenderedWidth();
         var h = getRenderedHeight();
         if( w <= 0 || h <= 0 ) {
