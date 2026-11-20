@@ -42,7 +42,7 @@ class AsyncTaskQueue {
     // Note: CIQ (Connect IQ) limits how long code can run continuously.
     // Durations longer than ~250ms may trigger a "Watchdog Tripped Error - Code Executed Too Long".
     private static const PRIORITIZE_SPEED as Number = 250;
-    private static const PRIORITIZE_RESPONSIVENESS as Number = 100;
+    private static const PRIORITIZE_RESPONSIVENESS as Number = 50;
 
     // The task queue is a Singleton
     private static var _instance as AsyncTaskQueue?;
