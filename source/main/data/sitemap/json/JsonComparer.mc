@@ -43,7 +43,15 @@ class JsonComparer {
         var keys = a.keys();
         for( var i = 0; i < keys.size(); i++ ) {
             var key = keys[i];
-            if( ! other.hasKey( key ) || ! areEqual( a[key] as Object?, other[key] as Object? ) ) {
+            var aValue = a[key] as Object?;
+            var bValue = other[key] as Object?;
+            // A missing key also yields null. Only if the value in `a` is null
+            // can an absent key in `b` be mistaken for an equal one, so the
+            // (relatively expensive) key lookup is limited to that case.
+            if( aValue == null && ! other.hasKey( key ) ) {
+                return false;
+            }
+            if( ! areEqual( aValue, bValue ) ) {
                 return false;
             }
         }
