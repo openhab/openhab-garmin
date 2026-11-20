@@ -84,21 +84,38 @@ class HomepageMenu extends BasePageMenu {
         return _instance as HomepageMenu;
     }
 
-    // Hides the states by retrieving the cached sitemap,
-    // marking all states as stale, and updating the menu.
+    // Hides the states by retrieving the cached sitemap, marking all states as
+    // stale, and updating the menu.
     //
-    // Since this is executed within the HomepageMenu,
-    // we assume that a sitemap is already available in memory.
-    // However, as this is not technically guaranteed,
-    // we explicitly check for this condition and throw
-    // an exception if no sitemap is found.
-    public function hideStates() as Void {
+    // The states of the rebuilt model no longer match the stored JSON, so the
+    // divergence is recorded here: without it, an incoming response with an
+    // unchanged JSON would be skipped and the states would never come back.
+    // Because update() rebuilds the menu asynchronously, a redraw is requested
+    // afterwards.
+    //
+    // Returns true if states were hidden. The menu can exist without a sitemap
+    // in memory, e.g. after a fatal error cleared it, so this is a no-op then.
+    public function hideStates() as Boolean {
         var sitemap = SitemapStore.getSitemapFromMemoryWithStaleStates();
-        if( sitemap != null ) {
-            update( sitemap );
-        } else {
-            throw new GeneralException( "HomepageMenu: failed to hide menu states because no sitemap is loaded in memory." );
+        if( sitemap == null ) {
+            return false;
         }
+
+        update( sitemap );
+        SitemapStore.noteModelDivergence();
+        AsyncTaskQueue.get().add( new RequestUiUpdateTask() );
+
+        return true;
+    }
+
+    // Hides the states if the sitemap has expired. Used when the app becomes
+    // visible again after it was hidden by the system: the states captured
+    // before are shown only if they are still within the expiration time.
+    public function hideStatesIfStale() as Boolean {
+        if( SitemapStore.isSitemapFresh() ) {
+            return false;
+        }
+        return hideStates();
     }
     
     // Returns true, if any sitemap-related view is currently showing

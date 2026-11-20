@@ -16,6 +16,9 @@ import Toybox.WatchUi;
  *
  * 3) SwitchViewIfVisibleAndItemCountChangedTask
  *    Implements a workaround for a Garmin SDK bug. See the class description for details.
+ *
+ * 4) RequestUiUpdateTask
+ *    Requests a redraw once an update that was processed asynchronously is complete.
  */
 
 /*
@@ -187,5 +190,21 @@ class SwitchViewIfVisibleAndItemCountChangedTask extends SwitchViewIfVisibleTask
             // is visible and if yes switches it.
             SwitchViewIfVisibleTask.invoke();
         }
+    }
+}
+
+
+/*
+ * Requests a redraw. Used after an update that was processed asynchronously,
+ * e.g. after the menu structure was rebuilt.
+ */
+class RequestUiUpdateTask {
+
+    public function invoke() as Void {
+        WatchUi.requestUpdate();
+    }
+
+    public function handleException( ex as Exception ) as Void {
+        ExceptionHandler.handleBackgroundException( ex );
     }
 }

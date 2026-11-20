@@ -229,18 +229,11 @@ import Toybox.Time;
             }
 
             // When leaving phone mode and a HomepageMenu is available,
-            // i/nvalidate the current states even if they are still fresh.
+            // invalidate the current states even if they are still fresh.
             // States must not be displayed while in Wi-Fi or offline mode,
             // even when the underlying sitemap is up to date.
-            if( oldState == BLUETOOTH_CONNECTED
-                && HomepageMenu.exists()
-                && SitemapStore.isSitemapFresh() 
-            ) {
+            if( oldState == BLUETOOTH_CONNECTED && HomepageMenu.exists() ) {
                 HomepageMenu.get().hideStates();
-                // hideStates updates the menu structure asynchronously.
-                // so we need to schedule an asynchronous task to request
-                // an UI update afterwards.
-                AsyncTaskQueue.get().add( new RequestUiUpdateTask() );
             }
             // If no menu is available while in Wi-Fi mode, this indicates that
             // no sitemap is stored locally and it must be requested via Wi-Fi

@@ -60,6 +60,13 @@ class OHApp extends Application.AppBase {
         // resumed request is not overwritten by the deferred one.
         ExceptionHandler.showPendingException();
 
+        // States captured before the app was hidden are only shown if they are
+        // still within the expiration time. Otherwise they stay hidden until
+        // the resumed request delivers data.
+        if( HomepageMenu.exists() ) {
+            HomepageMenu.get().hideStatesIfStale();
+        }
+
         // Continue the request loop that was paused in onInactive().
         // If the app is started for the first time, getInitialView() starts
         // the loop and this is a no-op.
