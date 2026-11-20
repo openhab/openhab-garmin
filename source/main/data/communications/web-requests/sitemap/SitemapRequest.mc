@@ -319,10 +319,7 @@ class SitemapRequest extends BaseRequest {
         // loading of the sitemap from storage. In this case, it's possible that the
         // response arrives before the sitemap has finished loading. If that happens,
         // we cancel any remaining tasks and proceed directly with processing the response.
-        if( ! taskQueue.isEmpty() ) {
-            // Logger.debug( "SitemapRequest encountered non-empty task queue" );
-            taskQueue.removeAll();
-        }
+        discardQueuedTasks();
 
         // If the menu hasn’t been created yet, we're likely in a non-interactive
         // loading or error view. In this state, we prioritize speed over responsiveness
@@ -350,6 +347,25 @@ class SitemapRequest extends BaseRequest {
                && _commandsInFlight == 0;
     }
 
+    // Discards all queued menu processing tasks.
+    //
+    // The displayed menu may be incomplete afterwards: menu items that were
+    // still to be created are only re-created when their parent item is
+    // processed by an update. This affects subpages in particular, which keep
+    // showing their loading placeholder until then.
+    //
+    // Record a model divergence, so that the next response is applied even if
+    // its JSON is unchanged. Without it, unchanged responses are skipped and
+    // the missing items would never be created.
+    private static function discardQueuedTasks() as Void {
+        var taskQueue = AsyncTaskQueue.get();
+        if( taskQueue.isEmpty() ) {
+            return;
+        }
+        taskQueue.removeAll();
+        SitemapStore.noteModelDivergence();
+    }
+
     // Re-evaluates the polling state after one of the block flags changed.
     // On the transition to blocked the timer is stopped and a pending response
     // is ignored, so nothing runs while polling is not allowed. On the
@@ -375,7 +391,7 @@ class SitemapRequest extends BaseRequest {
             // Asynchronous processing is discarded, unless a Wi-Fi sync is in
             // progress: the sync relies on its tasks, which use the same queue.
             if( ! _isSyncing ) {
-                AsyncTaskQueue.get().removeAll();
+                discardQueuedTasks();
             }
         }
     }
@@ -450,7 +466,7 @@ class SitemapRequest extends BaseRequest {
         _isSyncing = true;
         // Queued sitemap processing belongs to the regular loop and must not
         // run against the sync instance.
-        AsyncTaskQueue.get().removeAll();
+        discardQueuedTasks();
         updatePollingState( false );
         return true;
     }
