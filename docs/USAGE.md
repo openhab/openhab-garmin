@@ -67,6 +67,25 @@ In this manual, "Widget" refers to the Garmin app component, while "Sitemap Widg
 
 The following sections provide detailed guidance on configuring the app, supported Sitemap Widgets, user interface behavior, and troubleshooting tips.
 
+## Supported Devices
+
+The app supports the following Garmin device series:
+
+- **Approach**: S50, S70 42mm, S70 47mm
+- **D2**: Air X10, Air X15, Mach 1, Mach 1 Pro, Mach 2, Mach 2 Pro
+- **Descent**: G2, Mk3 43mm, Mk3i 43mm, Mk3i 51mm
+- **Edge**: 540, 540 Solar, 550, 840, 840 Solar, 850, 1040, 1040 Solar, 1050, 1060, Explore 2, Explore 3, Explore 3 Plus, MTB
+- **Enduro**: 2, 3, 4
+- **Epix**: Gen 2, Pro Gen 2 42mm, Pro Gen 2 47mm, Pro Gen 2 51mm
+- **Fenix**: 6 Pro, 6 Sapphire, 6 Pro Solar, 6 Pro Dual Power, 6S Pro, 6S Sapphire, 6S Pro Solar, 6S Pro Dual Power, 6X Pro, 6X Sapphire, 6X Pro Solar, 7, 7 Pro, 7 Pro Solar Edition (no Wi-Fi), 7S, 7S Pro, 7X, 7X Pro, 7X Pro Solar Edition (no Wi-Fi), 8 43mm, 8 47mm, 8 51mm, 8 Pro 47mm, 8 Pro 51mm, 8 Pro MicroLED, 8 Solar 47mm, 8 Solar 51mm, 9 43mm, 9 47mm, 9 51mm, 9 Pro 43mm, 9 Pro 47mm, 9 Pro 51mm, 9 Pro Solar 47mm, 9 Pro Solar 51mm, E
+- **Forerunner**: 70, 165, 165 Music, 170, 170 Music, 255, 255 Music, 255S, 255S Music, 265, 265S, 570 42mm, 570 47mm, 945 LTE, 955, 955 Solar, 965, 970
+- **Instinct**: 3 AMOLED 45mm, 3 AMOLED 50mm
+- **MARQ**: Gen 1 Adventurer, Gen 1 Athlete, Gen 1 Aviator, Gen 1 Captain (American Magic Edition), Gen 1 Commander, Gen 1 Driver, Gen 1 Expedition, Gen 1 Golfer, Gen 2 Athlete, Gen 2 Adventurer, Gen 2 Aviator, Gen 2 Captain, Gen 2 Carbon Edition, Gen 2 Commander Carbon Edition, Gen 2 Golfer, Gen 3 Athlete, Gen 3 Adventurer, Gen 3 Aviator, Gen 3 Commander, Gen 3 Diver, Gen 3 Golfer
+- **Quatix**: 6, 6X, 6X Solar, 6X Dual Power, 7, 7 Sapphire, 7 Pro, 7X Solar, 8 47mm, 8 51mm, 8 Pro 47mm, 8 Pro 51mm
+- **Tactix**: Delta Sapphire, Delta Solar, Delta Solar Ballistics Edition, 7, 7 AMOLED Edition, 8 47mm, 8 51mm, 8 Solar 51mm
+- **Venu**: 2, 2 Plus, 2S, 3, 3S, 4 41mm, 4 45mm, Sq 2, Sq 2 Music, X1
+- **Vivoactive**: 5, 6
+
 ## Configuration
 
 Once the app is installed, you can configure the following settings by opening it in the Garmin Connect IQ smartphone app.
@@ -340,7 +359,7 @@ Certain sitemap elements — namely `Frame`, `Text`, and `Group` — can contain
 In sitemaps, `Frame` elements are used to visually separate areas on a page, while nested elements under `Text` and `Group` are presented as navigable subpages.
 The Garmin app adopts a menu-based navigation structure and implements nested elements under all three types as submenus.
 
-- For `Frame` and `Text`, nested elements must be defined manually. The only functional difference is that `Text` displays the associated item’s state, whereas `Frame` does not.
+- For `Frame` and `Text`, nested elements must be defined manually. The only functional difference is that `Text` displays the state of its associated item, if any, whereas `Frame` does not.
 - `Group` elements automatically populate their nested elements based on the members of the referenced group item.
 
 A `Frame` or `Group` page without visible child elements — for example a `Frame` with no children, or a container whose children are all hidden by `visibility` — remains selectable.
@@ -392,14 +411,19 @@ If this is not the case, an error will be shown instead.
 #### `Text`
 
 The ➡️ [`Text`]({{base}}/ui/sitemaps.html#element-type-text) Sitemap Widget is used to display the current state of an item without allowing any user interaction.
+It can also be used as a static text element without an item.
 
 ##### Supported parameters:
 
 - `label`: the label shown in the UI.
-- `item`: the name of the openHAB item whose state should be displayed.
+- `item` (optional): the name of the openHAB item whose state should be displayed.
 
 This widget is ideal for showing read-only information, such as temperature, system status, or sensor readings.
 It also supports [nested elements](#nested-elements), making it suitable for creating a hierarchical sitemap structure.
+
+If `item` is omitted, the element is displayed as static text: only its label is shown, without a state.
+Selecting it has no effect and does not require a connection to openHAB.
+Static text can still contain nested elements, and selecting it opens the nested page as usual.
 
 ##### Example configuration:
 
@@ -410,6 +434,18 @@ Triggering the gates is handled by a separate `Switch` element.
 Frame label="Entrance Gates" {
   Switch item=EntranceGatesTrigger label="Open/Close" mappings=[OFF="GO", ON="DONE"]
   Text item=EntranceGateStatus label="Status"
+}
+```
+
+Static text elements without an item can be used as headings or descriptions.
+They may also define nested elements:
+
+```java
+Frame label="Static Text" {
+  Text label="This text has no item"
+  Text label="Nested page" {
+    Text label="Nested static text"
+  }
 }
 ```
 
