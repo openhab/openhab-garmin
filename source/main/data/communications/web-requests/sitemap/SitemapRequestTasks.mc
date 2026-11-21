@@ -25,6 +25,11 @@ import Toybox.Lang;
  *    If the response is unchanged, it is dropped and the next request is
  *    triggered. Otherwise the menu is created or updated as described below.
  *
+ *    If only top level elements changed and the displayed model is complete
+ *    and in sync, only those elements and their menu items are rebuilt
+ *    (see SitemapApplier.applyPartial). If a partial update is not safe, the
+ *    full path described below is used.
+ *
  *    If no menu exists yet, this task initiates:
  *      1.1) CreateHomepageTask:
  *           Initializes the menu structure using asynchronous tasks.
@@ -34,6 +39,9 @@ import Toybox.Lang;
  *    If a menu already exists, it initiates:
  *      1.3) UpdateHomepageTask:
  *           Updates the existing menu structure asynchronously.
+ *      1.3.1) UpdateHomepageIndicesTask:
+ *           Updates only the menu items of changed top level elements for a
+ *           partial update.
  *      1.4) RefreshUiTask:
  *           Refreshes the UI based on the current state:
  *           - If in a valid menu, refreshes the current screen.
@@ -134,8 +142,8 @@ class CompareSitemapTask extends BaseSitemapProcessorTask {
 }
 
 // 1.0.1)
-// Compares a single top level element of both sitemaps. If a difference has
-// already been found, this task returns without doing any work.
+// Compares a single top level element of both sitemaps. Every element is
+// evaluated because the changed indices are needed for a partial update.
 class CompareSitemapElementTask extends BaseSitemapProcessorTask {
 
     private var _comparison as SitemapComparison;
@@ -172,6 +180,17 @@ class FinishSitemapComparisonTask extends BaseSitemapProcessorTask {
         // The model can diverge while the comparison is running, e.g. if a
         // command is sent in the meantime. In that case the response must be
         // applied even if it is unchanged. See SitemapStore.noteModelDivergence().
+        if( _comparison.isDifferent
+            && canApplyPartially()
+            && SitemapApplier.applyPartial( 
+                _json, 
+                _comparison.getChangedIndices(),
+                _comparison.getElementCount()
+            )
+        ) {
+            return;
+        }
+
         if( _comparison.isDifferent || ! SitemapStore.isModelInSync() ) {
             SitemapApplier.apply( _json );
             return;
@@ -182,6 +201,16 @@ class FinishSitemapComparisonTask extends BaseSitemapProcessorTask {
         SitemapStore.refreshStored( _json );
         Logger.debug( "FinishSitemapComparisonTask: update dropped, sitemap unchanged" );
         AsyncTaskQueue.get().add( new TriggerNextRequestTask() );
+    }
+
+    // A partial update is only safe if the displayed model is complete and in
+    // sync, and if the comparison detected no structural change.
+    private function canApplyPartially() as Boolean {
+        return ! _comparison.isReordered()
+            && _comparison.hasChangedElements()
+            && ! SafeSitemapSyncDelegate.isSyncInProgress()
+            && SitemapStore.isModelInSync()
+            && HomepageMenu.exists();
     }
 }
 
@@ -281,6 +310,46 @@ class UpdateHomepageTask extends BaseSitemapProcessorTask {
     }
 }
 
+// 1.3.1)
+// Updates only the menu items whose top level sitemap elements changed.
+class UpdateHomepageIndicesTask extends BaseSitemapProcessorTask {
+
+    private var _json as SitemapJsonIncoming;
+    private var _sitemapHomepage as SitemapHomepage;
+    private var _indices as Array<Number>;
+
+    public function initialize( 
+        json as SitemapJsonIncoming,
+        sitemapHomepage as SitemapHomepage,
+        indices as Array<Number>
+    ) {
+        BaseSitemapProcessorTask.initialize();
+        _json = json;
+        _sitemapHomepage = sitemapHomepage;
+        _indices = indices;
+    }
+
+    public function invoke() as Void {
+        if( ! HomepageMenu.exists() ) {
+            // The menu was removed in the meantime (e.g. after an
+            // out-of-memory error); rebuild everything.
+            SitemapApplier.apply( _json );
+            return;
+        }
+
+        var homepageMenu = HomepageMenu.get();
+        if( ! homepageMenu.canUpdateIndices( _sitemapHomepage, _indices ) ) {
+            // A structural change cannot be expressed by updating single
+            // menu items; fall back to the full rebuild.
+            SitemapApplier.apply( _json );
+            return;
+        }
+
+        homepageMenu.updateIndices( _sitemapHomepage, _indices );
+        AsyncTaskQueue.get().add( new RefreshUiTask() );
+    }
+}
+
 // 1.4)
 // ... and then we update the UI
 //
@@ -377,5 +446,62 @@ class SitemapApplier {
             // asynchronously to not block the UI
             AsyncTaskQueue.get().add( new UpdateHomepageTask( sitemapHomepage ) );
         }
+    }
+
+    // Applies a received sitemap by rebuilding only the given top level
+    // elements. Returns false if no partial update is possible and the caller
+    // must fall back to the full path.
+    public static function applyPartial( 
+        json as SitemapJsonIncoming,
+        changedIndices as Array<Number>,
+        elementCount as Number
+    ) as Boolean {
+        if( ! HomepageMenu.exists() ) {
+            return false;
+        }
+
+        var homepage = HomepageMenu.get().getSitemapHomepage();
+        if( homepage == null 
+            || ! isComplete( homepage, changedIndices, elementCount ) 
+        ) {
+            return false;
+        }
+
+        SitemapStore.updateSitemapFromJsonPartial(
+            json,
+            homepage,
+            changedIndices,
+            AsyncTaskQueue.get()
+        );
+
+        Logger.debug( 
+            "SitemapApplier: partial update of "
+            + changedIndices.size() + " top level element(s)"
+        );
+
+        AsyncTaskQueue.get().add(
+            new UpdateHomepageIndicesTask( json, homepage, changedIndices )
+        );
+        return true;
+    }
+
+    // True if the model already contains all top level widgets that are about
+    // to be replaced. Guards against starting a partial update while the model
+    // is still being built.
+    private static function isComplete( 
+        homepage as SitemapHomepage,
+        indices as Array<Number>,
+        elementCount as Number
+    ) as Boolean {
+        var widgetCount = homepage.getWidgets().size();
+        if( widgetCount != elementCount ) {
+            return false;
+        }
+        for( var i = 0; i < indices.size(); i++ ) {
+            if( indices[i] < 0 || indices[i] >= widgetCount ) {
+                return false;
+            }
+        }
+        return true;
     }
 }

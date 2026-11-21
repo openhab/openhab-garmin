@@ -50,4 +50,31 @@ class SitemapHomepage extends SitemapPage {
             taskQueue.executeTasks();
         }
     }
+
+    // Updates the existing homepage model for a partial sitemap update.
+    // Only the top level elements at the given indices are rebuilt; the
+    // remaining widgets are reused as-is. Nested pages of the rebuilt widgets
+    // are created by the usual task mechanism.
+    public function updateFromJson(
+        json as JsonAdapter,
+        changedIndices as Array<Number>,
+        taskQueue as TaskQueue
+    ) as Void {
+        var homepageJson = json.getObject( 
+            "homepage", 
+            "Homepage: homepage element missing" 
+        );
+        var jsonWidgets = homepageJson.getOptionalArray( "widgets" );
+        if( jsonWidgets == null ) {
+            throw new JsonParsingException( "Homepage contains no elements" );
+        }
+
+        title = parseLabelState( 
+            homepageJson, 
+            "title", 
+            "Page title is missing" 
+        )[0];
+
+        updateWidgets( jsonWidgets, changedIndices, taskQueue );
+    }
 }

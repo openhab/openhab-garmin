@@ -154,6 +154,10 @@ class BasePageMenu extends BaseMenu {
     * The `update()` function also tracks whether the menu structure was affected.
     * See `invalidateStructure()` for details.
     *
+    * For a partial sitemap update, `updateIndices()` is used instead. It
+    * updates only the menu items whose top level sitemap elements changed;
+    * unaffected items are left untouched.
+    *
     * NOTE: This algorithm does *not* use the `widgetId`. While `widgetId` often reflects the 
     * position of an element, this breaks down when the `visibility` parameter is used—hidden items 
     * retain their `widgetId`, creating "holes" in the sequence. To avoid this, we rely on actual 
@@ -214,6 +218,77 @@ class BasePageMenu extends BaseMenu {
         for( var i = widgets.size() - 1; i >= 0; i-- ) {
             var widget = widgets[i];
             taskQueue.addToFront( new AddOrUpdateMenuItemTask( i, widget, self ) );
+        }
+    }
+
+    /*
+     * Returns true if the menu items at the given top level indices can be
+     * updated in place with the widgets of the given container.
+     *
+     * A partial update cannot express a change of the menu item type or a
+     * change in page presence. In that case the caller falls back to the full
+     * update path, which applies the existing invalidation semantics.
+     */
+    public function canUpdateIndices(
+        sitemapContainer as SitemapContainerImplementation,
+        indices as Array<Number>
+    ) as Boolean {
+        var widgets = sitemapContainer.getWidgets();
+        if( widgets.size() != getItemCount() ) {
+            return false;
+        }
+
+        for( var i = 0; i < indices.size(); i++ ) {
+            var index = indices[i];
+            if( index < 0 || index >= widgets.size() ) {
+                return false;
+            }
+
+            var item = getItem( index );
+            if( ! ( item instanceof WidgetMenuItem ) ) {
+                return false;
+            }
+
+            var widget = widgets[index];
+            if( ! MenuItemFactory.isMenuItemType( 
+                    item,
+                    MenuItemFactory.getMenuItemType( widget )
+                ) ) {
+                return false;
+            }
+
+            if( ( item as WidgetMenuItem ).hasPage()
+                != ( widget.getLinkedPage() != null )
+            ) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /*
+     * Updates only the menu items at the given top level indices.
+     * Used for partial sitemap updates; all other items are left untouched.
+     * The subtree update for each item follows the existing
+     * `processWidget()` recursion through `AddOrUpdateMenuItemTask`.
+     */
+    public function updateIndices(
+        sitemapContainer as SitemapContainerImplementation,
+        indices as Array<Number>
+    ) as Void {
+        _title = sitemapContainer.title;
+        setTitleAsString( _title );
+
+        var taskQueue = AsyncTaskQueue.get();
+        var widgets = sitemapContainer.getWidgets();
+        for( var i = indices.size() - 1; i >= 0; i-- ) {
+            var index = indices[i];
+            if( index < 0 || index >= widgets.size() ) {
+                continue;
+            }
+            taskQueue.addToFront(
+                new AddOrUpdateMenuItemTask( index, widgets[index], self )
+            );
         }
     }
 }

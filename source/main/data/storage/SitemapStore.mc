@@ -303,4 +303,32 @@ class SitemapStore  {
         markModelApplied();
         return homepage;
     }
+
+    // Applies a received sitemap to the existing model by rebuilding only the
+    // given top level elements. The complete received JSON is still stored, so
+    // the persisted data always matches the server.
+    //
+    // The model is mutated asynchronously: the container build tasks for the
+    // changed elements are queued at the front of the given task queue.
+    (:typecheck(disableGlanceCheck))
+    public static function updateSitemapFromJsonPartial( 
+        incomingJson as SitemapJsonIncoming,
+        sitemapHomepage as SitemapHomepage,
+        changedIndices as Array<Number>,
+        taskQueue as TaskQueue
+    ) as Void {
+        // Update the model first so that a parsing error leaves the stored
+        // JSON untouched.
+        sitemapHomepage.updateFromJson( 
+            new JsonAdapter( incomingJson.json ),
+            changedIndices,
+            taskQueue
+        );
+
+        _json = incomingJson.getForStorage();
+        _estimatedSitemapSize = incomingJson.estimatedSize;
+        _isJsonModified = true;
+        _title = sitemapHomepage.title;
+        markModelApplied();
+    }
 }

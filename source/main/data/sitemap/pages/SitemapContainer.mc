@@ -14,6 +14,10 @@ import Toybox.WatchUi;
  * in which the Garmin SDK packs the JSON data is relatively slow.
  * Processing large structures synchronously can block the UI and
  * lead to noticeable delays in user interaction.
+ *
+ * Existing containers can additionally be updated in place for a partial
+ * sitemap update: `updateWidgets()` queues build tasks for the changed
+ * indices only, and the build task replaces the corresponding widget.
  */
 
 // This type can be used as generic type for all implementations
@@ -68,7 +72,8 @@ class SitemapContainer extends SitemapElement {
                 new SitemapContainerBuildTask(
                     self,
                     jsonWidget,
-                    taskQueue
+                    taskQueue,
+                    -1
                 )
             );
         }
@@ -78,6 +83,48 @@ class SitemapContainer extends SitemapElement {
     // control entry, which is why it updates the emptiness flag.
     public function addWidget( widget as SitemapWidget ) as Void {
         _widgets.add( widget );
+        _hasWidgets = true;
+    }
+
+    // Updates the widgets at the given indices from a newly received widgets
+    // array. Used for partial sitemap updates.
+    //
+    // The tasks are queued at the front in reverse order, matching the ordering
+    // used when the container is created.
+    public function updateWidgets(
+        jsonWidgets as JsonAdapterArray,
+        indices as Array<Number>,
+        taskQueue as TaskQueue
+    ) as Void {
+        for( var i = indices.size() - 1; i >= 0; i-- ) {
+            var index = indices[i];
+            if( index < 0 || index >= jsonWidgets.size() ) {
+                continue;
+            }
+            taskQueue.addToFront( 
+                new SitemapContainerBuildTask(
+                    self,
+                    jsonWidgets[index],
+                    taskQueue,
+                    index
+                )
+            );
+        }
+    }
+
+    // Replaces the widget at the given index. Used by the build task when a
+    // partial update is applied. The container already had content, so
+    // `_hasWidgets` remains true.
+    public function replaceWidget( 
+        index as Number, 
+        widget as SitemapWidget 
+    ) as Void {
+        if( index < 0 || index >= _widgets.size() ) {
+            // Defensive: the comparison selects only existing indices.
+            addWidget( widget );
+            return;
+        }
+        _widgets[index] = widget;
         _hasWidgets = true;
     }
 

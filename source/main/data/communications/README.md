@@ -89,6 +89,8 @@ These requests are used for both BLE communication and Wi-Fi mode. In addition t
 
   A response whose JSON is identical to the stored one is skipped entirely, so an unchanged sitemap neither rebuilds the data layer nor redraws the menu. The comparison with the stored JSON is itself split over several tasks (`CompareSitemapTask` and friends): the root is compared first, then each top level element in its own task, so that no single task blocks the UI for the whole sitemap. The stored timestamp is refreshed when the response is dropped, so the data does not expire. The update is applied nevertheless while the displayed model temporarily differs from the stored JSON, for example after a command has been applied locally, after returning from Wi-Fi/offline mode, or when the model was restored from stale data at startup. See `SitemapStore.noteModelDivergence()`.
 
+  When only some top-level elements changed and the displayed model is complete and in sync, the response is applied partially: only the changed top-level elements are rebuilt and only the corresponding menu items are updated. The complete received JSON is still stored. Structural changes (root or homepage metadata, element count, `widgetId` reorder or replacement, item type changes, page additions or removals), sync mode, post-command or stale-state divergence and an incomplete model fall back to the existing full rebuild path.
+
 #### Further Reading
 
 - [User Manual – Sending Commands](https://next.openhab.org/docs/apps/garmin/#sending-commands-2)  

@@ -144,6 +144,15 @@ class HomepageMenu extends BasePageMenu {
 
     // See BasePageMenu.invalidateStructure for details
     private var _structureRemainsValid as Boolean = true;
+
+    // The sitemap model this menu currently represents. It is updated on every
+    // full update and used as the base for partial updates.
+    private var _sitemapHomepage as SitemapHomepage?;
+
+    // Returns the model the menu was last built or updated from.
+    public function getSitemapHomepage() as SitemapHomepage? {
+        return _sitemapHomepage;
+    }
     
     // See BasePageMenu.invalidateStructure for details
     public function invalidateStructure() as Void {
@@ -170,6 +179,24 @@ class HomepageMenu extends BasePageMenu {
         BasePageMenu.update( sitemapContainer );
     }
 
+    // Keeps track of the model the menu is updated from.
+    protected function updateWithQueue( 
+        sitemapContainer as SitemapContainerImplementation,
+        taskQueue as TaskQueue
+    ) as Void {
+        _sitemapHomepage = sitemapContainer as SitemapHomepage;
+        BasePageMenu.updateWithQueue( sitemapContainer, taskQueue );
+    }
+
+    // See BasePageMenu.updateIndices
+    public function updateIndices(
+        sitemapContainer as SitemapContainerImplementation,
+        indices as Array<Number>
+    ) as Void {
+        _structureRemainsValid = true;
+        BasePageMenu.updateIndices( sitemapContainer, indices );
+    }
+
     /******* BUTTON-BASED DEVICES *******/
 
     // Constructor for devices that show the settings menu as a parallel menu.
@@ -182,6 +209,7 @@ class HomepageMenu extends BasePageMenu {
         sitemapHomepage as SitemapHomepage,
         syncTopLevel as Boolean
     ) {
+        _sitemapHomepage = sitemapHomepage;
         BasePageMenu.initialize( 
             sitemapHomepage, 
             new Bitmap( {
@@ -216,6 +244,7 @@ class HomepageMenu extends BasePageMenu {
         sitemapHomepage as SitemapHomepage,
         syncTopLevel as Boolean
     ) {
+        _sitemapHomepage = sitemapHomepage;
         BasePageMenu.initialize( 
             sitemapHomepage, 
             null, 

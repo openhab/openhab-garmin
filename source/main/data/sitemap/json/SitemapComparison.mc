@@ -13,13 +13,25 @@ import Toybox.Lang;
  * user input can be handled between them, which is what the data layer creation
  * and the menu update already do.
  *
- * As soon as a difference is found, `isDifferent` is set and the remaining
- * comparisons return immediately.
+ * All top level elements are evaluated, because the indices of the changed
+ * elements are needed to apply a partial update. A difference sets
+ * `isDifferent`, but does not stop the remaining comparisons.
+ *
+ * A changed `widgetId` at the same index indicates that the elements were
+ * reordered or replaced rather than updated in place. Such structural changes
+ * are applied with the full rebuild path.
  */
 class SitemapComparison {
 
     // Set to true as soon as a difference has been found
     public var isDifferent as Boolean = false;
+
+    // Set to true if a changed element no longer has the same widgetId,
+    // which indicates a reorder or a replacement instead of an update.
+    private var _isReordered as Boolean = false;
+
+    // Indices of the top level elements that differ
+    private var _changedIndices as Array<Number> = [];
 
     // The two sitemap roots to compare
     private var _stored as JsonObject;
@@ -97,10 +109,10 @@ class SitemapComparison {
         return _elementCount;
     }
 
-    // Compares a single top level element
+    // Compares a single top level element. Every element has to be evaluated
+    // because the changed indices are needed for a partial update.
     public function compareElement( index as Number ) as Void {
-        if( isDifferent 
-            || _storedElements == null 
+        if( _storedElements == null 
             || _receivedElements == null 
             || index < 0 
             || index >= _elementCount 
@@ -108,13 +120,58 @@ class SitemapComparison {
             return;
         }
 
-        if( ! JsonComparer.areEqual( 
-                ( _storedElements as Array )[index] as Object?, 
-                ( _receivedElements as Array )[index] as Object? 
-            ) 
-        ) {
-            isDifferent = true;
+        var storedElement = ( _storedElements as Array )[index] as Object?;
+        var receivedElement = ( _receivedElements as Array )[index] as Object?;
+        if( JsonComparer.areEqual( storedElement, receivedElement ) ) {
+            return;
         }
+
+        isDifferent = true;
+        _changedIndices.add( index );
+
+        // A different widgetId at the same position means that the element
+        // was not only updated, but moved or replaced. The partial update
+        // cannot express this reliably, so the full path is used.
+        if( hasDifferentWidgetId( storedElement, receivedElement ) ) {
+            _isReordered = true;
+        }
+    }
+
+    // Indices of the top level elements that differ
+    public function getChangedIndices() as Array<Number> {
+        return _changedIndices;
+    }
+
+    // True if at least one top level element differs
+    public function hasChangedElements() as Boolean {
+        return _changedIndices.size() > 0;
+    }
+
+    // True if a changed element indicates a reorder or replacement
+    public function isReordered() as Boolean {
+        return _isReordered;
+    }
+
+    // Returns the widgetId of a top level element, or null if it is not
+    // available.
+    private static function getWidgetId( element as Object? ) as String? {
+        if( ! ( element instanceof Dictionary ) ) {
+            return null;
+        }
+        var widgetId = ( element as Dictionary )["widgetId"];
+        return widgetId instanceof String ? widgetId as String : null;
+    }
+
+    // True if both elements have a widgetId and it differs.
+    private static function hasDifferentWidgetId( 
+        a as Object?, 
+        b as Object? 
+    ) as Boolean {
+        var storedId = getWidgetId( a );
+        var receivedId = getWidgetId( b );
+        return storedId != null 
+            && receivedId != null 
+            && ! storedId.equals( receivedId );
     }
 
     // Compares the complete sitemaps in one go, used if the expected structure
