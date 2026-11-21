@@ -126,12 +126,15 @@ class HomepageMenu extends BasePageMenu {
     
     // Returns true, if any sitemap-related view is currently showing
     // These are:
-    // - Any `CustomMenu` implementations, exception the `SettingsMenu`
+    // - Any `CustomMenu` implementation
     // - Any `ControlView`
+    //
+    // The scope check excludes all views of the settings section. This also
+    // covers future settings views without listing their concrete types.
     public static function isSitemapShowing() as Boolean {
         var currentView = ViewStack.getCurrentView()[0];
-        return  ( currentView instanceof CustomMenu && ! ( currentView instanceof SettingsMenu ) )
-                || currentView instanceof ControlView;
+        return  ViewStack.getCurrentScope() == ViewStack.MAIN
+                && ( currentView instanceof CustomMenu || currentView instanceof ControlView );
     }
 
     /******* INSTANCE *******/

@@ -2,8 +2,19 @@ import Toybox.Lang;
 import Toybox.WatchUi;
 
 /*
- * The settings menu handler is responsible for managing the settings menu.
- * It provides functions to show and hide the menu as needed.
+ * The settings menu handler is responsible for managing the settings section.
+ * It provides functions to enter and leave the section as needed.
+ *
+ * Whether the settings are shown is always derived from the internal
+ * `ViewStack`, never from a cached flag: a flag could diverge from the views
+ * that are actually displayed (e.g. when the stack is reset by an update or
+ * an error). The SDK's `WatchUi.getCurrentView()` must not be used for this,
+ * because it is unreliable on some devices — see #215.
+ *
+ * Settings visibility is tracked as a `ViewStack.Scope`. Any view opened while
+ * the settings scope is active inherits it, so future settings views (e.g.
+ * submenus, pickers or dialogs) automatically belong to the settings section
+ * without having to be registered here.
  */
 class SettingsMenuManager {
     /*
@@ -17,10 +28,10 @@ class SettingsMenuManager {
     (:exclForSettingsFooter)
     private static var _settingsMenuDelegate as TouchSettingsMenuDelegate = new TouchSettingsMenuDelegate();
 
-    // Are we currently showing the settings?
-    private static var _isShowingSettings as Boolean = false;
+    // Returns true if the current view belongs to the settings section.
+    // This includes the settings root and any view opened from it.
     public static function isShowingSettings() as Boolean {
-        return _isShowingSettings;
+        return ViewStack.getCurrentScope() == ViewStack.SETTINGS;
     }
     
     /*
@@ -33,10 +44,9 @@ class SettingsMenuManager {
     * - `SLIDE_RIGHT` and `SLIDE_LEFT` are used on touch-based devices.
     */
     public static function showSettings( slide as SlideType ) as Void {
-        if( _isShowingSettings ) {
-            throw new GeneralException( "Called showSettings when settings were already shown" );
+        if( isShowingSettings() ) {
+            throw new GeneralException( "Called showSettings when the settings section was already shown" );
         }
-        _isShowingSettings = true;
 
         // Ensure that we were called from the HomepageMenu
         if( ! ( ViewStack.getCurrentView()[0] instanceof HomepageMenu ) ) {
@@ -55,18 +65,28 @@ class SettingsMenuManager {
         } else {
             throw new GeneralException( "showSettings only supports SLIDE_UP, SLIDE_DOWN or SLIDE_LEFT" );
         }
-        // Push the view on the view stack
-        ViewStack.pushView( _settingsMenu, _settingsMenuDelegate, slide );
+        // Push the view on the view stack, entering the settings scope
+        ViewStack.pushViewInScope(
+            _settingsMenu,
+            _settingsMenuDelegate,
+            slide,
+            ViewStack.SETTINGS
+        );
     }
     
     // Hide the settings
-    // Again, the slide type also decides on the focuse of the Homepage menu
-    // we are returning to
+    // Again, the slide type also decides on the focus of the Homepage menu
+    // we are returning to.
+    //
+    // This function only leaves the settings section from the settings root.
+    // Any future settings subview is popped by its own delegate instead.
     public static function hideSettings( slide as SlideType ) as Void {
-        if( ! _isShowingSettings ) {
+        if( ! isShowingSettings() ) {
             throw new GeneralException( "Called hideSettings when settings were not shown" );
         }
-        _isShowingSettings = false;
+        if( ! ( ViewStack.getCurrentView()[0] instanceof SettingsMenu ) ) {
+            throw new GeneralException( "hideSettings can only be called from the settings root" );
+        }
 
         // Depending on the slide type we decide which
         // homepage menu item to focus
@@ -80,7 +100,7 @@ class SettingsMenuManager {
         } else {
             throw new GeneralException( "hideSettings only supports SLIDE_UP, SLIDE_DOWN or SLIDE_RIGHT" );
         }
-        // Pop the view from the view stack
+        // Pop the view from the view stack, leaving the settings scope
         ViewStack.popView( slide );
     }
 }

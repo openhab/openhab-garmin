@@ -19,20 +19,40 @@ import Toybox.WatchUi;
  * https://github.com/openhab/openhab-garmin/issues/215
  */
  class ViewStack {
-    
+
+    /*
+     * The scope identifies the part of the app a view belongs to.
+     *
+     * Views pushed while another view is shown inherit its scope. This way,
+     * any view opened from within a section (e.g. future settings submenus,
+     * pickers or dialogs) remains part of that section without having to
+     * register its concrete type. Popping a view restores the scope of the
+     * view below it.
+     */
+    public enum Scope {
+        MAIN,       // Homepage, sitemap pages, loading and error views
+        SETTINGS    // The settings root and all views opened from it
+    }
+
     // Tuple used to store each view/delegate layer in the view stack
-    typedef ViewInputPair as [ WatchUi.Views?, WatchUi.InputDelegates? ];
+    typedef ViewInputPair as [ WatchUi.Views?, WatchUi.InputDelegates?, Scope ];
 
     // The view stack
     private static var _viewStack as Array<ViewInputPair> = [];
 
-    // Returns the current view and delegate, replacing WatchUi.getCurrentView().
+    // Returns the current view, delegate and scope, replacing WatchUi.getCurrentView().
     // Replacing that API was the primary reason for introducing our own view stack. 
     // See the class-level comment above for details.
-    public static function getCurrentView() as [ WatchUi.Views?, WatchUi.InputDelegates? ] {
+    public static function getCurrentView() as ViewInputPair {
         return _viewStack.size() > 0 
                ? _viewStack[_viewStack.size()-1]
-               : [null, null];
+               : [null, null, MAIN];
+    }
+
+    // Returns the scope of the current view. Derived from the tracked view
+    // stack, so it cannot diverge from the views that are actually shown.
+    public static function getCurrentScope() as Scope {
+        return getCurrentView()[2];
     }
 
     // Returns true if the given view is currently part of the tracked stack.
@@ -77,9 +97,21 @@ import Toybox.WatchUi;
     }
 
     // Pushes a view onto the stack, replacing WatchUi.pushView().
+    // The new view inherits the scope of the current view.
     public static function pushView( view as Views, delegate as InputDelegates?, transition as SlideType ) as Void {
+        pushViewInScope( view, delegate, transition, getCurrentScope() );
+    }
+
+    // Pushes a view onto the stack with an explicit scope.
+    // Used when entering a section, e.g. the settings.
+    public static function pushViewInScope(
+        view as Views,
+        delegate as InputDelegates?,
+        transition as SlideType,
+        scope as Scope
+    ) as Void {
         WatchUi.pushView( view, delegate, transition );
-        _viewStack.add( [ view, delegate ] );
+        _viewStack.add( [ view, delegate, scope ] );
         // Logger.debug( "ViewStack.pushView: new stack size=" + _viewStack.size() );
     }
 
@@ -91,12 +123,13 @@ import Toybox.WatchUi;
         if( _viewStack.size() > 0 ) {
             _viewStack = [];
         }
-        _viewStack.add( [ view, delegate ] );
+        _viewStack.add( [ view, delegate, MAIN ] );
         // Logger.debug( "ViewStack.registerInitialView: new stack size=" + _viewStack.size() );
     }
 
     // Removes all views from the stack except the base view
     // and replaces the base view with the specified view.
+    // The resulting view is always in the MAIN scope.
     public static function resetTo( view as Views, delegate as InputDelegates? ) as Void {
         // Logger.debug( "ViewStack.resetTo: previous stack size=" + _viewStack.size() );
         while( _viewStack.size() > 1 ) {
@@ -107,13 +140,15 @@ import Toybox.WatchUi;
     }
 
     // Switches the view on the top of the view stack, replaces ViewStack.switchToView()
+    // The new view inherits the scope of the view it replaces.
     public static function switchToView( view as Views, delegate as InputDelegates?, transition as SlideType ) as Void {
         // Logger.debug( "ViewStack.switchToView: stack size=" + _viewStack.size() );
+        var scope = getCurrentScope();
         WatchUi.switchToView( view, delegate, transition );
         // This function may also be called on an empty view stack,
         // and in that case we just add the new view to the view stack
         var size = _viewStack.size();
-        var entry = [view, delegate];
+        var entry = [view, delegate, scope];
         if( size > 0 ) {
             _viewStack[_viewStack.size()-1] = entry;
         } else {

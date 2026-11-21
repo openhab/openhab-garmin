@@ -30,6 +30,8 @@ Since querying the API’s night mode state is relatively costly, the `NightMode
 
 It maintains its own internal view stack in parallel with the Connect IQ API’s view stack. This enables advanced behavior, such as replacing the entire stack with a new base view, and works around a known issue on certain newer devices where calling `WatchUi.getCurrentView()` can lead to crashes.
 
+Each view stack entry also carries a scope (`MAIN` or `SETTINGS`) that identifies the part of the app the view belongs to. A pushed or switched view inherits the scope of the view it replaces, and popping a view restores the scope of the view below it. This makes `ViewStack.getCurrentScope()` the single source of truth for section visibility: any future settings view automatically remains part of the settings scope, even after stack changes. `ViewStack.pushViewInScope()` is used to enter a section, while `resetTo()` and `registerInitialView()` start in the `MAIN` scope.
+
 `ViewStack.popView()` only removes views above the base view. Leaving the app is therefore handled explicitly in `HomepageMenuDelegate.onBack()`, so that a stray or duplicate back event cannot discard the base view and terminate the app. An attempted pop below the base view is reported as a non-fatal UI exception, which is shown to the user as a toast.
 
 `ViewStack.contains()` allows sitemap updates to detect whether a page that became empty is still part of the current navigation path, so it can be removed instead of leaving an empty menu in the stack.
