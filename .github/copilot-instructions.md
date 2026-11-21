@@ -23,3 +23,8 @@ If you notice existing inconsistencies between the code and the documentation th
 ## Commit messages
 
 If the work relates to a GitHub issue, reference the issue number in the commit message, for example `Fixes #343` or `Refs #343`.
+
+## Commits on the main branch
+
+When working on the `main` branch, commit only with explicit operator authorization.
+
