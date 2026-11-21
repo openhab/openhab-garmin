@@ -128,10 +128,9 @@ class RollershutterView extends ControlView {
     private function updateStateDrawable() as Void {
         if( _stateDrawable != null ) {
             var stateDrawable = _stateDrawable as Text;
-            // In the view, we'll show the numeric state, 
-            // regardless of any mappings. If the state
-            // is not numeric, we'll leave it at the previous
-            // state.
+            // The view shows the same display state as the menu item,
+            // including any mappings or state descriptions. If the state
+            // is not numeric, we'll leave it at the previous state.
             var switchItem = _sitemapSwitch.getSwitchItem();
             if( switchItem.getState().toNumber() != null || ! switchItem.hasState() ) {
                 stateDrawable.setText( _sitemapSwitch.getDisplayState() );

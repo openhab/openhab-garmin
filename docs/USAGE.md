@@ -73,15 +73,15 @@ Once the app is installed, you can configure the following settings by opening i
 
 | Setting                           | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
 |-----------------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| **URL**                           | Your openHAB URL in the format `https://host:port` or `http://host:port`. Note: HTTP only works with iOS. See [Connectivity](#connectivity) and [Using myopenHAB](#using-myopenhab) for details.                                                                                                                                                                                                                                                                      |
+| **URL (e.g. https://yourhost:yourport). Note: HTTP works only on iOS; Android requires HTTPS with a valid certificate. For myopenhab.org, use https://home.myopenhab.org.** | Your openHAB URL. See [Connectivity](#connectivity) and [Using myopenHAB](#using-myopenhab) for details.                                                                                                                                                                                                                                                                      |
 | **Sitemap Name**                  | Name of the sitemap to display. See [Sitemap Setup](#sitemap-setup) for details.                                                                                                                                                                                                                                                                                                                                                                                      |
-| **Native REST API Support**       | Enabled by default. When enabled, the app uses the JSON-based REST API to send commands. See [Sending Commands](#sending-commands) for details.                                                                                                                                                                                                                                                                                                                              |
-| **Webhook Identifier**            | If your openHAB version does not support the JSON-based REST API (see above), you can disable the setting above and configure a custom webhook instead to send commands. See [Sending Commands](#sending-commands) for details.                                                                                                                                                                                                                                                                              |
-| **Username**                      | For basic authentication (used for [myopenHAB](#using-myopenhab), see below)                                                                                                                                                                                                                                                                                                                                                                                          |
+| **Enable this option if your openHAB installation supports the JSON-based REST API for sending commands.** | Enabled by default. When enabled, the app uses the JSON-based REST API to send commands. See [Sending Commands](#sending-commands) for details.                                                                                                                                                                                                                                                                                                                              |
+| **Webhook Identifier – A way to send commands if the JSON-based REST API is not available. See the documentation for setup instructions.** | If your openHAB version does not support the JSON-based REST API, you can disable the setting above and configure a custom webhook instead to send commands. See [Sending Commands](#sending-commands) for details.                                                                                                                                                                                                                                                                              |
+| **User Name (Basic Authentication)** | For basic authentication (used for [myopenHAB](#using-myopenhab), see below)                                                                                                                                                                                                                                                                                                                                                                                          |
 | **Password**                      | Password for basic authentication                                                                                                                                                                                                                                                                                                                                                                                                                                     |
-| **Supress empty response errors** | Suppress errors for empty sitemap responses. Recommended when using myopenhab.org, which occasionally returns empty results. See the related [openhab-cloud issue #496](https://github.com/openhab/openhab-cloud/issues/496) for details.                                                                                                                                                                                                                             |
-| **Polling Interval (ms)**         | Interval between data requests to your openHAB instance. Set to 0 to fetch new data immediately after the previous response is processed. Polling only occurs while the app is open, not in the background. If you're using **myopenhab.org**, it's recommended to use the default (3000 ms) or a higher value to avoid overloading their servers. If you're connecting to your own openHAB server directly, you may try setting it to 0 for more responsive updates. |
-| **Post command hold time (ms)** | Time during which state updates are ignored after a command is sent. Since a sitemap request is executed immediately after sending a command, a slow response from openHAB may still return the previous state, causing switches in the UI to briefly toggle back and forth. The post-command hold time prevents this by locking the item state for a configurable duration while the command is processed and the new state is applied. |
+| **Suppress errors for empty sitemap responses. Recommended when using myopenhab.org, which occasionally returns empty results.** | See the related [openhab-cloud issue #496](https://github.com/openhab/openhab-cloud/issues/496) for details.                                                                                                                                                                                                                             |
+| **Polling interval (ms): Time between data requests to your openHAB instance. Set to 0 to request new data immediately after the previous response is processed.** | Polling only occurs while the app is open, not in the background. If you're using **myopenhab.org**, it's recommended to use the default (3000 ms) or a higher value to avoid overloading their servers. If you're connecting to your own openHAB server directly, you may try setting it to 0 for more responsive updates. |
+| **Post command hold time (ms): Time during which state updates are ignored after a command is sent. This prevents temporary state flip-flopping while the system processes the command and applies the new state.** | Since a sitemap request is executed immediately after sending a command, a slow response from openHAB may still return the previous state, causing switches in the UI to briefly toggle back and forth. The post-command hold time prevents this by locking the item state for a configurable duration while the command is processed and the new state is applied. |
 
 <div style="display: flex; justify-content: center;">
   <img src="images/app-settings/app-settings.png" alt="App Settings" style="max-width: 340px;">
@@ -306,7 +306,7 @@ Check the [Sitemaps documentation]({{base}}/ui/sitemaps.html) to learn more abou
 The sitemap name configured in the app must match the filename of the sitemap, excluding the `.sitemap` extension.
 For example, if the file is named `garmin_demo.sitemap`, set the sitemap name in the app settings to `garmin_demo`.
 
-When creating the sitemap through the UI, the sitemap nam configured in the app is `uicomponents_` + sitemap name.
+When creating the sitemap through the UI, the sitemap name configured in the app is `uicomponents_` + sitemap name.
 For example, if the sitemap is named `Garmin_Demo` in the UI, set the sitemap name in the app settings to `uicomponents_Garmin_Demo`.
 
 The label defined within the sitemap file is displayed in the app UI, such as in glances and other views.
@@ -383,7 +383,7 @@ This configuration produces the following display in the UI:
 
 #### `Default`
 
-The ➡️ [`Default`]({{base}}/ui/sitemaps.html#element-type-frame) element displays an item using the default widget determined by its type.
+The ➡️ [`Default`]({{base}}/ui/sitemaps.html#element-type-default) element displays an item using the default widget determined by its type.
 This widget selection is handled automatically by openHAB.
 
 The Garmin app supports `Default` only if the item’s type maps to one of the app’s supported widgets.
@@ -534,10 +534,10 @@ Frame label="Switches" {
 
 When the item type is `Rollershutter`, the widget opens a full-screen control with `UP`, `DOWN`, and `STOP` actions.
 
-In the menu, the item displays a textual or percentage-based state:
+In the menu and in the full-screen view, the item displays a textual or percentage-based state:
 
-- `mappings` can be used to map numeric states (e.g., `0="Open"`, `100="Closed"`), but **only affect the menu label**.
-- The full-screen view **always** shows numeric percentages for clarity, since states like `0` and `100` can reflect transitional movement (e.g., “opening”) rather than final state (“open”).
+- `mappings` can be used to map numeric states (e.g., `0="Open"`, `100="Closed"`). They affect both the menu label and the state shown in the full-screen view.
+- If the state cannot be mapped to a text, the numeric percentage is shown.
 
 **Example:**
 
@@ -699,18 +699,17 @@ Frame label="First Floor" {
 - The **lower-right** screenshot shows the slider on a touch-based device.
 
 Note: Even button-based devices may support touch input, and on those, the UI reacts to both.
-/On **button-based devices**, use **up/down** to scroll through the values, press **enter** (upper-right button) to confirm or **back** (lower-right button) to cancel.
-On **touch-based devices** simply **tap the icons** corresponding to the desired action or value to make a selection.
+
+On **button-based devices**, use **up/down** to scroll through the values, press **enter** (upper-right button) to confirm or **back** (lower-right button) to cancel.
+On **touch-based devices**, simply **tap the icons** corresponding to the desired action or value to make a selection.
 
 ### Dynamic Sitemaps
 
-Of the available [Dynamic Sitemaps]({{base}}/ui/sitemaps.html#dynamic-sitemaps) features, the `visibility` parameter as well as label and icon colors are supported.
+Of the available [Dynamic Sitemaps]({{base}}/ui/sitemaps.html#dynamic-sitemaps) features, the `visibility` parameter as well as label and value colors are supported.
 
 #### Visibility
 
 For usage details and examples, see the [visibility documentation]({{base}}/ui/sitemaps.html#visibility).
-
-Here's an improved version with clearer phrasing, smoother flow, and a slightly more polished tone, while preserving the original structure:
 
 #### Label and Value Colors
 
@@ -734,6 +733,25 @@ This results in the following display:
 <div class="garmin-screenshot-container">
   <img src="images/app/09-dynamics-colors.png">
 </div>
+
+#### Command Confirmation
+
+The `commandConfirmMessage` parameter displays a confirmation dialog with a message provided by the server before a command is sent.
+The app only displays the text and does not evaluate any conditions itself.
+If the parameter is absent or empty, no confirmation is shown.
+
+The behavior depends on the Sitemap Widget:
+
+- For `Switch` and `Selection` (including the full-screen `Rollershutter` and `Player` controls), the dialog is shown when a command is selected. Confirming sends the command; cancelling sends nothing.
+- For `Setpoint` and `Slider`, the dialog is shown once before the picker opens when the value is not `releaseOnly`, because every intermediate change is sent immediately. With `releaseOnly`, the dialog is shown when the value is confirmed, and the command is only sent after confirmation. Cancelling leaves the value unchanged.
+
+**Example:**
+
+```java
+Frame label="Garage" {
+    Switch item=GarageDoor label="Garage Door" commandConfirmMessage="Do you really want to open the garage door?"
+}
+```
 
 #### Icons
 
@@ -764,6 +782,7 @@ Currently supported icons are:
 - `lightbulb`
 - `lowbattery`
 - `mediacontrol`
+- `motion`
 - `player`
 - `poweroutlet`
 - `radiator`
@@ -772,7 +791,9 @@ Currently supported icons are:
 - `slider`
 - `snow`
 - `soundvolume`
+- `soundvolume_mute`
 - `temperature`
+- `terrace`
 - `window`
 
 More icons can be added upon request. If you need support for additional icons, please post a request in the [openHAB Community](https://community.openhab.org/t/request-additional-icons/164976).
@@ -782,9 +803,11 @@ More icons can be added upon request. If you need support for additional icons, 
 To access the settings menu:
 
 - On button-based devices, scroll down on the home screen and continue past the ⚙️ icon.
+- On button-based Edge devices (540, 840, MTB, 550, 850, 1060), select the ⚙️ **Settings** entry at the end of the home screen menu.
 - On touch-based devices, tap the ⚙️ **Settings** entry in the home screen menu.
 
-The settings menu currently displays the app version and server URL. Additional features may be added in the future when the app evolves.
+The settings menu displays the app version, server URL, sitemap name, Connect IQ version, connectivity mode, and the time of the last sitemap update.
+It also provides an action to update the sitemap over Wi-Fi, which is only enabled while a Wi-Fi connection is active.
 
 <div class="garmin-screenshot-container">
   <img src="images/app/05-settings-1.png">
@@ -819,9 +842,10 @@ The app distinguishes between **temporary (non-fatal)** and **critical (fatal)**
 - Errors encountered while parsing the sitemap.
 - Any other unexpected errors or exceptions.
 
-> Note: Even after a fatal error, the app continues querying the sitemap. If a response is successfully processed, it returns to displaying the sitemap.
+> Note: Apart from fatal user interface errors, the app continues querying the sitemap after a fatal error. If a response is successfully processed, it returns to displaying the sitemap.
+> Fatal user interface errors stop sitemap polling permanently, so the app must be restarted to continue.
 
-#### If "Suppress Empty Response Errors" is enabled:
+#### If "Suppress errors for empty sitemap responses" is enabled:
 
 When this option is enabled in the [Settings](#configuration), toast notifications for the following errors will be suppressed:
 
@@ -854,6 +878,7 @@ The following error codes are used for common communication issues and those wit
 - `NO PHONE` – The watch is not connected to the smartphone (error codes `-104` and `-2`).
 - `INVRES` – The response was invalid (error code `-400`).
 - `EMRES` – The response was empty.
+- `UNRES` – The response contained unexpected data.
 
 ### User Interface Error Codes (Prefix `UI:`)
 
@@ -866,8 +891,8 @@ If you encounter a **UI:** error code, please report it to the development team,
 | Error     | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 |-----------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | `S:0` or `C:0` | When in [Wi-Fi mode](#wi-fi), this error occurs if a sitemap request or command fails because the server is not reachable, for example due to an incorrect URL in the configuration. |
-| `C:415`   | HTTP response code **415** means _Unsupported Media Type_. This usually occurs when **Native REST API Support** is enabled in the [Configuration](#configuration), but your openHAB instance doesn’t support it. If you're using the backport (see [Sending Commands](#sending-commands) and have recently updated openHAB to a newer version or installed a new binding, you may need to re-install the backport to restore compatibility.                                                       |
-| `S:EMRES` | myopenHAB currently experiences an intermittent issue ([details here](https://github.com/openhab/openhab-cloud/issues/496)) where sitemap requests may return empty responses. When this happens, the app displays a non-fatal `S:EMRES` notification. Typically, the next request succeeds, so the issue doesn't escalate into a fatal error. To avoid seeing these notifications, you can enable the **Suppress empty response errors** option in the [Configuration](#configuration) settings. |
+| `C:415`   | HTTP response code **415** means _Unsupported Media Type_. This usually occurs when the JSON-based REST API is enabled in the [Configuration](#configuration), but your openHAB instance doesn’t support it. If you're using the backport (see [Sending Commands](#sending-commands) and have recently updated openHAB to a newer version or installed a new binding, you may need to re-install the backport to restore compatibility.                                                       |
+| `S:EMRES` | myopenHAB currently experiences an intermittent issue ([details here](https://github.com/openhab/openhab-cloud/issues/496)) where sitemap requests may return empty responses. When this happens, the app displays a non-fatal `S:EMRES` notification. Typically, the next request succeeds, so the issue doesn't escalate into a fatal error. To avoid seeing these notifications, you can enable the **Suppress errors for empty sitemap responses** option in the [Configuration](#configuration) settings. |
 
 ### Edge 550 / 850 Menu Focus Indicator Issue
 
