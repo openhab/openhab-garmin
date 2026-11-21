@@ -1,17 +1,18 @@
 import Toybox.Lang;
 import Toybox.WatchUi;
 import Toybox.Graphics;
-import Toybox.Time;
+import Toybox.System;
 
 class CommandMenuItem extends WidgetMenuItem {
 
     private var _commandRequest as BaseCommandRequest?;
 
-    // The last time an internal update was applied. Internal updates are applied
-    // by some menu items directly after a command is sent to immediately reflect
-    // the new state. Storing this timestamp is required to apply the post-command
-    // hold time configured in the app settings.
-    private var _lastLocalStateUpdate as Moment?;
+    // The value of System.getTimer() (in ms) when the last internal update was
+    // applied. Internal updates are applied by some menu items directly after a
+    // command is sent to immediately reflect the new state. Storing this
+    // timestamp is required to apply the post-command hold time configured in
+    // the app settings.
+    private var _lastLocalStateUpdateTimer as Number?;
 
     private var _pendingCommand as Item.ItemState?;
 
@@ -54,9 +55,13 @@ class CommandMenuItem extends WidgetMenuItem {
     // Returns true if the item is still within the configured post-command hold time
     // since the last internal state update.
     public function isInHoldTime() as Boolean {
-        var postCommandHoldTime = AppSettings.getPostCommandHoldTime();
-        if( _lastLocalStateUpdate != null && postCommandHoldTime.value() > 0 ) {
-            return Time.now().lessThan( _lastLocalStateUpdate.add( postCommandHoldTime ) );
+        var holdMillis = AppSettings.getPostCommandHoldTimeMillis();
+        if( _lastLocalStateUpdateTimer != null && holdMillis > 0 ) {
+            var elapsed = System.getTimer() - ( _lastLocalStateUpdateTimer as Number );
+            // A negative elapsed time can only occur if the millisecond timer
+            // wrapped around (about every 50 days). The hold has then certainly
+            // elapsed.
+            return elapsed >= 0 && elapsed < holdMillis;
         } else {
             return false;
         }
@@ -70,7 +75,7 @@ class CommandMenuItem extends WidgetMenuItem {
             
             // This is used to apply the post-command hold time for state updates,
             // if configured in the app settings.
-            _lastLocalStateUpdate = Time.now();
+            _lastLocalStateUpdateTimer = System.getTimer();
 
             // Update state displayed by the menu item
             onStateChangedLocally();
@@ -78,7 +83,7 @@ class CommandMenuItem extends WidgetMenuItem {
             // The item now shows a locally applied state. Until the configured
             // post-command hold time has elapsed, an unchanged response cannot
             // reconcile it, so upcoming responses must not be skipped.
-            SitemapStore.noteModelDivergenceFor( AppSettings.getPostCommandHoldTime() );
+            SitemapStore.noteModelDivergenceFor( AppSettings.getPostCommandHoldTimeMillis() );
  
             WatchUi.requestUpdate();
        }

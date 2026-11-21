@@ -53,9 +53,12 @@ class SitemapStore  {
      * While such a divergence exists, an incoming JSON that is identical to
      * the stored one must still be applied to bring the model back in sync.
      * See ProcessIncomingJsonTask.
+     *
+     * The divergence is tracked with the millisecond timer so that the
+     * post-command hold time can be honored with millisecond precision.
      */
-    private static var _divergenceSince as Moment?;
-    private static var _divergenceHold as Duration?;
+    private static var _divergenceSince as Number?;
+    private static var _divergenceHoldMillis as Number?;
 
     // Deletes the sitemap from Storage to invalidate it in case of a fatal
     // error during a sitemap request. After such an error, the sitemap should
@@ -215,15 +218,15 @@ class SitemapStore  {
     // Records that the current model no longer matches the stored JSON and
     // that the next response must be applied even if its JSON is unchanged.
     public static function noteModelDivergence() as Void {
-        noteModelDivergenceFor( new Duration( 0 ) );
+        noteModelDivergenceFor( 0 );
     }
 
     // Same as noteModelDivergence(), but the divergence cannot be reconciled
-    // before `hold` has elapsed. Used after a command, because the affected
-    // item ignores updates during the configured post-command hold time.
-    public static function noteModelDivergenceFor( hold as Duration ) as Void {
-        _divergenceSince = Time.now();
-        _divergenceHold = hold;
+    // before `holdMillis` (in ms) has elapsed. Used after a command, because the
+    // affected item ignores updates during the configured post-command hold time.
+    public static function noteModelDivergenceFor( holdMillis as Number ) as Void {
+        _divergenceSince = System.getTimer();
+        _divergenceHoldMillis = holdMillis;
     }
 
     // True if the model can be assumed to match the stored JSON.
@@ -236,10 +239,12 @@ class SitemapStore  {
         if( _divergenceSince == null ) {
             return;
         }
-        var hold = _divergenceHold as Duration;
-        if( ! Time.now().lessThan( ( _divergenceSince as Moment ).add( hold ) ) ) {
+        var elapsed = System.getTimer() - ( _divergenceSince as Number );
+        // A negative elapsed time can only occur if the millisecond timer wrapped
+        // around (about every 50 days). The hold has then certainly elapsed.
+        if( elapsed < 0 || elapsed >= ( _divergenceHoldMillis as Number ) ) {
             _divergenceSince = null;
-            _divergenceHold = null;
+            _divergenceHoldMillis = null;
         }
     }
 

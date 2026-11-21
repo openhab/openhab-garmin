@@ -1,5 +1,4 @@
 import Toybox.Lang;
-import Toybox.Time;
 import Toybox.Application.Properties;
 
 /*
@@ -28,7 +27,7 @@ class AppSettings {
     public static function getUser() as String { return get().user; }
     public static function getPassword() as String { return get().password as String; }
     public static function getPollingInterval() as Number { return get().pollingInterval; }
-    public static function getPostCommandHoldTime() as Duration { return get().postCommandHoldTime; }
+    public static function getPostCommandHoldTimeMillis() as Number { return get().postCommandHoldTimeMillis; }
 
     // Prefix of the server-specific settings
     // Currently only index=0 is supported (e.g. url_0),
@@ -57,7 +56,7 @@ class AppSettings {
     public var user as String;
     public var password as String?;
     public var pollingInterval as Number;
-    public var postCommandHoldTime as Duration;
+    public var postCommandHoldTimeMillis as Number;
 
     /* Config to be set for sideloading a build
        (sideloaded builds do not support settings configuration via UI)
@@ -109,8 +108,8 @@ class AppSettings {
         pollingInterval = Properties.getValue( INTERVAL_PREFIX + _index ) as Number;
 
         // The hold time defines the amount of time (in ms) for which a state remains locked
-        // after a command has been sent
-        postCommandHoldTime = new Duration( Properties.getValue( POST_COMMAND_HOLD_TIME_PREFIX + _index ) as Number / 1000 );
+        // after a command has been sent. 0 disables the hold.
+        postCommandHoldTimeMillis = Properties.getValue( POST_COMMAND_HOLD_TIME_PREFIX + _index ) as Number;
     }
 
     // Helper function that reads a string setting and throws an error if it
