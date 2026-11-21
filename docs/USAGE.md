@@ -11,12 +11,12 @@ source: https://github.com/openhab/openhab-garmin/blob/main/docs/USAGE.md
   flex-direction: row;
   flex-wrap: wrap;
   justify-content: center;
+}
 
-  img {
-    max-width: 300px !important;
-    padding: 0.325em;
-    background: white;
-  }
+.garmin-screenshot-container img {
+  max-width: 300px !important;
+  padding: 0.325em;
+  background: white;
 }
 </style>
 
