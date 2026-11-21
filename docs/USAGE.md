@@ -707,6 +707,7 @@ The only behavioral difference between the two is the `Slider` widget’s suppor
 - A maximum of 100 steps is supported, for example:
   - minValue=0, maxValue=100, step=1
   - minValue=0, maxValue=50, step=0.5
+- `step` must be greater than `0`, and `maxValue` must be greater than or equal to `minValue`. Invalid values are rejected with an error message that names the widget and the invalid parameter.
 - While up to 100 steps are supported, this can be impractical for wearable interfaces. It is recommended to define the range and `step` so that the total number of steps is limited to roughly 10 to 20, making interaction significantly more manageable.
 - The formatting pattern defined in the item’s metadata is not used. Instead, predefined formatting rules are applied when displaying values:
   - In the menu, values are formatted as compactly as possible and the unit is appended without a space to conserve space. For example “20°C” or “20.5°C”.

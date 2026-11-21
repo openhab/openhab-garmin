@@ -66,6 +66,21 @@ class SitemapNumeric extends SitemapWidget {
         _maxValue = json.getFloat( "maxValue", 100.0 );
         _step = json.getFloat( "step", 1.0 );
 
+        // Reject invalid parameters before they are used in any calculation.
+        // A step that is not positive makes the picker loop move away from
+        // maxValue instead of towards it, and an inverted range would leave
+        // the picker without any pickable value.
+        if( _step <= 0.0 ) {
+            throw new JsonParsingException( 
+                getType() + " '" + getLabel() + "': step must be greater than 0" );
+        }
+
+        if( _maxValue < _minValue ) {
+            throw new JsonParsingException( 
+                getType() + " '" + getLabel() 
+                + "': maxValue must be greater than or equal to minValue" );
+        }
+
         // Verify that we do not have more steps than supported
         if( UI_NUMERIC_MAX_STEPS < ( _maxValue - _minValue ) / _step ) {
             throw new JsonParsingException( getType() + " does not support more than 100 steps." );
