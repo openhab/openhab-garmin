@@ -5,6 +5,8 @@ Handles reading from and writing to persistent storage. As of now, the following
 - **JSON Dictionary**: Caches the latest sitemap data for use on app startup. It is stored together with a timestamp that determines whether the data is still considered fresh. The timestamp is refreshed whenever a response identical to the cached JSON is received.
 - **Sitemap Label**: Stored for display by the _Glance_.
 
+Both values belong to the configured server and sitemap. They are removed when the app settings change while the app is running, because the app cannot apply the new settings and asks the user to reopen it.
+
 ## Further Reading
 
 - [Connect IQ Core Topics – Persisting Data](https://developer.garmin.com/connect-iq/core-topics/persisting-data/)

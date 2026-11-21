@@ -26,9 +26,10 @@ class HomepageMenu extends BasePageMenu {
     private static var _instance as HomepageMenu?;
     
     // Completely removes the current menu structure.
-    // Used to start fresh after out-of-memory errors,
-    // which can occur if old and new sitemaps differ greatly
-    // and their menu structures partially coexist during updates.
+    // Used to start fresh after out-of-memory errors, which can occur if old and
+    // new sitemaps differ greatly and their menu structures partially coexist
+    // during updates. It is also used after a settings change, because the menu
+    // belongs to the previous server and must not be used any further.
     public static function clear() as Void {
         _instance = null;
     }
@@ -97,7 +98,8 @@ class HomepageMenu extends BasePageMenu {
     // unchanged JSON would be skipped and the states would never come back.
     //
     // Returns true if states were hidden. The menu can exist without a sitemap
-    // in memory, e.g. after a fatal error cleared it, so this is a no-op then.
+    // in memory, e.g. after a full-screen sitemap error invalidated it, so this
+    // is a no-op then.
     public function hideStates() as Boolean {
         var sitemap = SitemapStore.getSitemapFromMemoryWithStaleStates();
         if( sitemap == null ) {

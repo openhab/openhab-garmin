@@ -102,6 +102,8 @@ Once the app is installed, you can configure the following settings by opening i
 | **Polling interval (ms): Time between data requests to your openHAB instance. Set to 0 to request new data immediately after the previous response is processed.** | Polling only occurs while the app is open, not in the background. If you're using **myopenhab.org**, it's recommended to use the default (3000 ms) or a higher value to avoid overloading their servers. If you're connecting to your own openHAB server directly, you may try setting it to 0 for more responsive updates. |
 | **Post command hold time (ms): Time during which state updates are ignored after a command is sent. This prevents temporary state flip-flopping while the system processes the command and applies the new state. Set to 0 to disable.** | Since a sitemap request is executed immediately after sending a command, a slow response from openHAB may still return the previous state, causing switches in the UI to briefly toggle back and forth. The post-command hold time prevents this by locking the item state for a configurable duration while the command is processed and the new state is applied. The value is applied with millisecond precision. |
 
+Settings are read when the app starts. If you change settings while the app is open, the app stops requesting data and asks you to close and reopen it. The new settings are applied when the app starts again.
+
 <div style="display: flex; justify-content: center;">
   <img src="images/app-settings/app-settings.png" alt="App Settings" style="max-width: 340px;">
 </div>
@@ -162,7 +164,7 @@ Due to the limitations of the Wi-Fi mode, the app does not regularly poll openHA
   <img src="images/app/12-nostates.png"/>
 </div>
 
-Only if no cached sitemap is available at startup, for example after settings changes or a fatal error, the app enters sync mode to retrieve the full sitemap. The [settings menu](#settings-menu) shows when the sitemap was last retrieved, and the user can also manually trigger an update via Wi-Fi, for example to download structural changes to the sitemap.
+Only if no cached sitemap is available at startup, for example after settings changes or a critical error, the app enters sync mode to retrieve the full sitemap. The [settings menu](#settings-menu) shows when the sitemap was last retrieved, and the user can also manually trigger an update via Wi-Fi, for example to download structural changes to the sitemap.
 
 <div class="garmin-screenshot-container">
   <img src="images/app/12-settings-last-update.png"/>
@@ -855,39 +857,47 @@ This section explains how the app handles errors and lists common issues you mig
 
 ### How the App Handles Errors
 
-The app distinguishes between **temporary (non-fatal)** and **critical (fatal)** errors:
+The app distinguishes between **temporary**, **critical**, and **fatal** errors:
 
-- **Non-fatal errors** trigger a toast notification at the top of the screen, allowing you to continue using the app.
-- **Fatal errors** display a full-screen error view, halting further use until the issue is resolved.
+- **Temporary errors** trigger a toast notification at the top of the screen; you can continue using the app.
+- **Critical errors** display a full-screen error view, but the app keeps requesting data in the background and returns to the sitemap automatically once it receives a valid response.
+- **Fatal errors** are also shown in a full-screen error view, but the app stops requesting data and cannot recover by itself. Close and reopen the app. This applies to fatal user interface errors and to a settings change while the app is running.
 
-#### Non-fatal errors include:
+#### Temporary errors (toast notification)
 
 - Most communication-related issues when requesting the sitemap.
 - All communication-related issues when sending a command.
-- Issues that occur while processing user input
+- Issues that occur while processing user input.
 
-> Note: Non-fatal errors related to requesting the sitemap will become fatal if they persist for more than 10 seconds.
+> Note: Temporary errors during sitemap polling become critical if they persist for more than 10 seconds.
 
-#### Immediately fatal errors include:
+#### Critical errors (full-screen error, recoverable)
 
 - Certain communication errors when requesting the sitemap, specifically:
 
-  - Error `-1001` (see below)
+  - Error `-1001` (secure connection required, see below)
   - HTTP error `404`
+  - Errors `-402` (response too large) and `-403` (out of memory)
 - Errors encountered while parsing the sitemap.
-- Any other unexpected errors or exceptions.
+- Other unexpected errors while processing server responses.
 
-> Note: Apart from fatal user interface errors, the app continues querying the sitemap after a fatal error. If a response is successfully processed, it returns to displaying the sitemap.
-> Fatal user interface errors stop sitemap polling permanently, so the app must be restarted to continue.
+> Note: The app continues querying the sitemap while a critical error is displayed. If a later response is processed successfully, it returns to displaying the sitemap.
 
-#### If "Suppress errors for empty sitemap responses" is enabled:
+#### Fatal errors and states (full-screen error, require restart)
+
+- Fatal user interface errors, shown with the prefix `Fatal UI error:`.
+- A settings change while the app is running. The new settings are applied when the app starts again.
+
+In both cases, the app stops sitemap polling permanently and cancels pending requests, including commands. It cannot recover by itself, so close and reopen the app.
+
+#### If "Suppress errors for empty sitemap responses" is enabled
 
 When this option is enabled in the [Settings](#configuration), toast notifications for the following errors will be suppressed:
 
 - `INVRES` – Invalid response (error code `-400`)
 - `EMRES` – Empty response
 
-However, if these errors persist for more than 10 seconds, they will be treated as fatal, and a full-screen error view will be shown.
+However, if these errors persist for more than 10 seconds, they will be treated as critical, and a full-screen error view will be shown.
 
 ### Communication Error Codes (Prefix: `S:`/`C:`)
 
@@ -917,9 +927,9 @@ The following error codes are used for common communication issues and those wit
 
 ### User Interface Error Codes (Prefix `UI:`)
 
-All error codes with the `UI:` prefix currently indicate an internal programming error in the user interface. These errors are not caused by incorrect user interaction or configuration.
+All error codes with the `UI:` prefix currently indicate an internal programming error in the user interface. The same applies to errors shown with the `Fatal UI error:` prefix. These errors are not caused by incorrect user interaction or configuration.
 
-If you encounter a **UI:** error code, please report it to the development team, as it helps identify and fix issues in the application. Including the exact error code and the circumstances under which it occurred is especially helpful. Reports can be submitted in [the forum](https://community.openhab.org/t/announcing-openhab-for-garmin/163891) or by creating an issue on [GitHub](https://github.com/openhab/openhab-garmin/issues).
+If you encounter a **UI:** error code or a **Fatal UI error:** message, please report it to the development team, as it helps identify and fix issues in the application. Including the exact error code or message and the circumstances under which it occurred is especially helpful. Reports can be submitted in [the forum](https://community.openhab.org/t/announcing-openhab-for-garmin/163891) or by creating an issue on [GitHub](https://github.com/openhab/openhab-garmin/issues).
 
 ### Common Issues
 
@@ -927,7 +937,7 @@ If you encounter a **UI:** error code, please report it to the development team,
 |-----------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | `S:0` or `C:0` | When in [Wi-Fi mode](#wi-fi), this error occurs if a sitemap request or command fails because the server is not reachable, for example due to an incorrect URL in the configuration. |
 | `C:415`   | HTTP response code **415** means _Unsupported Media Type_. This usually occurs when the JSON-based REST API is enabled in the [Configuration](#configuration), but your openHAB instance doesn’t support it. If you're using the backport (see [Sending Commands](#sending-commands) and have recently updated openHAB to a newer version or installed a new binding, you may need to re-install the backport to restore compatibility.                                                       |
-| `S:EMRES` | myopenHAB currently experiences an intermittent issue ([details here](https://github.com/openhab/openhab-cloud/issues/496)) where sitemap requests may return empty responses. When this happens, the app displays a non-fatal `S:EMRES` notification. Typically, the next request succeeds, so the issue doesn't escalate into a fatal error. To avoid seeing these notifications, you can enable the **Suppress errors for empty sitemap responses** option in the [Configuration](#configuration) settings. |
+| `S:EMRES` | myopenHAB currently experiences an intermittent issue ([details here](https://github.com/openhab/openhab-cloud/issues/496)) where sitemap requests may return empty responses. When this happens, the app displays a toast notification for `S:EMRES`. Typically, the next request succeeds, so the issue doesn't escalate into a full-screen error. To avoid seeing these notifications, you can enable the **Suppress errors for empty sitemap responses** option in the [Configuration](#configuration) settings. |
 
 ### Edge 550 / 850 Menu Focus Indicator Issue
 

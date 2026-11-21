@@ -63,10 +63,10 @@ class CommunicationException extends CommunicationBaseException {
         return getSourceShortCode() + ":" + errorMsg;
     }
 
-    // Most response codes are treated as non-fatal,
+    // Most response codes do not require a full-screen error,
     // with a few exceptions
-    public function isFatal() as Boolean {
-        // return false; // activate this to use -1001 in simulator to test non-fatal errors
+    public function requiresFullScreenError() as Boolean {
+        // return false; // activate this to use -1001 in simulator to test toast notifications
         return 
             _responseCode == Communications.SECURE_CONNECTION_REQUIRED
             || _responseCode == Communications.NETWORK_RESPONSE_TOO_LARGE

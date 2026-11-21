@@ -60,13 +60,29 @@ class SitemapStore  {
     private static var _divergenceSince as Number?;
     private static var _divergenceHoldMillis as Number?;
 
-    // Deletes the sitemap from Storage to invalidate it in case of a fatal
-    // error during a sitemap request. After such an error, the sitemap should
-    // only be shown again once fresh data has been successfully retrieved.
-    public static function deleteSitemapFromStorage() as Void {
+    // Invalidates the sitemap so that it is only shown again once fresh data
+    // has been successfully retrieved. Used when a sitemap error is displayed
+    // as a full-screen error: without invalidating, restarting the app would
+    // briefly show the outdated menu before the error happens again.
+    public static function invalidateSitemap() as Void {
         Storage.deleteValue( STORAGE_JSON );
         _json = null;
         _isJsonModified = false;
+    }
+
+    // Removes all sitemap data from memory and Storage. Used when the data no
+    // longer applies, for example after a settings change that points the app
+    // to a different server or sitemap. Unlike invalidateSitemap(), the label
+    // is removed as well, because it belongs to the previous sitemap.
+    public static function clear() as Void {
+        Storage.deleteValue( STORAGE_JSON );
+        Storage.deleteValue( STORAGE_LABEL );
+        _json = null;
+        _title = null;
+        _estimatedSitemapSize = 0;
+        _isJsonModified = false;
+        _divergenceSince = null;
+        _divergenceHoldMillis = null;
     }
 
     // Accessor functions for the label

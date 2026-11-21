@@ -56,7 +56,7 @@ class OHApp extends Application.AppBase {
         AppLifecycle.setActive();
 
         try {
-            // Display a fatal error that occurred while the app was hidden.
+            // Display an error that was deferred while the app was hidden.
             // Done before resuming so that a newer error detected by the
             // resumed request is not overwritten by the deferred one.
             ExceptionHandler.showPendingException();
@@ -147,8 +147,8 @@ class OHApp extends Application.AppBase {
             // SitemapRequest.onReceive reports to the ExceptionHandler via
             // handleException, and the ExceptionHandler stores it
             // consumeStartupException then acts on the exception, and based if toasts
-            // shall be used displays a toast for non-fatal errors, and in all
-            // other cases returns an errorView for display.
+            // shall be used displays a toast for errors that do not require a
+            // full-screen error, and in all other cases returns an errorView for display.
             var errorView = ExceptionHandler.consumeStartupException( hasMenu );
             
             var view;
@@ -224,9 +224,65 @@ class OHApp extends Application.AppBase {
     (:release) function onAppUpdate() as Void {
         Storage.clearValues();
     }
+
+    /*
+     * Settings changes cannot be applied to a running app: Connect IQ has no
+     * API to restart the app, and the singletons have already cached the
+     * previous URL, sitemap name, authentication data, polling interval and
+     * sitemap.
+     *
+     * This callback may also be delivered to an app instance that was created
+     * only to receive it, i.e. before the initial view exists. Such an instance
+     * has not read any settings or sitemap data yet, so it discards the
+     * persisted data and starts normally with the new settings when
+     * getInitialView() runs.
+     *
+     * Otherwise the app stops polling, discards everything that belongs to the
+     * previous configuration and asks the user to reopen it. The error is
+     * deferred while the app is hidden and shown by onActive().
+     */
+    (:typecheck(disableGlanceCheck))
     function onSettingsChanged() as Void {
         // Logger.debug( "OHApp.onSettingsChanged" );
-        Storage.clearValues();
+
+        // The persisted data belongs to the previous configuration and must
+        // not be restored: the next start may use different settings, and this
+        // process may also be terminated right after this callback. This also
+        // applies to the glance, which reads the sitemap label from the same
+        // storage.
+        try {
+            Storage.clearValues();
+            SitemapStore.clear();
+        } catch( ex ) {
+            Logger.debugException( ex );
+        }
+
+        // The glance process has no views and does not poll.
+        if( isGlance() ) {
+            return;
+        }
+
+        // Without a view, the app was instantiated for this callback only or is
+        // still starting up. Nothing has been read or shown yet, so there is
+        // nothing to stop and getInitialView() starts with the new settings.
+        if( ViewStack.getCurrentView()[0] == null ) {
+            // Logger.debug( "OHApp.onSettingsChanged: no view yet, nothing to stop" );
+            return;
+        }
+
+        try {
+            // Stop the app for good: polling is latched off, in-flight requests
+            // are cancelled and the menu of the previous server is dropped.
+            ExceptionHandler.stopForRestart();
+
+            // Show the restart request, or defer it until the app is visible.
+            ExceptionHandler.showOrDefer( new SettingsChangedException() );
+        } catch( ex ) {
+            // An exception must not escape an AppBase callback, as it would
+            // terminate the app. There is no way back to the old
+            // configuration, so this is reported as a fatal user interface error.
+            ExceptionHandler.showOrDefer( new FatalUserInterfaceException( ex ) );
+        }
     }
 
     // Switching into night mode may change the screen colors

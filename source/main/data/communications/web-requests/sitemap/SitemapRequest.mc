@@ -19,9 +19,10 @@ import Toybox.Timer;
  *     - After each response, schedules the next request based on the polling interval.
  *       If the polling interval is 0, the next request is triggered immediately.
  *     - Polling is suspended while the app is hidden, while a command request is
- *       in flight and while a Wi-Fi sync runs, and stopped permanently on shutdown
- *       or after a fatal error. See start(), pause()/resume(), beginCommand()/
- *       endCommand(), beginSync()/endSync(), fail() and shutdown().
+ *       in flight and while a Wi-Fi sync runs. It is stopped permanently by
+ *       stopPermanently() (fatal user interface errors and settings changes) and
+ *       by shutdown(). See start(), pause()/resume(), beginCommand()/endCommand(),
+ *       beginSync()/endSync(), stopPermanently() and shutdown().
  *
  * - Implements onReceive() to process responses:
  *     - On success, forwards the incoming JSON to the sitemap processing tasks.
@@ -80,7 +81,7 @@ class SitemapRequest extends BaseRequest {
     private static var _isStarted as Boolean = false;    // getInitialView() has run
     private static var _isHidden as Boolean = false;     // app is inactive
     private static var _isSyncing as Boolean = false;    // Wi-Fi sync in progress
-    private static var _isFatal as Boolean = false;      // latched after a fatal error
+    private static var _isTerminated as Boolean = false; // latched by stopPermanently()
     private static var _isShutdown as Boolean = false;   // latched on termination
     private static var _commandsInFlight as Number = 0;  // command requests, may overlap
 
@@ -342,7 +343,7 @@ class SitemapRequest extends BaseRequest {
         return _isStarted
                && ! _isHidden
                && ! _isSyncing
-               && ! _isFatal
+               && ! _isTerminated
                && ! _isShutdown
                && _commandsInFlight == 0;
     }
@@ -413,12 +414,21 @@ class SitemapRequest extends BaseRequest {
         AsyncTaskQueue.get().removeAll();
     }
 
-    // Stops the request loop permanently after a fatal error.
-    // Only an app restart resumes polling.
-    public function fail() as Void {
-        // Logger.debug( "SitemapRequest.fail" );
-        _isFatal = true;
+    // Stops the request loop permanently. Used when the app cannot continue
+    // with its current configuration or state, for example after a fatal user
+    // interface error or a settings change. Only an app restart resumes polling.
+    public function stopPermanently() as Void {
+        // Logger.debug( "SitemapRequest.stopPermanently" );
+        _isTerminated = true;
         updatePollingState( false );
+    }
+
+    // True if the request loop was stopped permanently, either by
+    // stopPermanently() or by shutdown(). Only an app restart resumes polling.
+    // Used to keep other components from replacing the error view or from
+    // requesting a sitemap with the outdated configuration.
+    public static function isTerminated() as Boolean {
+        return _isTerminated || _isShutdown;
     }
 
     // Suspends the request loop while the app is hidden by the system.

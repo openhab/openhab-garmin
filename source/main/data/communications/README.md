@@ -33,6 +33,10 @@ running with limited access to system resources. The app pauses its request
 loop in this state and resumes it, with an immediate update, when it becomes
 visible again.
 
+Polling is stopped permanently after a fatal user interface error and after a
+settings change. The app settings are cached at startup and cannot be applied to
+a running app, so a settings change requires the user to reopen the app.
+
 ### Commands
 
 Commands are sent using a dedicated command web request. This request is triggered by the menu items representing the corresponding sitemap elements.

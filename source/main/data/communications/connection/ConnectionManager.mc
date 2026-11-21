@@ -226,6 +226,16 @@ import Toybox.Time;
     // when entering Wi-Fi check or offline mode, requests the sitemap
     // via Wi-Fi if required, and triggers a UI refresh.
     private function updateStateAndUi( newState as State ) as Void {
+        // Once the sitemap request loop was stopped permanently, for example
+        // after a fatal user interface error or a settings change, neither the
+        // error view nor the configuration may be changed anymore. In
+        // particular, a Wi-Fi check that completes late must not replace the
+        // error view with a loading view and request a sitemap using the
+        // outdated settings.
+        if( SitemapRequest.isTerminated() ) {
+            return;
+        }
+
         var oldState = _state;
         if( oldState != newState ) {
             _state = newState;

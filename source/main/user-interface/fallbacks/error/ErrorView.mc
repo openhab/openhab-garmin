@@ -51,7 +51,7 @@ import Toybox.System;
     }
 
     /*
-    * Call this function when a fatal error occurs that requires a full-screen error view.
+    * Call this function when an error must be shown as a full-screen error view.
     * If an error view is already displayed, it will be updated; otherwise, a new one 
     * will be created and shown.
     */

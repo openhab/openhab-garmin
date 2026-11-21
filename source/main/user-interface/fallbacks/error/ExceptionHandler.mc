@@ -6,11 +6,14 @@ import Toybox.Math;
  * The `ExceptionHandler` should be used throughout the widget to handle unexpected exceptions.
  *
  * Its behavior includes:
- * - Showing a toast notification for non-fatal sitemap communication errors.
- * - Displaying a full-screen error view for non-fatal sitemap errors if the state is stale.
+ * - Showing a toast notification for sitemap communication errors that do not
+ *   require a full-screen error.
+ * - Displaying a full-screen error view for those sitemap errors if the state is stale.
  * - Showing a toast notification for command communication errors, as these typically affect only 
  *   individual items and do not compromise the entire sitemap view.
  * - Displaying a full-screen error view immediately for all other errors.
+ * - Stopping the app permanently for fatal user interface errors and settings changes, see
+ *   `stopForRestart()`. This is the only case that requires a restart.
  *
  * Errors that cannot be displayed at the moment they occur (no view exists
  * yet, or the app is hidden by the system) are deferred and presented by
@@ -42,9 +45,10 @@ public class ExceptionHandler {
     * - showPendingException(), called by `OHApp.onActive()` when the app
     *   becomes visible again.
     *
-    * NOTE: The "force view" flag is not necessarily the same as `exception.isFatal()`.
-    * An exception might not be inherently fatal, but may still be treated as such 
-    * if it has persisted beyond a configured threshold.
+    * NOTE: The "force view" flag is not necessarily the same as
+    * `exception.requiresFullScreenError()`. An exception might not require a
+    * full-screen error in itself, but may still be treated as such if it has
+    * persisted beyond a configured threshold.
     */
     typedef DeferredException as [Exception, Boolean];
     private static var _deferredException as DeferredException?;
@@ -85,7 +89,7 @@ public class ExceptionHandler {
         * A toast notification will be shown under the following conditions:
         * - Only if the current view has indicated to the `WarningToastHandler` that toasts are allowed.
         * - For all non-sitemap (i.e., command) communication errors.
-        * - For sitemap errors that are not fatal in themselves and 
+        * - For sitemap errors that do not require a full-screen error and
         *   the state is still fresh (within the state expiry time).
         *
         * In all other cases, a full-screen error view is displayed instead.
@@ -93,29 +97,29 @@ public class ExceptionHandler {
         if( WarningToastHandler.useToasts()
             && ex instanceof CommunicationBaseException 
             &&  ( ! ex.isFrom( CommunicationBaseException.EX_SOURCE_SITEMAP )
-                  || ( isSitemapFresh && !ex.isFatal() ) ) 
+                  || ( isSitemapFresh && !ex.requiresFullScreenError() ) )
         ) {
-            // Logger.debug( "ExceptionHandler: non-fatal error: " + ex.getToastMessage().toUpper() );
+            // Logger.debug( "ExceptionHandler: error shown as toast: " + ex.getToastMessage().toUpper() );
             
             // If there is no view yet, the exception is stored
             // as deferred exception, otherwise the toast will be shown.
             // While the app is hidden, WarningToastHandler suppresses it.
             if( ViewStack.getCurrentView()[0] == null ) {
-                // Logger.debug( "ExceptionHandler: storing non-fatal deferred exception" );
+                // Logger.debug( "ExceptionHandler: storing deferred toast exception" );
                 _deferredException = [ex, false];
             } else {
                 WarningToastHandler.showWarning( ex.getToastMessage() );
             }
         } else {
-            // Logger.debug( "ExceptionHandler: fatal error" );
+            // Logger.debug( "ExceptionHandler: error requires full-screen view" );
             
-            // Fatal errors clear the stored JSON to avoid showing outdated data.
-            // After a fatal error, the menu is only shown once a new successful
-            // response is received. Without clearing the cache, restarting the app
-            // would briefly show the menu before the error happens again.
-            // Clearing the cache ensures the app goes directly into a loading or
-            // error view until valid data is received.
-            SitemapStore.deleteSitemapFromStorage();
+            // A full-screen error clears the stored JSON to avoid showing
+            // outdated data. Afterwards, the menu is only shown once a new
+            // successful response is received. Without clearing the cache,
+            // restarting the app would briefly show the menu before the error
+            // happens again. Clearing the cache ensures the app goes directly
+            // into a loading or error view until valid data is received.
+            SitemapStore.invalidateSitemap();
             
             // Without a view, or while the app is hidden, the error must not
             // be displayed now. It is presented as soon as possible.
@@ -155,8 +159,11 @@ public class ExceptionHandler {
             if( ex instanceof NonFatalUserInterfaceException ) {
                 WarningToastHandler.showWarning( ex.getToastMessage() );
             } else {
-                // In case of a fatal UI error we stop doing sitemap requests
-                SitemapRequest.get().fail();
+                // A fatal UI error ends the app: polling is latched off, in-flight
+                // requests are cancelled and the menu is dropped, so nothing from
+                // the previous state can reappear behind the error view. Only an
+                // app restart resumes the app.
+                stopForRestart();
                 
                 // If the exception is not already a FatalUserInterfaceException, we wrap
                 // it in one
@@ -167,6 +174,47 @@ public class ExceptionHandler {
                 // Show the error view
                 showOrDefer( ex );
             }
+        }
+    }
+
+
+    /*
+    * Stops the app for good. Used when the app cannot continue with its current
+    * in-memory state, for example after a fatal user interface error or a
+    * settings change. Only an app restart resumes the app.
+    *
+    * - Polling is latched off, so no further request is issued or scheduled.
+    * - In-flight requests are cancelled, including commands and a Wi-Fi sync.
+    *   Their REQUEST_CANCELLED responses are ignored by the request classes.
+    * - The menu is dropped, so no view of the previous state can be shown again.
+    *
+    * The order matters: requests are cancelled before the menu is cleared,
+    * because the cancellation callbacks run synchronously and still access the
+    * menu items.
+    *
+    * Each step is attempted independently, so that a failure does not prevent
+    * the remaining steps and no exception escapes into a lifecycle callback or
+    * an input handler.
+    */
+    public static function stopForRestart() as Void {
+        // Logger.debug( "ExceptionHandler.stopForRestart" );
+
+        try {
+            SitemapRequest.get().stopPermanently();
+        } catch( ex ) {
+            Logger.debugException( ex );
+        }
+
+        try {
+            BaseRequest.cancelAllRequests();
+        } catch( ex ) {
+            Logger.debugException( ex );
+        }
+
+        try {
+            HomepageMenu.clear();
+        } catch( ex ) {
+            Logger.debugException( ex );
         }
     }
 

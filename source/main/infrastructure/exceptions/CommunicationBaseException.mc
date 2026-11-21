@@ -34,11 +34,15 @@ class CommunicationBaseException extends Exception {
 
     /*
     * This applies only to sitemap-related exceptions:
-    * - Fatal polling errors trigger an immediate full-screen error.
-    * - Non-fatal polling errors first show a toast notification.
+    * - Errors that require a full-screen error are shown immediately.
+    * - All other polling errors first show a toast notification.
     *   If they persist past the configured threshold, a full-screen error is displayed.
+    *
+    * This only describes how the error is presented: sitemap polling continues
+    * in both cases, so the app can recover without a restart. Terminal states,
+    * which require a restart, are handled by `ExceptionHandler.stopForRestart()`.
     */
-    public function isFatal() as Boolean {
+    public function requiresFullScreenError() as Boolean {
         return false;
     }
 

@@ -18,9 +18,19 @@ Contains the `OHApp` class, the main entry point for the app. It handles:
 - The active/inactive lifecycle on devices that keep the app running when it is
   hidden (e.g. when the watch face is shown), see `AppLifecycle`
 
+Settings are read only once, when the app starts. Connect IQ provides no way to
+restart the app, and the singletons have already cached the previous URL,
+sitemap, authentication data and polling interval. A settings change while the
+app is running therefore stops sitemap polling, cancels in-flight requests,
+discards the cached sitemap and menu, and asks the user to close and reopen the
+app. While the app is hidden, this message is deferred until it becomes visible
+again. If the callback reaches a process without an initial view (for example
+one that was only instantiated to deliver it), only the persisted data is
+discarded, so the next start reads the new settings and starts normally.
+
 ### Subfolder `exceptions/`
 
-Defines all custom exception types used by the app. Most exception classes extend the base class `Exception`. `GeneralException` serves as the base for general errors, and remains the parent of the more specific fatal exceptions.
+Defines all custom exception types used by the app. Most exception classes extend the base class `Exception`. `GeneralException` serves as the base for general errors, and remains the parent of the more specific exception classes. `SettingsChangedException` is shown when the app settings changed while the app was running, see above. `CommunicationBaseException.requiresFullScreenError()` only decides how a communication error is presented; sitemap polling continues so the app can recover without a restart.
 
 ### Subfolder `logging/`
 

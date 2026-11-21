@@ -11,13 +11,15 @@ Contains components responsible for fallback behavior, including error handling 
 Manages the detection, handling, and presentation of exceptions within the app.
 
 - `ErrorView`  
-  A full-screen view used to display fatal exceptions. Provides static helper methods to create, update, and show the view.
+  A full-screen view used to display errors that require a full-screen presentation. Provides static helper methods to create, update, and show the view.
 
 - `ExceptionHandler`  
-  Offers reusable methods for handling exceptions throughout the app. Its primary responsibility is to determine whether an error should be presented as a toast notification for non-fatal issues or as a full-screen error view for fatal ones. It also contains logic to escalate non-fatal errors to fatal errors if they persist beyond a defined duration. Errors that cannot be presented immediately — before the initial view exists or while the app is hidden by the system — are deferred and presented by `getInitialView()` or when the app becomes visible again.
+  Offers reusable methods for handling exceptions throughout the app. Its primary responsibility is to determine whether an error should be presented as a toast notification or as a full-screen error view, see `CommunicationBaseException.requiresFullScreenError()`. It also contains logic to escalate toast notifications to full-screen errors if the error persists beyond a defined duration. Errors that cannot be presented immediately — before the initial view exists or while the app is hidden by the system — are deferred and presented by `getInitialView()` or when the app becomes visible again.
+
+  `stopForRestart()` stops the app for good: it latches sitemap polling off, cancels in-flight requests and drops the menu. It is used for fatal user interface errors and settings changes, where only an app restart helps. Recoverable communication and parsing errors do not use it; the app keeps polling there, so it can return to the sitemap once the server responds correctly again.
 
 - `WarningToastHandler`  
-  Determines whether a non-fatal error should be displayed as a toast notification and provides the functionality to show these notifications. It also provides a helper for informational toasts that are shown as direct feedback to a user action.
+  Determines whether an error should be displayed as a toast notification and provides the functionality to show these notifications. It also provides a helper for informational toasts that are shown as direct feedback to a user action.
 
 ### Subfolder `loading/`
 
