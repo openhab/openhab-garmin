@@ -114,6 +114,30 @@ class WidgetMenuItem extends StructuredMenuItem {
     // Subclasses without custom selection behavior, such as ContainerMenuItem or TextMenuItem,
     // do not need to override this method.
     public function onSelect() as Boolean { 
+        var linkedPage = _sitemapWidget.getLinkedPage();
+        if( linkedPage != null ) {
+            if( ! linkedPage.hasWidgets() ) {
+                // Pushing an empty CustomMenu leads to rendering issues. Pages
+                // that have content but whose menu items are still being created
+                // keep the existing LoadingMenuItem behavior below.
+                WarningToastHandler.showInfo( Rez.Strings.EmptyPage );
+                return true;
+            }
+
+            if( _page == null ) {
+                // Defensive fallback: normally processWidget() creates the page
+                // menu, but do not lose an item if it was not created.
+                var parent = _weakParent.get() as BasePageMenu?;
+                if( parent != null ) {
+                    _page = new PageMenu(
+                        linkedPage as SitemapContainerImplementation,
+                        parent,
+                        BasePageMenu.PROCESSING_ASYNC
+                    );
+                }
+            }
+        }
+
         if( _page != null ) {
             var page = _page;
             // Logger.debug( "WidgetMenuItem.onSelect: pushing page" );
@@ -157,9 +181,22 @@ class WidgetMenuItem extends StructuredMenuItem {
                 }
                 _page = new PageMenu( linkedPage, parent, processingMode );
             }
-        } else if( _isActionable ) {
+        } else {
+            // The widget no longer has a linked page. Drop any previously
+            // created PageMenu so that a stale submenu cannot be opened
+            // after an update, and close a page that is currently displayed.
+            if( _page != null ) {
+                var parent = _weakParent.get() as BasePageMenu?;
+                if( parent != null ) {
+                    parent.invalidateStructure();
+                }
+            }
             _page = null;
-            setActionIcon( ACTION_ICON_COMMAND );
+            if( _isActionable ) {
+                setActionIcon( ACTION_ICON_COMMAND );
+            } else {
+                setActionIcon( null );
+            }
         }
     }
 

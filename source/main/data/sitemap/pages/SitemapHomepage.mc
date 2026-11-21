@@ -28,9 +28,15 @@ class SitemapHomepage extends SitemapPage {
             : new SyncTaskQueue();
 
         // We extract the homepage element and pass 
-        // it on to the base class
+        // it on to the base class. A homepage without widgets is not useful
+        // and is therefore still treated as an error; nested pages may be
+        // empty and are handled by the UI.
+        var homepageJson = json.getObject( "homepage", "Homepage: homepage element missing" );
+        if( homepageJson.getOptionalArray( "widgets" ) == null ) {
+            throw new JsonParsingException( "Homepage contains no elements" );
+        }
         SitemapPage.initialize( 
-            json.getObject( "homepage", "Homepage: homepage element missing" ),
+            homepageJson,
             isSitemapFresh,
             taskQueue
         );

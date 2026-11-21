@@ -45,6 +45,8 @@ These classes model the internal structure and child elements of a container. Th
 
 To keep the UI responsive and avoid limitations such as the Watchdog timeout for long-running code and stack size restrictions caused by recursive processing, pages are processed asynchronously and non-recursively. The work is split into small tasks that are executed by the task queue implementation.
 
+Empty nested containers are valid. openHAB returns an empty `widgets` array for a `Frame` without children and for containers whose children are all hidden by `visibility`. `SitemapContainer.hasWidgets()` records whether the received JSON contained children (or whether a derived widget such as the Group control was added). Do not use `getWidgets().size()` for this check: widgets are created asynchronously, so an empty array may only mean that the page is still being built. The UI uses `hasWidgets()` to show a toast instead of opening an empty page.
+
 ### Subfolder `widgets/`
 
 Contains `SitemapElement` subclasses representing concrete sitemap widgets, such as switches, sliders, text labels, and container elements.

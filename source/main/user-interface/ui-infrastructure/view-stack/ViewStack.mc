@@ -34,6 +34,19 @@ import Toybox.WatchUi;
                ? _viewStack[_viewStack.size()-1]
                : [null, null];
     }
+
+    // Returns true if the given view is currently part of the tracked stack.
+    // Used to detect pages that became empty while they are still part of the
+    // current navigation path.
+    public static function contains( view as WatchUi.Views ) as Boolean {
+        for( var i = 0; i < _viewStack.size(); i++ ) {
+            var entryView = _viewStack[i][0];
+            if( entryView != null && ( entryView as WatchUi.Views ).equals( view ) ) {
+                return true;
+            }
+        }
+        return false;
+    }
     
     // Pops a view from the stack, replacing WatchUi.popView().
     //

@@ -152,6 +152,28 @@ class DeleteUnusedMenuItemsTask extends BaseSitemapProcessorTask {
             }
             _pageMenu.deleteItem( i );
         }
+
+        // If the page has no content and is still part of the current
+        // navigation path, do not leave an empty CustomMenu in the stack.
+        // This can happen when all children become invisible after an update.
+        if( ! _sitemapContainer.hasWidgets()
+            && _pageMenu instanceof PageMenu
+            && ViewStack.contains( _pageMenu )
+        ) {
+            if( ViewStack.getCurrentView()[0] instanceof WatchUi.Confirmation ) {
+                // Do not dismiss a confirmation dialog: it owns the view stack
+                // until the user responds. Invalidate the structure so a later
+                // UI refresh can reset the view.
+                _pageMenu.invalidateStructure();
+            } else {
+                WarningToastHandler.showInfo( Rez.Strings.EmptyPage );
+                if( HomepageMenu.exists() ) {
+                    ViewStack.resetTo( HomepageMenu.get(), HomepageMenuDelegate.get() );
+                } else {
+                    _pageMenu.invalidateStructure();
+                }
+            }
+        }
     }
 }
 

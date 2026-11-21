@@ -343,6 +343,9 @@ The Garmin app adopts a menu-based navigation structure and implements nested el
 - For `Frame` and `Text`, nested elements must be defined manually. The only functional difference is that `Text` displays the associated item’s state, whereas `Frame` does not.
 - `Group` elements automatically populate their nested elements based on the members of the referenced group item.
 
+A `Frame` or `Group` page without visible child elements — for example a `Frame` with no children, or a container whose children are all hidden by `visibility` — remains selectable.
+Instead of opening an empty page, the app displays a “This page is empty” toast.
+
 For more details, refer to the [sitemap documentation on nested elements]({{base}}/ui/sitemaps.html#nested-elements).
 
 #### `Frame`

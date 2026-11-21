@@ -32,4 +32,6 @@ It maintains its own internal view stack in parallel with the Connect IQ API’s
 
 `ViewStack.popView()` only removes views above the base view. Leaving the app is therefore handled explicitly in `HomepageMenuDelegate.onBack()`, so that a stray or duplicate back event cannot discard the base view and terminate the app. An attempted pop below the base view is reported as a non-fatal UI exception, which is shown to the user as a toast.
 
+`ViewStack.contains()` allows sitemap updates to detect whether a page that became empty is still part of the current navigation path, so it can be removed instead of leaving an empty menu in the stack.
+
 See GitHub ticket [#274](https://github.com/openhab/openhab-garmin/issues/274) for details.

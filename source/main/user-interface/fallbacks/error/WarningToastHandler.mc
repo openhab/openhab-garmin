@@ -43,4 +43,15 @@ public class WarningToastHandler {
             warning.toUpper(), 
             { :icon => Rez.Drawables.iconWarning } );
     }
+
+    // Show an informational toast. Unlike warnings, this is not an error
+    // notification and is not gated by useToasts(), because it is a direct
+    // response to a user action.
+    public static function showInfo( info as String or ResourceId ) as Void {
+        if( ! AppLifecycle.isActive() ) {
+            return;
+        }
+
+        WatchUi.showToast( info, null );
+    }
 }

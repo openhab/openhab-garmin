@@ -28,6 +28,15 @@ class SitemapContainer extends SitemapElement {
     // The elements of this page
     private var _widgets as Array<SitemapWidget> = new Array<SitemapWidget>[0];
 
+    // True if the received JSON contained at least one child element, or if a
+    // derived widget (e.g. the Group control entry) was added.
+    //
+    // This is known synchronously when the container is created, in contrast to
+    // `_widgets`, which is populated asynchronously by the build tasks. It is
+    // therefore the reliable way to distinguish a page without content from a
+    // page whose content has not been built yet.
+    private var _hasWidgets as Boolean = false;
+
     // Constructor
     public function initialize( 
         json as JsonAdapter, 
@@ -36,8 +45,16 @@ class SitemapContainer extends SitemapElement {
     ) {
         SitemapElement.initialize( isSitemapFresh );
 
-        // Loop through all JSON array elements
-        var jsonWidgets = json.getArray( "widgets", "Frame or page contains no elements" );
+        // An empty `widgets` array is valid for nested pages. openHAB returns
+        // it for a Frame without children, and for containers whose children
+        // are all hidden by visibility rules. SitemapHomepage validates that
+        // the homepage itself is not empty.
+        var jsonWidgets = json.getOptionalArray( "widgets" );
+        if( jsonWidgets == null ) {
+            jsonWidgets = new JsonAdapterArray[0];
+        } else {
+            _hasWidgets = true;
+        }
 
         // We queue tasks at the FRONT of the queue because they must be processed
         // before previously scheduled tasks (e.g., UI updates already scheduled by
@@ -57,9 +74,22 @@ class SitemapContainer extends SitemapElement {
         }
     }
 
-    // Adds a widget, used by the build task
+    // Adds a widget, used by the build task. Also used for the derived Group
+    // control entry, which is why it updates the emptiness flag.
     public function addWidget( widget as SitemapWidget ) as Void {
         _widgets.add( widget );
+        _hasWidgets = true;
+    }
+
+    // Returns true if this page has content according to the received JSON, or
+    // if a derived widget was added, or if widgets have already been built.
+    // Returns false for a page that is empty.
+    //
+    // Do not use getWidgets().size() alone for this purpose: the widgets are
+    // created asynchronously, so an empty array may only mean that the page is
+    // still being built.
+    public function hasWidgets() as Boolean {
+        return _hasWidgets || _widgets.size() > 0;
     }
 
     // Returns the elements of this page
