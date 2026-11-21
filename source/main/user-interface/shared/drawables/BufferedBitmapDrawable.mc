@@ -73,7 +73,7 @@ class BufferedBitmapDrawable extends Drawable {
             } else if( y == WatchUi.LAYOUT_VALIGN_TOP || y == WatchUi.LAYOUT_VALIGN_START ) {
                 y = 0;
             } else if( y == WatchUi.LAYOUT_VALIGN_BOTTOM ) {
-                x = dc.getHeight() - height;
+                y = dc.getHeight() - height;
             }
 
             dc.drawBitmap( x, y, _bufferedBitmap );
