@@ -61,6 +61,19 @@ class CachedTextArea extends TextArea {
         _cache.updateBackgroundColor( backgroundColor );
     }
 
+    /*
+     * Sets the color the text is shown on, which is used to fill the buffer the
+     * text is rendered into. See TextCache.prepare().
+     *
+     * Defaults to transparent, in which case the buffer keeps its transparent
+     * background. Callers should set the background color of the drawable's
+     * area whenever it is a uniform color, as only then the antialiased glyph
+     * edges reproduce what drawing the text directly would produce.
+     */
+    public function setCacheBackgroundColor( color as ColorType ) as Void {
+        _cache.setCacheBackgroundColor( color );
+    }
+
     public function draw( dc as Dc ) as Void {
         if( ! isVisible ) {
             return;
@@ -108,12 +121,9 @@ class CachedTextArea extends TextArea {
     // rendering failed, in which case the caller draws directly.
     private function renderInto( bitmap as BufferedBitmapType ) as Boolean {
         var bufferDc = bitmap.getDc();
-        // Erase the buffer to transparent explicitly. Relying on the default
-        // background color is not sufficient: Dc.clear() uses the background
-        // color, and only from CIQ 3.1 on is COLOR_TRANSPARENT honored, which
-        // guarantees that previously rendered content is removed.
-        bufferDc.setColor( Graphics.COLOR_WHITE, Graphics.COLOR_TRANSPARENT );
-        bufferDc.clear();
+        // Erase the buffer with the colors the text has to be rendered on,
+        // see TextCache.prepare() for why the fill color matters.
+        _cache.prepare( bufferDc );
 
         // The buffer represents the area of the text area, so it must be drawn
         // at the origin. The location is restored afterwards, also on errors.

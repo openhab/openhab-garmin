@@ -90,6 +90,14 @@ class CachedText extends Text {
         _cache.updateBackgroundColor( backgroundColor );
     }
 
+    /*
+     * Sets the color the text is shown on, which is used to fill the buffer the
+     * text is rendered into. See TextCache.prepare().
+     */
+    public function setCacheBackgroundColor( color as ColorType ) as Void {
+        _cache.setCacheBackgroundColor( color );
+    }
+
     // Returns the width of the text area, either explicit or measured
     private function getRenderedWidth() as Number {
         var w = width.toNumber();
@@ -175,9 +183,9 @@ class CachedText extends Text {
     // failed, in which case the caller draws directly.
     private function renderInto( bitmap as BufferedBitmapType ) as Boolean {
         var bufferDc = bitmap.getDc();
-        // Erase the buffer to transparent explicitly, see CachedTextArea
-        bufferDc.setColor( Graphics.COLOR_WHITE, Graphics.COLOR_TRANSPARENT );
-        bufferDc.clear();
+        // Erase the buffer with the colors the text has to be rendered on,
+        // see TextCache.prepare() for why the fill color matters.
+        _cache.prepare( bufferDc );
 
         // The buffer represents the area of the text, so it must be drawn at
         // the origin. The location is restored afterwards, also on errors.

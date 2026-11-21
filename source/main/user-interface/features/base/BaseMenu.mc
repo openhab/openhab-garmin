@@ -167,6 +167,13 @@ class BaseMenu extends CustomMenu {
 
             _title.setColor( ThemeManager.current.textColor );
 
+            // Render the cached title on the title background, so that the
+            // antialiased glyph edges are blended with the color the text is
+            // shown on, see TextCache.prepare(). The title is vertically
+            // centered within the clipped title area, so the fill stays inside
+            // the colored section and cannot cover the bar below it.
+            _title.setCacheBackgroundColor( ThemeManager.current.menuTitleBackgroundColor );
+
             // Draw the title
             _title.draw( dc );
 

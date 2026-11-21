@@ -34,6 +34,10 @@ class TextCache {
     // Background color the cached content was last rendered with; null means unknown
     private var _backgroundColor as ColorType?;
 
+    // Color the text is shown on, used to fill the buffer, see prepare();
+    // null means unknown, in which case the buffer stays transparent
+    private var _cacheBackgroundColor as ColorType?;
+
     public function initialize() {}
 
     /*
@@ -63,9 +67,63 @@ class TextCache {
         return true;
     }
 
+    /*
+     * Sets the color the text is shown on, which is used to fill the buffer the
+     * text is rendered into. Changing it invalidates the cached content.
+     *
+     * The value has to be the background of the drawable's own area, i.e. of
+     * the rectangle the text is drawn into. Pass COLOR_TRANSPARENT (or nothing)
+     * if the area is not of a uniform color, see prepare().
+     */
+    public function setCacheBackgroundColor( color as ColorType ) as Void {
+        if( _cacheBackgroundColor == color ) {
+            return;
+        }
+        _cacheBackgroundColor = color;
+        _version++;
+    }
+
     // Marks the cached content as outdated, e.g. after the text has changed
     public function invalidate() as Void {
         _version++;
+    }
+
+    /*
+     * Erases a buffer and sets the colors for rendering the text into it.
+     *
+     * The fill color matters for the result: the antialiased glyph edges are
+     * blended with it, so it must be the color the text is eventually shown
+     * on. If it is not, every glyph gets a 1px halo in the fill color, which
+     * is clearly visible for the grey state texts on dark menu items.
+     *
+     * The background of the buffer is transparent by default, because the
+     * background of a menu item differs between focused and unfocused items
+     * and is painted by the owning drawable. The RGB value of transparent
+     * pixels still ends up in the glyph edges, so the text color is used as
+     * the pen color: this way the edges are blended towards the glyph color
+     * instead of towards white, which keeps the halo from standing out.
+     *
+     * Callers should prefer setCacheBackgroundColor() to fill the buffer with
+     * the actual background, which reproduces exactly what drawing the text
+     * directly would produce.
+     */
+    public function prepare( bufferDc as Dc ) as Void {
+        var textColor = _color != null ? _color as ColorType : Graphics.COLOR_WHITE;
+
+        // A drawable with an explicit background color paints the text on that
+        // color, so it serves as the fill color as well.
+        var backgroundColor = _cacheBackgroundColor != null 
+                              ? _cacheBackgroundColor 
+                              : _backgroundColor;
+
+        if( backgroundColor != null && backgroundColor != Graphics.COLOR_TRANSPARENT ) {
+            // Opaque fill: the glyph edges are blended with the color the text
+            // is shown on, exactly as when drawing directly.
+            bufferDc.setColor( textColor, backgroundColor as ColorType );
+        } else {
+            bufferDc.setColor( textColor, Graphics.COLOR_TRANSPARENT );
+        }
+        bufferDc.clear();
     }
 
     /*

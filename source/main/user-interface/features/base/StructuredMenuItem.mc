@@ -450,10 +450,22 @@ class StructuredMenuItem extends BaseMenuItem {
     // Since the app can switch between standard and night mode anytime,
     // this needs to be called on every draw.
     private function updateLabelDrawableColor() as Void {
+        var theme = getCurrentTheme();
         _labelTextArea.setColor(
             _labelColor != null 
             ? _labelColor 
-            : getCurrentTheme().textColor
+            : theme.textColor
+        );
+
+        // Render the cached text on the item background, so that the
+        // antialiased glyph edges are blended with the color the text is
+        // shown on, see TextCache.prepare(). This is skipped if the label may
+        // use line breaks: its area then spans the full item height, and the
+        // background fill would paint over the rest of the item.
+        _labelTextArea.setCacheBackgroundColor(
+            _allowLabelLineBreaks
+            ? Graphics.COLOR_TRANSPARENT
+            : theme.menuItemBackgroundColor
         );
     }
 
@@ -470,12 +482,18 @@ class StructuredMenuItem extends BaseMenuItem {
     // if the Drawable is of the StateText type.
     // Coloring Bitmap Drawables is not currently supported, but may be added in the future.
     private function updateStateDrawablesColor() as Void {
+        var theme = getCurrentTheme();
         var stateColor = _stateColor != null 
                          ? _stateColor 
-                         : getCurrentTheme().stateColor;
+                         : theme.stateColor;
 
         if( _stateTextResponsive != null ) {
-            _stateTextResponsive[1].setColor( stateColor );
+            var stateTextArea = _stateTextResponsive[1];
+            stateTextArea.setColor( stateColor );
+            // The state text is the drawable that shows the halo of a
+            // transparent buffer most clearly, because its color differs from
+            // the item background in both themes. See updateLabelDrawableColor().
+            stateTextArea.setCacheBackgroundColor( theme.menuItemBackgroundColor );
         }
     }
 
