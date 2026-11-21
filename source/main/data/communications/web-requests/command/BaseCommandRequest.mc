@@ -57,6 +57,12 @@ class BaseCommandRequest extends BaseRequest {
     // See makeWebRequest() for details.    
     private var _requestCounter as Number = 0;
 
+    // True while a started request has not been cleaned up yet.
+    // Used by finishRequest() to guarantee that the request counter
+    // and the sitemap request are cleaned up exactly once, even if
+    // the request fails synchronously and a callback arrives later.
+    private var _requestStarted as Boolean = false;
+
     // The URL for the command request
     private var _url as String;
     
@@ -131,47 +137,73 @@ class BaseCommandRequest extends BaseRequest {
     // @param parameters - options for the web request, as per Communication.makeWebRequest
     private function makeWebRequest( cmd as String ) as Void {
         // Logger.debug "BaseCommandRequest: makeWebRequest to " + _url );
-        try {
-            // Get the parameters from the subclass
-            var parameters = assembleParameters( cmd ) as Dictionary<Object, Object>;
 
+        // Get the parameters from the subclass first. If this fails, no
+        // request has been started and there is nothing to clean up.
+        var parameters = assembleParameters( cmd ) as Dictionary<Object, Object>;
+
+        // In sync mode, sendCommand will stop the requests, and they will be started 
+        // after sync mode has been completed by a asynchronous task
+        if( ! _syncMode ) {
             // Logger.debug( "BaseCommandRequest.makeWebRequest: stopping sitemap request" );
-            
-            // In sync mode, sendCommand will stop the requests, and they will be started 
-            // after sync mode has been completed by a asynchronous task
-            if( ! _syncMode ) {
-                // Logger.debug( "BaseCommandRequest.makeWebRequest: stopping sitemap request" );
-                SitemapRequest.get().beginCommand();
-            }
-            
-            // If there is more than one open request for this item,
-            // we cancel all requests to avoid -101/BLE_QUEUE_FULL errors.
-            // This will also cancel any ongoing sitemap requests, which is acceptable.
-            //
-            // It may cancel commands for other items as well, but this is
-            // highly unlikely—users typically can’t move between items
-            // and trigger multiple commands quickly enough for this to be an issue.
-            //
-            // This situation mainly affects custom views. When commands are sent
-            // from a menu item, the menu system blocks new commands until the
-            // previous one has completed.
-            if( _requestCounter > 0 ) {
-                // Logger.debug( "BaseCommandRequest: cancelling previous requests!" );
-                cancelAllRequests();
-                _requestCounter = 0;
-            }
+            SitemapRequest.get().beginCommand();
+        }
+        
+        // If there is more than one open request for this item,
+        // we cancel all requests to avoid -101/BLE_QUEUE_FULL errors.
+        // This will also cancel any ongoing sitemap requests, which is acceptable.
+        //
+        // It may cancel commands for other items as well, but this is
+        // highly unlikely—users typically can’t move between items
+        // and trigger multiple commands quickly enough for this to be an issue.
+        //
+        // This situation mainly affects custom views. When commands are sent
+        // from a menu item, the menu system blocks new commands until the
+        // previous one has completed.
+        if( _requestCounter > 0 ) {
+            // Logger.debug( "BaseCommandRequest: cancelling previous requests!" );
+            cancelAllRequests();
+            _requestCounter = 0;
+        }
 
-            _requestCounter++;
+        // From here on the request is considered started, so its cleanup
+        // must happen even if Communications.makeWebRequest() throws
+        // synchronously.
+        _requestStarted = true;
+        _requestCounter++;
+
+        try {
             Communications.makeWebRequest( _url, parameters, getBaseOptions(), method( :onReceive ) );
         } catch( ex ) {
-
-            // In sync mode, the sitemap request is restarted by a task scheduled by the `SyncDelegate`
-            if( ! _syncMode ) {
-                // Logger.debug( "BaseCommandRequest.makeWebRequest: restarting sitemap request after error" );
-                SitemapRequest.get().endCommand();
-            }
-            
+            // The request could not be made. Clean up the counter and command
+            // mode before propagating the error.
+            finishRequest();
             throw ex;
+        }
+    }
+
+    // Cleans up a started command request.
+    //
+    // Decrements the request counter, and ends command mode so that sitemap
+    // polling resumes. Must be called exactly once per started request,
+    // regardless of whether a response arrived or the request failed.
+    // Calling it more than once, or without a started request, is a no-op.
+    private function finishRequest() as Void {
+        if( ! _requestStarted ) {
+            return;
+        }
+        // Clear the flag first, so that a reentrant call cannot clean up twice.
+        _requestStarted = false;
+
+        if( _requestCounter > 0 ) {
+            _requestCounter--;
+        }
+
+        // In Wi-Fi sync mode, the sitemap request is restarted by a task
+        // scheduled by the `SyncDelegate`.
+        if( ! _syncMode ) {
+            // Logger.debug( "BaseCommandRequest.finishRequest: restarting sitemap request" );
+            SitemapRequest.get().endCommand();
         }
     }
 
@@ -180,6 +212,11 @@ class BaseCommandRequest extends BaseRequest {
     // If there was an error, onCommandException() is being called
     // The data type must match the callback signature of Communications.makeWebRequest exactly.
     public function onReceive( responseCode as Number, data as Dictionary or String or ByteArray or PersistedContent.Iterator or Null ) as Void {
+        // Clean up the request before accessing the item: cleanup must not
+        // depend on the item reference still being valid, otherwise the
+        // request counter and sitemap polling could remain blocked.
+        finishRequest();
+
         var item = _weakItem.get() as CommandRequestDelegate?;
         
         if( item == null ) {
@@ -188,16 +225,6 @@ class BaseCommandRequest extends BaseRequest {
             );
         } else {
             try {
-                _requestCounter--;
-                // Logger.debug( "BaseCommandRequest.onReceive: restarting sitemap request" );
-
-                // In Wifi mode, sendCommand will stop the requests, and they will be started 
-                // after sync mode has been completed by a asynchronous task
-                if( ! _syncMode ) {
-                    // Logger.debug( "BaseCommandRequest.onReceive: restarting sitemap request" );
-                    SitemapRequest.get().endCommand();
-                }
-
                 if( checkResponseCode( responseCode, CommunicationException.EX_SOURCE_COMMAND ) ) {
                     item.onCommandComplete();
                 }
