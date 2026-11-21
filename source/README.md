@@ -44,6 +44,13 @@ Although the `main` code is designed to be largely device-agnostic and to rely o
 
 For additional details, refer to the folder’s [README](main/README.md).
 
+### Subfolder `test/`
+
+Contains unit tests based on the Connect IQ test framework.
+The tests are compiled only when unit tests are enabled (see [Running Unit Tests](../README.md#running-unit-tests)) and are not part of release builds.
+
+For more details, continue reading the folder’s [README](test/README.md).
+
 ### Subfolder `themes/`
 
 Themes define the color schemes used in the app and can change dynamically at runtime. This also includes icons whose colors must be adapted to the active theme. Themes are used to implement the light and dark mode on Edge devices.

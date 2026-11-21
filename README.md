@@ -147,6 +147,15 @@ Follow the steps below to build, run, and test the app using the Connect IQ SDK 
 
 1. Press `CTRL+SHIFT+P` → `Monkey C: Build Current Project`
 
+### Running Unit Tests
+
+The unit tests in [`source/test/`](source/test/) use the Connect IQ test framework and are compiled only when unit tests are enabled.
+They are not part of release builds.
+
+- In VS Code, select the **Run Tests** launch configuration and press **F5**.
+- Alternatively, compile with `monkeyc --unit-test` and run the resulting binary with `monkeydo <binary> <device> /t`.
+  The simulator must be running for this command to succeed.
+
 ### Generating the `.iq` File for Garmin Connect IQ Store Upload
 
 Follow these steps to prepare and export your app for upload to the Garmin Connect IQ Store:

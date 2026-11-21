@@ -212,7 +212,7 @@ srcThemesNightModeEdgeX50Button=$(srcThemesNightModeBase);$(srcThemeDefinitionsN
 # is defined per device in the section below.
 
 # Main source directory
-srcBase=source/main
+srcBase=source/main;source/test
 
 # The default source path used for most devices with round screens.
 srcDefault=$(srcBase);$(srcConfigDefault);$(srcThemesDefault)
