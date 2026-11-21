@@ -49,6 +49,9 @@ class InputHint extends BaseInputHint {
 
     // Draw the line
     public function draw( dc as Dc ) as Void {
+        // Apply the current theme before drawing the line
+        refresh();
+
         // Anti-alias is only available in newer SDK versions
         if( Config.UI_USE_ANTI_ALIASING && dc has :setAntiAlias ) {
             dc.setAntiAlias( true );

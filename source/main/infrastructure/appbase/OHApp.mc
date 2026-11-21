@@ -286,6 +286,11 @@ class OHApp extends Application.AppBase {
     }
 
     // Switching into night mode may change the screen colors
+    //
+    // Theme-dependent resources are resolved lazily when the affected
+    // views, menus and drawables are drawn. Views and menus that cache
+    // such a resource refresh it before drawing, so requesting a redraw
+    // is all that is needed to apply the new theme.
     (:typecheck(disableGlanceCheck))
     public function onNightModeChanged() as Void {
         // Logger.debug( "OHApp.onNightModeChanged" );

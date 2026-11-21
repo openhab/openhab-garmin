@@ -21,6 +21,14 @@ class PlayerView extends ControlView {
     // The centered bitmap for the play/pause adapts based on the state
     private var _playPauseIcon as PlayPauseBitmap?;
 
+    // The previous/next buttons. They are drawn as separate bitmaps on
+    // touch-based devices only. They are kept, because their icons depend
+    // on the theme, which can change while the view is open.
+    (:exclForButton)
+    private var _previousIcon as InteractiveRelativeBitmap?;
+    (:exclForButton)
+    private var _nextIcon as InteractiveRelativeBitmap?;
+
     // Also the input hint adapts based on the state
     (:exclForTouch)
     private var _playPauseHint as InputHint?;
@@ -110,18 +118,45 @@ class PlayerView extends ControlView {
         addDrawable( _playPauseIcon );
 
         // The next/previous buttons
-        addDrawable( new InteractiveRelativeBitmap( {
+        _previousIcon = new InteractiveRelativeBitmap( {
             :rezId => ThemeManager.current.iconPrevious,
             :locX => 0.2,
             :locY => WatchUi.LAYOUT_VALIGN_CENTER,
             :touchId => :touchPrevious
-        } ) );
-        addDrawable( new InteractiveRelativeBitmap( {
+        } );
+        addDrawable( _previousIcon );
+        _nextIcon = new InteractiveRelativeBitmap( {
             :rezId => ThemeManager.current.iconNext,
             :locX => 0.8,
             :locY => WatchUi.LAYOUT_VALIGN_CENTER,
             :touchId => :touchNext
-        } ) );
+        } );
+        addDrawable( _nextIcon );
+    }
+
+    // Applies the current theme to the theme-dependent icons.
+    // onLayout() is only called once, so the icons have to be refreshed
+    // before drawing when the theme changes while the view is open.
+    (:exclForButton)
+    private function updateTheme() as Void {
+        if( _previousIcon != null ) {
+            _previousIcon.setResourceId( ThemeManager.current.iconPrevious );
+        }
+        if( _nextIcon != null ) {
+            _nextIcon.setResourceId( ThemeManager.current.iconNext );
+        }
+    }
+    (:exclForTouch)
+    private function updateTheme() as Void {}
+
+    public function onUpdate( dc as Dc ) as Void {
+        updateTheme();
+
+        if( _playPauseIcon != null ) {
+            _playPauseIcon.updateTheme();
+        }
+
+        ControlView.onUpdate( dc );
     }
 
     // Updates the input hint

@@ -34,10 +34,27 @@ class InteractiveRelativeBitmap extends Bitmap {
 
     private var _touchId as Symbol?;
 
+    // The currently assigned resource. Kept to avoid reassigning the
+    // bitmap if the resource did not change, see setResourceId().
+    private var _rezId as ResourceId?;
+
     // Store the touchId
     public function initialize( options as Options ) {
         Bitmap.initialize( options );
         _touchId = options[:touchId];
+        _rezId = options[:rezId];
+    }
+
+    // Replaces the bitmap with the given resource, e.g. after a theme change.
+    //
+    // The bitmap is only replaced if the resource actually changed, so this
+    // can be called on every draw. Both variants of a theme-dependent icon
+    // have the same dimensions, so the location remains valid.
+    public function setResourceId( rezId as ResourceId ) as Void {
+        if( _rezId != rezId ) {
+            _rezId = rezId;
+            setBitmap( rezId );
+        }
     }
 
     // locX and locY are adjusted only when

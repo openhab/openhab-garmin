@@ -14,6 +14,10 @@ import Toybox.WatchUi;
 (:exclForTouch :exclForScreenRectangular)
 class InputHintIcon extends Bitmap {
 
+    // The currently assigned icon resource.
+    // Kept to avoid reassigning the bitmap on every draw.
+    private var _icon as ResourceId;
+
     // The touch area
     private var _touchArea as CircularTouchArea?;
     public function getTouchArea() as CircularTouchArea? {
@@ -26,6 +30,8 @@ class InputHintIcon extends Bitmap {
         angle as Number, 
         lineWidth as Number ) 
     {
+        _icon = icon;
+
         // Initialize the base class
         Bitmap.initialize( {
             :rezId => icon
@@ -68,6 +74,18 @@ class InputHintIcon extends Bitmap {
                 yCenterIcon.toNumber(), 
                 ( diagonal * 0.75 ).toNumber()
             );
+        }
+    }
+
+    // Replaces the icon resource, e.g. after a theme change.
+    //
+    // Both theme variants of an icon have the same dimensions, therefore
+    // the position and the touch area do not need to be recalculated.
+    // If the resource is unchanged, the bitmap is left untouched.
+    public function setIcon( icon as ResourceId ) as Void {
+        if( _icon != icon ) {
+            _icon = icon;
+            setBitmap( icon );
         }
     }
 } 

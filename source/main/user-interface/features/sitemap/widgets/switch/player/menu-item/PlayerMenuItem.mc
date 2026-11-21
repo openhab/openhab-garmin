@@ -1,5 +1,6 @@
 import Toybox.Lang;
 import Toybox.WatchUi;
+import Toybox.Graphics;
 
 /*
  * Menu item for Switch elements of type "Player".
@@ -119,6 +120,19 @@ class PlayerMenuItem extends SwitchMenuItem {
             setStateDrawable( null );
             setStateTextResponsive( sitemapSwitch.getDisplayState() );
         }
+    }
+
+    /*
+     * The state icon is provided by the theme, so it is refreshed before
+     * drawing. This also covers a night mode change that happens without
+     * the playback state changing.
+     */
+    public function onUpdate( dc as Dc ) as Void {
+        var stateDrawable = getStateDrawable();
+        if( stateDrawable instanceof PlayerMenuItemStateBitmap ) {
+            stateDrawable.updateTheme();
+        }
+        SwitchMenuItem.onUpdate( dc );
     }
 
     /*

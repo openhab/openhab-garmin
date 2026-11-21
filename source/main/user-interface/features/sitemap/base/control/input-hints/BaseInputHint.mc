@@ -38,29 +38,6 @@ class BaseInputHint extends Drawable {
         HINT_TYPE_PREVIOUS,
         HINT_TYPE_NEXT
     }
-    // Association of Type with colors
-    private const UI_INPUT_HINT_COLORS as Array<ColorType> = [
-        ThemeManager.current.textColor,
-        ThemeManager.current.textColor,
-        ThemeManager.current.textColor,
-        ThemeManager.current.textColor,
-        ThemeManager.current.textColor,
-        ThemeManager.current.textColor,
-        ThemeManager.current.textColor,
-        ThemeManager.current.textColor
-    ];
-    // Association of Type with icons
-    private const UI_INPUT_HINT_ICONS as Array<ResourceId?> = [
-        null,
-        Rez.Drawables.iconCheckHint,
-        Rez.Drawables.iconCancelHint,
-        Rez.Drawables.iconStopHint,
-        Rez.Drawables.iconPlayHint,
-        Rez.Drawables.iconPauseHint,
-        ThemeManager.current.iconPreviousHint,
-        ThemeManager.current.iconNextHint
-    ];
-
     // Default line width
     public const LINE_WIDTH as Number = 
         ( 0.0125 * Config.UI_SCREEN_WIDTH ).toNumber(); // line width is calculated proportionally to the screen width
@@ -70,18 +47,68 @@ class BaseInputHint extends Drawable {
     private var _icon as InputHintIcon?;
     private var _touchId as Symbol?;
 
+    // The type is stored instead of the values derived from it, so that
+    // both a change of the type and a change of the theme are applied with
+    // the next draw. See refresh().
+    private var _type as Type;
+
     // Initialize the members above
     protected function initialize( key as Key, type as Type, touchId as Symbol? ) {
         Drawable.initialize( {} );
         _position = Config.UI_INPUT_HINT_POSITIONS[key];
-        _color = UI_INPUT_HINT_COLORS[type];
         _touchId = touchId;
-        
-        // For the icon we initialize the InputHintIcon, for which
+        _type = type;
+        _color = getColor();
+
+        // Determines the color and initializes the InputHintIcon, for which
         // again there are two versions for round and rectangular screen
-        var iconRez = UI_INPUT_HINT_ICONS[type];
-        if( iconRez != null ) {
-            _icon = new InputHintIcon( iconRez, touchId, _position, LINE_WIDTH );
+        refresh();
+    }
+
+    // Returns the color of the hint.
+    // Currently all hint types use the text color of the theme.
+    private function getColor() as ColorType {
+        return ThemeManager.current.textColor;
+    }
+
+    // Returns the icon of the hint for a given type, or null if there is none.
+    //
+    // The theme-dependent icons are resolved from the current theme on every
+    // call, because the theme can change while the app is running.
+    private function getIconRezId( type as Type ) as ResourceId? {
+        if( type == HINT_TYPE_CHECK ) {
+            return Rez.Drawables.iconCheckHint;
+        } else if( type == HINT_TYPE_CANCEL ) {
+            return Rez.Drawables.iconCancelHint;
+        } else if( type == HINT_TYPE_STOP ) {
+            return Rez.Drawables.iconStopHint;
+        } else if( type == HINT_TYPE_PLAY ) {
+            return Rez.Drawables.iconPlayHint;
+        } else if( type == HINT_TYPE_PAUSE ) {
+            return Rez.Drawables.iconPauseHint;
+        } else if( type == HINT_TYPE_PREVIOUS ) {
+            return ThemeManager.current.iconPreviousHint;
+        } else if( type == HINT_TYPE_NEXT ) {
+            return ThemeManager.current.iconNextHint;
+        }
+        return null;
+    }
+
+    // Applies the color and the icon of the current type and theme.
+    //
+    // Subclasses must call this before drawing, because the theme can change
+    // without the input hint being recreated. The icon itself only replaces
+    // its bitmap if the resource has actually changed.
+    protected function refresh() as Void {
+        _color = getColor();
+
+        var iconRez = getIconRezId( _type );
+        if( iconRez == null ) {
+            _icon = null;
+        } else if( _icon == null ) {
+            _icon = new InputHintIcon( iconRez, _touchId, _position, LINE_WIDTH );
+        } else {
+            _icon.setIcon( iconRez );
         }
     }
 
@@ -105,10 +132,7 @@ class BaseInputHint extends Drawable {
 
     // Changes the type of the input hint
     public function setType( type as Type ) as Void {
-        _color = UI_INPUT_HINT_COLORS[type];
-        var iconRez = UI_INPUT_HINT_ICONS[type];
-        if( iconRez != null ) {
-            _icon = new InputHintIcon( iconRez, _touchId, _position, LINE_WIDTH );
-        }
+        _type = type;
+        refresh();
     }
 } 

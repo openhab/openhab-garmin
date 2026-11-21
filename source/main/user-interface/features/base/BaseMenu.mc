@@ -27,6 +27,14 @@ class BaseMenu extends CustomMenu {
     // The Drawable for the connection mode indicator
     private var _cmi as ConnectionModeIndicator = new ConnectionModeIndicator( ConnectionModeIndicator.LOCATION_MENU );
 
+    // The footer used if no dedicated footer was provided by the subclass.
+    // It is kept, because the logo depends on the theme and must be replaced
+    // when the theme changes while the menu is displayed.
+    private var _defaultFooter as Bitmap?;
+
+    // The theme the menu is currently configured for
+    private var _theme as Theme;
+
     // Constructor
     protected function initialize( options as BaseMenuOptions ) {
         // Logger.debug( "BaseMenu.initialize" );
@@ -42,12 +50,15 @@ class BaseMenu extends CustomMenu {
         
         // Each subclass may provide its own footer drawable.
         // If none is specified, the footer defaults to the openHAB logo.
+        // The logo is kept in _defaultFooter, because it depends on the
+        // theme and must be replaced when the theme changes.
         var footer = options[:footer] as Drawable?;
         if( footer == null ) {
-            footer = new Bitmap( {
+            _defaultFooter = new Bitmap( {
                     :rezId => ThemeManager.current.logoOpenhabText,
                     :locX => WatchUi.LAYOUT_HALIGN_CENTER,
                     :locY => WatchUi.LAYOUT_VALIGN_CENTER } );
+            footer = _defaultFooter;
         }
 
         /*
@@ -80,6 +91,8 @@ class BaseMenu extends CustomMenu {
             ThemeManager.current.backgroundColor, 
             parentOptions 
         );
+
+        _theme = ThemeManager.current;
     }
 
     // The base class already defines setTitle() with a Drawable argument,
@@ -163,6 +176,54 @@ class BaseMenu extends CustomMenu {
         } catch( ex ) {
             ExceptionHandler.handleBackgroundException( ex );
         }
+    }
+
+    /*
+     * The footer is drawn by the base class, so it is used to refresh the
+     * theme-dependent parts of the menu. Menus are long-lived and are not
+     * recreated when the night mode changes, so the footer logo and the
+     * background color would otherwise keep the values of the old theme.
+     */
+    public function drawFooter( dc as Dc ) as Void {
+        // Logger.debug( "BaseMenu.drawFooter" );
+        try {
+            if( updateTheme() ) {
+                /*
+                * The base class has already filled the footer area using the
+                * background color configured when the menu was initialized.
+                * Repaint it with the new color, so that the theme change is
+                * visible without the menu being recreated.
+                */
+                dc.setColor( ThemeManager.current.backgroundColor, ThemeManager.current.backgroundColor );
+                dc.clear();
+            }
+
+        } catch( ex ) {
+            ExceptionHandler.handleBackgroundException( ex );
+        }
+
+        CustomMenu.drawFooter( dc );
+    }
+
+    // Applies the current theme to the menu. Returns true if the theme
+    // changed since the menu was initialized or last drawn.
+    //
+    // The theme is compared by reference, so nothing is recreated while
+    // the theme stays the same.
+    private function updateTheme() as Boolean {
+        var theme = ThemeManager.current;
+        if( _theme == theme ) {
+            return false;
+        }
+        _theme = theme;
+
+        setBackgroundColor( theme.backgroundColor );
+
+        if( _defaultFooter != null ) {
+            _defaultFooter.setBitmap( theme.logoOpenhabText );
+        }
+
+        return true;
     }
 
     // The `CustomMenu` base class does not expose the number of menu items.

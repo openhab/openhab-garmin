@@ -63,3 +63,24 @@ Each device is assigned a specific `ThemeManager` implementation via its source 
 
   - `device-night-mode/device-focus-indicator/ThemeManager.mc`  
     Implementation for devices that require a focus indicator, typically button-based devices such as the Edge 540 or 550.
+
+---
+
+## Live Theme Changes
+
+On devices that support night mode, the theme can change while the app is running.
+`OHApp.onNightModeChanged()` updates the `NightModeTracker` and the `ThemeManager`
+and requests a redraw, but it does not recreate views, menus, or drawables.
+Therefore, nothing may cache a theme-dependent value beyond a single draw:
+
+- Read colors and theme-dependent `ResourceId`s from `ThemeManager.current` when drawing,
+  not when a class is loaded or an object is constructed.
+- A `Drawable` that has to cache a theme-dependent resource (for example a `Bitmap`
+  that is created in a constructor) must refresh it before drawing. The resource is only
+  replaced if the theme actually changed, so nothing is recreated while it stays the same.
+  See `OnOffStateDrawable`, `PlayPauseBitmap`, `PlayerMenuItemStateBitmap`,
+  `BaseInputHint`, and `PlayerView` for this pattern.
+- Menus are long-lived and are not rebuilt after a theme change. `BaseMenu` therefore
+  applies the theme in `drawFooter()`, which is the draw callback of the `CustomMenu`
+  base class. That is where the default footer logo and the menu background color
+  are refreshed.

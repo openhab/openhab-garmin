@@ -22,6 +22,8 @@ On Edge devices, both light and dark (night) modes are supported, and the mode c
 
 Since querying the API’s night mode state is relatively costly, the `NightModeTracker` stores the current mode internally. The system invokes `OHApp.onNightModeChanged` when the mode changes, which triggers the tracker to update its internal state. Other UI components access this centralized state instead of querying the API directly.
 
+A night mode change only requests a redraw; views, menus, and drawables are not recreated. Theme-dependent values must therefore be resolved when drawing, or refreshed in the draw callback if they have to be cached. See [Folder `themes`](../../themes/README.md#live-theme-changes) for details.
+
 ---
 
 ## Subfolder `view-stack/`

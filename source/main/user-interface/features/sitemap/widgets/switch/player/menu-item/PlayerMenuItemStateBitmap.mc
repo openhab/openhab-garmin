@@ -11,10 +11,15 @@ class PlayerMenuItemStateBitmap extends Bitmap {
     // actual change of state, when setEnabled is called.
     private var _isPlaying as Boolean;
 
+    // The theme the bitmap was last resolved for.
+    // The icon is provided by the theme, so it changes with the night mode.
+    private var _theme as Theme;
+
     // Constructor
     // Processes the initial state
     public function initialize( isPlaying as Boolean ) {
         _isPlaying = isPlaying;
+        _theme = ThemeManager.current;
 
         Bitmap.initialize( {
             :rezId => getPlayPauseBitmap( isPlaying )
@@ -28,6 +33,19 @@ class PlayerMenuItemStateBitmap extends Bitmap {
         if( _isPlaying != isPlaying ) {
             _isPlaying = isPlaying;
             setBitmap( getPlayPauseBitmap( isPlaying ) );
+        }
+    }
+
+    // Applies the current theme to the bitmap.
+    //
+    // Called before drawing, because the theme can change without the
+    // playback state changing. Nothing is recreated while the theme
+    // stays the same.
+    public function updateTheme() as Void {
+        var theme = ThemeManager.current;
+        if( _theme != theme ) {
+            _theme = theme;
+            setBitmap( getPlayPauseBitmap( _isPlaying ) );
         }
     }
 
