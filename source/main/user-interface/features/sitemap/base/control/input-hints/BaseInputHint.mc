@@ -22,7 +22,7 @@ class BaseInputHint extends Drawable {
         HINT_KEY_DOWN
     }
     // Enum for type of input hint
-    // NEUTRAL = white
+    // NEUTRAL = no icon, uses the theme text color
     // CHECK = green check icon
     // CANCEL = red cancel cross
     // STOP = orange stop symbol

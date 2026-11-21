@@ -29,13 +29,4 @@ Implements a custom replacement for the Garmin SDK’s `Picker`.
 
 The custom implementation (`DynamicPicker`) allows scrolling through and selecting values while overcoming limitations of the native SDK picker (e.g., dynamic option handling and improved interaction behavior).
 
-#### Folder Structure
-
-- **`picker/base/`**  
-  Contains the base implementation, including `DynamicPicker` and its supporting classes.
-
-- **`picker/numeric/`**  
-  Provides the concrete implementation for Setpoint and Slider widgets.  
-  Allows the user to select a floating-point value from a range defined in the sitemap, based on `DynamicPicker`.
-
-  See the [Setpoint/Slider section](https://next.openhab.org/docs/apps/garmin/#setpoint-and-slider) for usage details and examples.
+The picker is generic: it renders the options supplied by a `DynamicPickerDataSource` and reports user input to a `DynamicPickerDelegate`. The concrete implementation for Setpoint and Slider widgets, which allows the user to select a floating-point value from the range defined in the sitemap, is located in [`widgets/numeric/numeric-picker/`](../widgets/numeric/numeric-picker/).

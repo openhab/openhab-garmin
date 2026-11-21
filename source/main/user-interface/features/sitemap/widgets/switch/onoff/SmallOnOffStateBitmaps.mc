@@ -3,8 +3,8 @@ import Toybox.WatchUi;
 import Toybox.Graphics;
 
 /*
- * Singleton class that provides two BufferedBitmaps representing
- * a toggle switch in the "on" and "off" positions.
+ * Singleton class that provides three BufferedBitmaps representing
+ * a toggle switch in the "on" and "off" positions, and without a state.
  *
  * `OnOffStateDrawable` provides the standard-sized version,
  * while this class offers a smaller version intended for use 

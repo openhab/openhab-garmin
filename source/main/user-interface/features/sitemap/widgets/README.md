@@ -12,7 +12,7 @@ This folder also includes the factory responsible for instantiating the correct 
   Implement interactive list entries that represent sitemap elements.
 
 - **Drawable classes**  
-  Render visual components, such as status indicators (e.g. `OnOffStatusDrawable` for switch states).
+  Render visual components, such as status indicators (e.g. `OnOffStateDrawable` for switch states).
 
 - **Command selection menus**  
   Allow the user to choose from a predefined list of commands associated with a widget.
@@ -30,7 +30,7 @@ The base class `StructuredMenuItem` defines the common layout and structure of a
 
 Apart from the label, all elements are optional and can be combined depending on the widget’s requirements.
 
-In addition to rendering the visual representation, menu items handle user input and execute commands using a `CommandRequest`. If a full-screen control view is opened, that view delegates command execution back to the associated menu item.
+In addition to rendering the visual representation, menu items handle user input and execute commands using a `BaseCommandRequest` (either `NativeCommandRequest` or `WebhookCommandRequest`). If a full-screen control view is opened, that view delegates command execution back to the associated menu item.
 
 ---
 
@@ -38,7 +38,7 @@ In addition to rendering the visual representation, menu items handle user input
 
 ### Subfolder `container/`
 
-Implements the widget for container elements such as Frames and Pages. Selecting a container widget opens a submenu containing the elements within that container.
+Implements the widget for container elements such as Frames and Groups. Selecting a container widget opens a submenu containing the elements within that container.
 
 See also [Frames](https://next.openhab.org/docs/apps/garmin/#frame) and [Nested Elements](https://next.openhab.org/docs/apps/garmin/#nested-elements) in the user manual.
 
@@ -54,7 +54,7 @@ Contains the `MenuItemFactory`, which is the single source of truth for selectin
 
 Implements the widget for Setpoint and Slider elements. While other UIs differentiate between the two, the constraints of the wearable interface make a unified, Setpoint-style interaction model more suitable.
 
-The menu item displays the current state and, when selected, opens a full-screen view based on the `DynamicPicker` with a widget-specific data source and delegate.
+The menu item displays the current state and, when selected, opens a full-screen view based on the `DynamicPicker` from [`shared/picker/`](../shared/picker/) with a widget-specific data source and delegate from `numeric-picker/`.
 
 See also [Setpoint and Slider](https://next.openhab.org/docs/apps/garmin/#setpoint-and-slider) in the user manual.
 
@@ -62,13 +62,13 @@ See also [Setpoint and Slider](https://next.openhab.org/docs/apps/garmin/#setpoi
 
 ### Subfolder `settings/`
 
-Implements the settings entry. This is a special case, as it is not a sitemap widget. On touch-based devices, selecting this entry opens the settings menu. On button-based devices, the settings menu is accessed by scrolling past the footer with the settings icon on the root homepage level.
+Implements the settings entry. This is a special case, as it is not a sitemap widget. On touch-based devices, and on button-based Edge devices that show the settings as a regular menu item due to a firmware issue, selecting this entry opens the settings menu. On other button-based devices, the settings menu is accessed by scrolling past the footer with the settings icon on the root homepage level.
 
 See also [Settings Menu](https://next.openhab.org/docs/apps/garmin/#settings-menu) in the user manual.
 
 ---
 
-### Subfolder `player/`
+### Subfolder `switch/player/`
 
 Implements `PlayerView`, enabling interaction with media players such as play, pause, next, and previous, while also displaying the current playback state.
 
@@ -83,19 +83,19 @@ Contains multiple widgets covering both Switch and Selection sitemap elements. T
 - `switch/base/`  
   Provides a shared base class with reusable functionality used by all switch-related widgets.
 
-- `generic/`  
+- `switch/generic/`  
   Used for items whose available commands are not covered by the toggle rules. This includes non-`Switch` items with commands that do not represent an undescribed ON/OFF toggle (including `ON`/`OFF` commands with descriptions), and `Switch` items with described ON/OFF commands (so the descriptions can be shown).  
   - If only one command is available, it is sent directly when the menu item is selected.  
-  - If two commands are available, selecting the menu item toggles between them.  
-  - If more than two commands are available, a command selection menu is displayed.
+  - If two commands are available and the current state matches one of them, the other command is sent.  
+  - In all other cases, a command selection menu is displayed.
 
-- `onoff/`  
+- `switch/onoff/`  
   For `Switch` items without commands, with non-ON/OFF commands, or with undescribed ON/OFF commands; for `Dimmer` items without commands; and for non-`Switch` items whose available commands are exactly ON and OFF without descriptions. Displays an interactive toggle switch directly within the menu item.
 
-- `player/`  
+- `switch/player/`  
   For Player items. Displays the PLAY or PAUSE state in the menu item and opens a full-screen control view with PLAY, PAUSE, NEXT, and PREVIOUS controls when selected.
 
-- `rollershutter/`  
+- `switch/rollershutter/`  
   For Rollershutter items. Displays the current state in the menu item and opens a full-screen control view with UP, DOWN, and STOP controls.
 
 See [Switch and Selection](https://next.openhab.org/docs/apps/garmin/#switch-and-selection) in the user manual for more information.

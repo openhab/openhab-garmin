@@ -104,7 +104,7 @@ class SitemapNumeric extends SitemapWidget {
 
     // Returns the numeric state formatted as a display string,
     // using the number of decimal places defined by the
-    // step value of this NumberPicker.
+    // step value of this widget.
     public function formatState( state as Float ) as String {
         return formatStateWithDecimals( state, _decimalPlaces );
     }

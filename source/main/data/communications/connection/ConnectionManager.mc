@@ -101,10 +101,10 @@ import Toybox.Time;
         }
     }
 
-    // Returns true if last successful phone connection or Wifi check 
-    // happened within the state expiry time. While states are not acutally shown
-    // in Wifi mode, we still want to use the same timeframe
-    // to go into offline mode if Wifi connection is lost.
+    // Returns true if the last successful phone connection or Wi-Fi check
+    // happened within the state expiry time. While states are not actually shown
+    // in Wi-Fi mode, we still want to use the same timeframe
+    // to go into offline mode if the Wi-Fi connection is lost.
     public function hadSuccessfulConnectionWithinLimit() as Boolean {
         return 
             _lastSuccessfullConnection != null

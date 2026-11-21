@@ -20,7 +20,7 @@ Contains the `OHApp` class, the main entry point for the app. It handles:
 
 ### Subfolder `exceptions/`
 
-Defines all custom exception types used by the app. Most exception classes extend the base class `GeneralException`.
+Defines all custom exception types used by the app. Most exception classes extend the base class `Exception`. `GeneralException` serves as the base for general errors, and remains the parent of the more specific fatal exceptions.
 
 ### Subfolder `logging/`
 
@@ -42,4 +42,4 @@ When sideloading the app directly onto a device, application settings are not av
 
 - [Connect IQ SDK Core Topics – Resources](https://developer.garmin.com/connect-iq/core-topics/resources/)
 - [Connect IQ API Docs – `Toybox.Application.Properties`](https://developer.garmin.com/connect-iq/api-docs/Toybox/Application/Properties.html)
-- See also: [Folder `resources`](https://github.com/TheNinth7/ohg#folder-resources)
+- See also: [Folder `resources`](../../../README.md#subfolder-resources)

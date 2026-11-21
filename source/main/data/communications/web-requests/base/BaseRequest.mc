@@ -30,7 +30,7 @@ class BaseRequest {
         return _options;
     }
     // Set HTTP header fields
-    // The HTTP header is part of the optiosn
+    // The HTTP headers are part of the options
     protected function setHeader( name as String, value as String or Communications.HttpRequestContentType ) as Void {
         if( _options[:headers] == null ) {
             _options[:headers] = { name => value };
@@ -60,7 +60,7 @@ class BaseRequest {
     //
     // There may be situations (request cancelling in particular),
     // where no error is raised but still further processing should
-    // be supressed. This is reflected in the return:
+    // be suppressed. This is reflected in the return:
     // true - response shall be processed
     // false - response shall not be processed
     protected function checkResponseCode( 

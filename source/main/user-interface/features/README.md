@@ -41,7 +41,7 @@ Provides abstract and shared base classes for menu implementations:
 
 - `BaseMenuItem`
   Extends `CustomMenuItem` to provide consistent behavior and styling support across the app.  
-  Its current primary responsibility is enabling the focus indicator used on Garmin Edge devices.
+  It draws the item background and divider, applies the current theme, and enables the focus indicator used on Garmin Edge devices.
 
 - `LabelMenuItem`  
   Extends `CustomMenuItem` to provide a simple, non-interactive menu entry consisting of a label and a sub-label. This is primarily used in the settings menu for informational entries.

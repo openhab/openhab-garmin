@@ -5,8 +5,8 @@ import Toybox.Time;
 using Toybox.Time.Gregorian;
 
 /*
- * A custom menu item that displays the age of the currently available
- * sitemap data, and provides an option to update it via WiFi.
+ * A custom menu item that displays the timestamp of the currently available
+ * sitemap data.
  */
 class SitemapLastUpdatedMenuItem extends LabelMenuItem {
 

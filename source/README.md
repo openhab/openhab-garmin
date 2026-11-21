@@ -10,7 +10,7 @@ This folder contains the source code of the app, written in **Monkey C**, Garmin
 
 Two mechanisms are used to tailor the source code for different target devices:
 
-- The relevant `config` and `theme` directories are added to the device-specific source path in [`monkey.jungle`](../README.md#root-folder-).
+- The relevant `config` and `themes` directories are added to the device-specific source path in [`monkey.jungle`](../README.md#root-folder-).
 - In the shared `main` source, exclude annotations are used to adapt the code to individual target devices. These annotations are mapped to devices in [`monkey.jungle`](../README.md#root-folder-) and are documented there.
 
 ### Other Annotations

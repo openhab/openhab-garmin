@@ -16,18 +16,18 @@ The Garmin SDK’s _Properties_ are stored externally from the app and persist a
 
 ## Key Concepts
 
-All devices inherit default values from `BaseConfig` and `GlanceBaseConfig`, which define all configuration values used in the _Widget_ and _Glance_, respectively.
+All devices inherit default values from `BaseConfig` and `BaseGlanceConfig`, which define all configuration values used in the _Widget_ and _Glance_, respectively.
 
 In the source code, these are accessed via the `Config` and `GlanceConfig` classes. Each supported device may override the defaults by providing its own implementation of these classes.
 
-Additional base classes can be introduced for specific device families. For example, `EdgeBaseConfig` inherits from `BaseConfig` and overrides values that apply to all Edge devices. Concrete `Config` implementations for individual Edge models can then further override selected values defined in the Edge base configuration.
+Additional base classes can be introduced for specific device families. For example, `EdgeConfig` inherits from `BaseConfig` and overrides values that apply to all Edge devices. Concrete `Config` implementations for individual Edge models can then further override selected values defined in the Edge base configuration.
 
 ---
 
 ## Folder Structure
 
 - `base/`:
-  Contains `BaseConfig` and `GlanceBaseConfig`, which define the baseline values for all devices.
+  Contains `BaseConfig` and `BaseGlanceConfig`, which define the baseline values for all devices.
 - `device-default/`:
   Contains default `Config` and `GlanceConfig` implementations. These inherit all values from the base without overrides.
 - `device-<device-name>/`:

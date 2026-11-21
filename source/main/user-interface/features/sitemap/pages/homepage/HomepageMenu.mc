@@ -167,8 +167,8 @@ class HomepageMenu extends BasePageMenu {
 
     /******* BUTTON-BASED DEVICES *******/
 
-    // Constructor for button-based devices. On these devices,
-    // the settings icon is displayed in the footer.
+    // Constructor for devices that show the settings menu as a parallel menu.
+    // On these devices, the settings icon is displayed in the footer.
     // The syncTopLevel parameter indicates that the HomepageMenu
     // should add its menu items synchronously, with only the lower levels
     // initialized asynchronously.
@@ -193,14 +193,16 @@ class HomepageMenu extends BasePageMenu {
     /******* TOUCH-BASED DEVICES *******/
 
 
-    // For touch-based devices there is a dedicated menu item for
-    // showing the settings menu
+    // The settings menu is shown as a regular menu item on touch-based devices
+    // and on button-based Edge devices, which cannot use the page-scroll
+    // delegates due to a firmware issue.
     // This member tracks whether the settings menu has been added
     (:exclForSettingsFooter)
     private var _hasSettingsMenu as Boolean = false;
 
-    // Constructor for touched-based devices. On these devices,
-    // there is a dedicated settings menu item added to the HomepageMenu.
+    // Constructor for devices that show the settings menu as a regular
+    // menu item. On these devices, a dedicated settings menu item is added
+    // to the HomepageMenu.
     // The syncTopLevel parameter indicates that the HomepageMenu
     // should add its menu items synchronously, with only the lower levels
     // initialized asynchronously.

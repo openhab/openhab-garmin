@@ -100,7 +100,7 @@ class SitemapStore  {
 
     // Return the sitemap currently stored in memory.
     // Freshness check is not performed but passed in as parameter,
-    // this allows this function to tbe used in the one below it.
+    // this allows this function to be used in the one below it.
     (:typecheck(disableGlanceCheck))
     private static function getSitemapFromMemory( isSitemapFresh as Boolean ) as SitemapHomepage? {
         if( _json != null ) {

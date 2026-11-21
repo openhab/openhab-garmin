@@ -165,7 +165,7 @@ class SitemapWidget extends SitemapElement {
     public function getItem() as Item? { return _item; }
     
     // The label, without any embedded display state
-    // See _remoteDisplayState and SitemapElement.parseLabel()
+    // See _remoteDisplayState and SitemapElement.parseLabelStateFromString()
     public function getLabel() as String { return _label; }
 
     // The color to be applied to the label
@@ -181,7 +181,7 @@ class SitemapWidget extends SitemapElement {
     
     // The display state provided by the server.
     // Extracted from the item label in the format: "Label [_displayState]"
-    // See SitemapElement.parseLabel()
+    // See SitemapElement.parseLabelStateFromString()
     public function getRemoteDisplayState() as String { return _remoteDisplayState; }
 
     // As default the remote display state is set to NO_DISPLAY_STATE if it

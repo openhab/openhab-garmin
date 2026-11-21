@@ -24,10 +24,10 @@ import Toybox.Timer;
  *       endCommand(), beginSync()/endSync(), fail() and shutdown().
  *
  * - Implements onReceive() to process responses:
- *     - On success, forwards the incoming JSON to the `SitemapProcessor`.
+ *     - On success, forwards the incoming JSON to the sitemap processing tasks.
  *
- * - Implements handleError() to process errors that occur in onReceive() or within
- *   the `SitemapProcessor`. This function schedules the next request based on both
+ * - Implements handleException() to process errors that occur in onReceive() or within
+ *   the sitemap processing tasks. This function schedules the next request based on both
  *   the minimum error polling interval and the configured regular polling interval.
  *
  * - Implements logic for triggering the next request, applying the appropriate delay
@@ -123,7 +123,7 @@ class SitemapRequest extends BaseRequest {
         _url = AppSettings.getUrl() + "rest/sitemaps/" + AppSettings.getSitemap();
     }
 
-    // Handles exceptions from onReceive() and the SitemapProcessor.
+    // Handles exceptions from onReceive() and the sitemap processing tasks.
     // The exception is passed to the ExceptionHandler, and the next
     // request is scheduled using a delay based on the greater of:
     // - the error polling interval, or

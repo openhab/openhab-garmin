@@ -17,6 +17,7 @@ This README covers the following topics:
 - [Introduction](#introduction)
 - [Project Structure](#project-structure)
   - [Root Folder `/`](#root-folder-)
+  - [Folder `.vscode`](#subfolder-vscode)
   - [Folder `/docs`](#subfolder-docs)
   - [Folder `/resources`](#subfolder-resources)
   - [Folder `/source`](#subfolder-source)
@@ -54,8 +55,8 @@ The _Widget_:
 
 The _Glance_:
 
-- Displays the sitemap label.
-- If sufficient memory is available, it also requests the sitemap at the same interval as the _Widget_ and caches it in storage, allowing the _Widget_ to start with a fresh state.
+- Displays the sitemap label from persistent storage, falling back to a static label if none has been stored yet.
+- Does not perform network requests itself. The sitemap and its label are stored by the _Widget_, so the _Glance_ only reflects the data cached by the last _Widget_ session.
 
 #### Further reading:
 
@@ -96,7 +97,7 @@ Contains the user manual, published at <https://next.openhab.org/docs/apps/garmi
 
 In the Connect IQ SDK, resources define:
 
-- **Properties**: Parameters stored outside the app and not visible to the user. These are currently _not_ used by the app; instead, more flexible **Constants** are used. See [Folder `source/config`](source/config/README.md) for details.
+- **Properties**: Parameters stored outside the app. The app uses them for the user-facing settings defined in `settings.xml` (URL, sitemap name, credentials, polling interval, and so on). Device-specific configuration that must update with the app is implemented as code-based **Constants** instead. See [Folder `source/config`](source/config/README.md) for details.
 
 - **Settings**: User-facing configurations
 - **Drawables**: Image assets used by the app
@@ -106,11 +107,11 @@ In the Connect IQ SDK, resources define:
 
 - `/resources/base`: Contains resources shared across all device types.
   - `/resources/base/settings.xml`: Specifies the app’s configuration settings, including default values, types, and user-facing descriptions.
-  - `/resources/base/string.xml`: Contains static string values such as the app name and version number.
+  - `/resources/base/strings.xml`: Contains static string values such as the app name and version number.
 - `/resources/edge`: Contains resources specific to Garmin Edge devices. Some `Drawable` elements are overridden here to account for different sizing requirements.
-- `/resources/icons-interface`: Contains the `_drawables.xml` file defining the icons used in the app’s user interface, primarily for navigation, along with their corresponding SVG files.
-- `/resources/icons-launcher`: Contains one subdirectory per launcher icon size. Each subdirectory includes a resource definition for that specific size. The correct icon is selected via the resource path in the `monkey.jungle` build file, depending on the target device.
-- `/resources/icons-interface`: Contains the `_drawables.xml` file defining the openHAB icons that can be assigned to widgets, along with their corresponding SVG files.
+- `/resources/icons-interface`: Contains the `icons-interface.xml` file defining the icons used in the app’s user interface, primarily for navigation, along with their corresponding SVG files.
+- `/resources/icons-launcher`: Contains one subdirectory per launcher icon size. Each subdirectory includes a `drawables.xml` resource definition for that specific size. The correct icon is selected via the resource path in the `monkey.jungle` build file, depending on the target device.
+- `/resources/icons-widgets`: Contains the `_icons-widgets.xml` file defining the openHAB icons that can be assigned to widgets, along with their corresponding SVG files.
 
 #### Further reading
 

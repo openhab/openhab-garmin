@@ -3,7 +3,8 @@ import Toybox.WatchUi;
 import Toybox.System;
 
 /*
- * The settings menu currently provides access to the app version and server URL.
+ * The settings menu provides access to the app and server configuration,
+ * connection status, and maintenance actions.
  * In the future, additional functionality may be added, such as switching between servers.
  */
 class SettingsMenu extends BaseMenu {
@@ -27,13 +28,13 @@ class SettingsMenu extends BaseMenu {
             AppSettings.getUrl()
         ) );
 
-        // Add entry for server URL
+        // Add entry for sitemap name
         addItem( new LabelMenuItem(
             "Sitemap",
             AppSettings.getSitemap()
         ) );
 
-        // Add entry for server URL
+        // Add entry for the Connect IQ version
         addItem( new LabelMenuItem(
             "Connect IQ Version",
             Lang.format( "$1$.$2$.$3$", System.getDeviceSettings().monkeyVersion )

@@ -4,8 +4,8 @@ import Toybox.Graphics;
 import Toybox.Time;
 
 /*
- * A custom menu item that displays the age of the currently available
- * sitemap data, and provides an option to update it via WiFi.
+ * A custom menu item that allows the user to update the sitemap over Wi-Fi.
+ * The item is only actionable while a Wi-Fi connection is available.
  */
 class SitemapRefreshMenuItem extends StructuredMenuItem {
 

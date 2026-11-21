@@ -4,7 +4,7 @@ import Toybox.WatchUi;
 /*
  * Data source that provides the elements displayed by the DynamicPicker.
  * It uses the Setpoint/Slider configuration from SitemapNumeric to generate
- * a list of Drawables based on minValue, maxValue, and step.
+ * a list of options based on minValue, maxValue, and step.
  *
  * If the current state does not match any of the defined steps,
  * an additional Drawable is inserted at the correct position

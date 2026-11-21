@@ -61,12 +61,11 @@ class BaseSitemapProcessorTask {
 
 // 1)
 // The first task initalizes with the incoming JSON
-// and a instantiates a SitemapHomepage to reepresent it
-// This is a recursive process, and SitemapPage, the base
-// class of SitemapHomepage, will create tasks on its own
-// for the processing. These tasks are added to THE FRONT
-// OF THE QUEUE, and therefore will be executed before 
-// the next step is triggered.
+// and instantiates a SitemapHomepage to represent it.
+// The hierarchy is processed iteratively: SitemapPage, the base
+// class of SitemapHomepage, creates tasks on its own for the processing.
+// These tasks are added to THE FRONT OF THE QUEUE, and therefore will be
+// executed before the next step is triggered.
 class ProcessIncomingJsonTask extends BaseSitemapProcessorTask {
 
     private var _json as SitemapJsonIncoming;

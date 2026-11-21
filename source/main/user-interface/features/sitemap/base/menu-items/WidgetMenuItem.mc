@@ -18,7 +18,7 @@ import Toybox.Time;
  * its own handling of the select event.
  */
 
-// Defines the options accepted by the `BaseSitemapWidgetItem` class.
+// Defines the options accepted by the `WidgetMenuItem` class.
 typedef BaseWidgetMenuItemOptions as {
     :sitemapWidget as SitemapWidget,
     :stateTextResponsive as String?,

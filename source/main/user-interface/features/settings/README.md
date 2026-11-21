@@ -5,7 +5,9 @@ Implements the _Settings_ feature.
 Currently provides the following information and actions:
 
 - App version  
+- Connect IQ version  
 - openHAB server URL  
+- Sitemap name  
 - Current connection mode (Phone/BLE, Wi-Fi, Offline)  
 - Timestamp of the last sitemap update  
 - Manual sitemap update over Wi-Fi  
@@ -18,10 +20,10 @@ See [No Polling of Sitemap Changes and States](https://next.openhab.org/docs/app
 ## Platform-Specific Behavior
 
 - **Button-based devices**  
-  The _Settings_ menu appears as a parallel menu to the homepage. It is accessed by scrolling beyond the title or footer of the _Homepage_ menu, mimicking the system settings access pattern on devices such as the Fenix 7 Pro or Epix 2 Pro.
+  On most button-based devices (for example Fenix 7 Pro or Epix 2 Pro), the _Settings_ menu appears as a parallel menu to the homepage. It is accessed by scrolling beyond the title or footer of the _Homepage_ menu, mimicking the system settings access pattern.  
 
-- **Touch-based devices**  
-  Due to more limited gesture support, the _Settings_ menu is implemented as a regular menu item within the _Homepage_.
+- **Touch-based devices, and button-based Edge devices**  
+  Due to more limited gesture support, and because of a firmware issue with the page-scroll delegates on button-based Edge devices, the _Settings_ menu is implemented as a regular menu item within the _Homepage_.
 
 Device-specific behavior is defined in the `monkey.jungle` build file. Exclusion annotations (also used in input delegates) ensure that the correct implementation is compiled per device.
 

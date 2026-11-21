@@ -12,7 +12,7 @@ import Toybox.Timer;
  * API level 4.2.3 and later use when the app is hidden by the system
  * instead of being terminated (e.g. when the watch face is shown).
  *
- * This class also includes logic executed when the app is updated
+ * This file also includes logic executed when the app is updated
  * or when settings are changed.
  */
 (:glance)

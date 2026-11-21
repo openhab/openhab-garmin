@@ -3,11 +3,12 @@ import Toybox.WatchUi;
 import Toybox.Graphics;
 
 /*
- * This menu item implementation represents the settings menu.
- * On button-based devices, the settings menu is a parallel menu to the homepage menu, 
- * accessible by scrolling past the edges—see HomepageMenuDelegate for details.
- * On touch devices, however, the settings menu appears as a regular menu item 
- * within the homepage menu, using this menu item class.
+ * This menu item implementation represents the settings menu entry.
+ * On most button-based devices, the settings menu is a parallel menu to the
+ * homepage menu, accessible by scrolling past the edges—see HomepageMenuDelegate
+ * for details. On touch devices and on button-based Edge devices, however, the
+ * settings menu appears as a regular menu item within the homepage menu, using
+ * this menu item class.
  */
 
 (:exclForSettingsFooter)

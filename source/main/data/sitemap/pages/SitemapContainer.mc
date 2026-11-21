@@ -40,7 +40,8 @@ class SitemapContainer extends SitemapElement {
         var jsonWidgets = json.getArray( "widgets", "Frame or page contains no elements" );
 
         // We queue tasks at the FRONT of the queue because they must be processed
-        // before previously scheduled tasks (e.g., UI updates already scheduled by `SitemapProcessor`).
+        // before previously scheduled tasks (e.g., UI updates already scheduled by
+        // `SitemapApplier`).
         // Since each task is added to the front, the order of execution is reversed —
         // the last widget added will be processed first. Therefore, we add widgets
         // in reverse order: starting with the last and ending with the first.

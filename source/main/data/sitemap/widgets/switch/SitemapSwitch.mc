@@ -17,7 +17,7 @@ import Toybox.WatchUi;
  * inherited from the base class. `displayState` is overwritten using the
  * description from the sitemap element mapping. During updates, this transformation
  * is re-applied, including the command and state descriptions from the item.
- * See `updateDisplayState()` for more details.
+ * See `generateSwitchDisplayState()` for more details.
  */
 class SitemapSwitch extends SitemapWidget {
 

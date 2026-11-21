@@ -141,10 +141,10 @@ class BaseMenu extends CustomMenu {
             */
             if( _title.locY == 0 ) {
                 
-                // Depending on screen shape we use a different factor to calculate the center of the title
+                // Depending on the screen shape we use a different factor to calculate the center of the title
                 var centerY = clipHeight * Config.UI_MENU_TITLE_TEXT_POSITION;
                 
-                // Then we calculate the upper Y coordinate by substracting half of the font height
+                // Then we calculate the upper Y coordinate by subtracting half of the font height
                 // Most fonts have more blank space in the bottom, so for better visual balance we move 
                 // the font a bit down, by half the font descent
                 var locY = centerY - Graphics.getFontHeight( Config.UI_MENU_TITLE_FONT )/2 + Graphics.getFontDescent( Config.UI_MENU_TITLE_FONT )/2;

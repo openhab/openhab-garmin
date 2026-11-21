@@ -8,7 +8,7 @@ Implements the data layer of the application.
 
 ### Subfolder `communications/`
 
-Responsibel for keeping the data layer in sync with the openHAB server.
+Responsible for keeping the data layer in sync with the openHAB server.
 
 For more details, see the folder’s [README](communications/README.md).
 

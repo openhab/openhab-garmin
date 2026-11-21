@@ -6,7 +6,7 @@ Themes define the color schemes used in the app and can change dynamically at ru
 
 ## Key Concepts
 
-Themes use a slightly technical approach than [device-specific configuration](../config/#folder-config).
+Themes use a slightly more technical approach than [device-specific configuration](../config/#folder-config).
 
 For themes, the `Theme` interface declares only the available variables and does not define any default values. All values are provided by concrete theme implementations. This reflects the fact that themes usually differ across most, if not all, variables, making shared defaults less practical than in device-specific configuration.
 

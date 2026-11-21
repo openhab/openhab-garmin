@@ -68,7 +68,7 @@ class Item {
     public function getType() as String { return _type; }
 
     //! State of the item.
-    //! If the state NULL or UNDEF it is set to null, which is displayed as em dash by the widgets.
+    //! If the state is missing, NULL or UNDEF it is set to `NO_STATE`, which is displayed as an em dash by the widgets.
     public function getState() as String { return _state; }
 
     //! Unit of the item.
@@ -76,7 +76,7 @@ class Item {
     public function getUnit() as String { return _unit; }
 
     //! Determine whether the item has a valid state
-    //! @return true if the state is not NULL or UNDEF
+    //! @return true if the state is not `NO_STATE`
     public function hasState() as Boolean {
         return ! _state.equals( NO_STATE );
     }

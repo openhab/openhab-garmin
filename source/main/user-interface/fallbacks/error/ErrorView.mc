@@ -103,7 +103,7 @@ import Toybox.System;
         // We need to clear the clip, because there is bug in Garmin SDK,
         // with a clip in the menu title setting a clip in subsequent views
         // being displayed. See here for more details:
-        // https://github.com/TheNinth7/ohg/issues/81
+        // https://github.com/openhab/openhab-garmin/issues/81
         dc.clearClip();
 
 

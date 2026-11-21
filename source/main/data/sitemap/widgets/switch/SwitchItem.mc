@@ -6,7 +6,7 @@ import Toybox.WatchUi;
  *
  * Switch is the only item type that requires both command and state descriptions.
  * If present, these are used to determine the available commands and to display
- * the current state. See `SwitchItem.updateDisplayState` for details.
+ * the current state. See `SitemapSwitch.generateSwitchDisplayState()` for details.
  *
  * For item type `Switch`, command descriptions are normalized to exactly `ON`
  * and `OFF`. Unsupported or incomplete command sets are discarded.

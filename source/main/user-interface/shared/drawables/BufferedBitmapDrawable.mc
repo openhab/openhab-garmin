@@ -12,7 +12,7 @@ import Toybox.WatchUi;
  * NOTE: An initial workaround involved passing a `LegacyBufferedBitmap`
  * into a `Bitmap` Drawable. While this compiled and worked in the simulator,
  * it failed on real devices:
- * https://github.com/TheNinth7/ohg/issues/89
+ * https://github.com/openhab/openhab-garmin/issues/89
  */
 
 // The options for this Drawable

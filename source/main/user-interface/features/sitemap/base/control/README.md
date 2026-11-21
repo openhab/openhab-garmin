@@ -6,7 +6,7 @@ These views are used for sitemap elements that require more complex input handli
 
 On button-based devices, full-screen views render visual input hints that indicate the function assigned to each physical button. On button-based devices with additional touch support, these input hints also respond to touch interaction. On purely touch-based devices, dedicated on-screen buttons are displayed instead.
 
-For examples, see the screenshots in the [Setpoint/Slider section](https://next.openhab.org/docs/apps/garmin/#resulting-ui-3).
+For examples, see the screenshots in the [Setpoint/Slider section](https://next.openhab.org/docs/apps/garmin/#setpoint-and-slider).
 
 The base classes in this folder provide the underlying mechanisms for:
 

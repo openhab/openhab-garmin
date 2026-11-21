@@ -45,11 +45,14 @@ class BaseConfig {
     // 1=BACK
     // 2=UP
     // 3=DOWN
+    //
+    // On rectangular screens, the values are y coordinates in pixels.
     (:exclForScreenRectangular)
     public static const UI_INPUT_HINT_POSITIONS as Array<Number> = [30, 330, 180, 210];
+    //
+    // On round screens, InputHint and InputHintIcon use the values as angles
+    // in degrees (0 degrees is at 3 o'clock, counter-clockwise).
     (:exclForScreenRound)
-    // + positive position indicates y coordinate on the right side of the screen
-    // - negative position indicates y coordinate on the left side of the screen
     public static const UI_INPUT_HINT_POSITIONS as Array<Number> = [
         ( UI_SCREEN_HEIGHT * 0.125 ).toNumber(), 
         ( UI_SCREEN_HEIGHT * 0.675 ).toNumber(), 
@@ -141,8 +144,8 @@ class BaseConfig {
     // Edge 550 and 850.
     //
     // See the following files for implementation details:
-    // ../device-edge/widget/device-x50-button/device-550/Config.mc
-    // ../device-edge/widget/device-x50-button/device-850/Config.mc
+    // ../device-edge/device-x50-button/device-550/Config.mc
+    // ../device-edge/device-x50-button/device-850/Config.mc
     public static const UI_MENU_FOCUS_EDGEX50_SHOW_ALTERNATE_FOCUS_INDICATOR as Boolean = false;
     public static const UI_MENU_FOCUS_EDGEX50_SUPRESS_FOCUS_INDICATOR as Boolean = false;
 
