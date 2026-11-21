@@ -29,7 +29,7 @@ This gives other contributors a chance to point you in the right direction, give
 
 ### Create issues...
 
-Any significant improvement should be documented as [a GitHub issue](https://github.com/openhab/openhab-garmin/issues?labels=enhancement&state=open) before anybody starts working on it.
+Any significant improvement should be documented as [a GitHub issue](https://github.com/openhab/openhab-garmin/issues?q=label%3Aenhancement) before anybody starts working on it.
 
 ### ...but check for existing issues first!
 
@@ -66,7 +66,7 @@ Commits that fix or close an issue should include a reference like `Closes #XXX`
 
 ### Merge Approval
 
-openHAB maintainers use the [GitHub review feature](https://help.github.com/articles/about-pull-request-reviews/) to indicate acceptance.
+openHAB maintainers use the [GitHub review feature](https://docs.github.com/en/pull-requests/reference/pull-request-reviews) to indicate acceptance.
 
 ### Sign your work
 

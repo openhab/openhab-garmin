@@ -6,11 +6,18 @@ on:
       - main
     paths:
       - '**/*.md'
+      - '.github/markdownlint.yaml'
+      - '.github/mlc_config.json'
+      - '.github/workflows/markdown.yaml'
   pull_request:
     branches:
       - main
     paths:
       - '**/*.md'
+      - '.github/markdownlint.yaml'
+      - '.github/mlc_config.json'
+      - '.github/workflows/markdown.yaml'
+  workflow_dispatch:
 
 jobs:
   markdownlint:
@@ -41,3 +48,25 @@ jobs:
           use-quiet-mode: 'yes' # only show errors in output
           use-verbose-mode: 'yes' # show detailed HTTP status for checked links
           config-file: '.github/mlc_config.json'
+
+      # The action exports the link checker output as MLC_OUTPUT, but only on
+      # failure and only to the step log, which requires a GitHub login to read.
+      # Surface the dead links in the job summary and as an annotation so the
+      # failing link can be identified without access to the raw log.
+      - name: Report broken links
+        if: failure()
+        shell: bash
+        run: |
+          {
+            echo "### Broken links check failed"
+            echo
+            if [[ -z "${MLC_OUTPUT:-}" ]]; then
+              echo "No link details were captured, see the step log."
+            else
+              # The captured output also contains the debug trace and one line
+              # per checked link; keep only the dead links and the error summary.
+              printf '%s\n' "${MLC_OUTPUT}" | grep -E 'ERROR:|✖' || printf '%s\n' "${MLC_OUTPUT}"
+            fi
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
+          echo "::error title=Broken links::Markdown link check failed, see the job summary."

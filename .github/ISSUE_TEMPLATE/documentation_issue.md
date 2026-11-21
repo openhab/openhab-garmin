@@ -6,7 +6,7 @@ labels: documentation
 
 <!-- Please report only documentation issues here -->
 <!-- Documentation issues within user interfaces or the core should be -->
-<!-- reported at https://github.com/openhab/openhab-docs/issues/new -->
+<!-- reported at https://github.com/openhab/openhab-docs/issues -->
 
 <!-- Provide a general summary of the documentation issue in the *Title* above -->
 
