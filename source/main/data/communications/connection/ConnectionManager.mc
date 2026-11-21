@@ -18,6 +18,10 @@ import Toybox.Time;
  * If WiFi is available, the state moves to WIFI_CONNECTED.
  * Otherwise, it transitions to OFFLINE.
  *
+ * If the phone connection recovers while the Wi-Fi check is running,
+ * the result of the check is ignored, so that a recovered BLE state
+ * is never replaced by WIFI_CONNECTED or OFFLINE.
+ *
  * The sitemap request continues to run and updates the connectivity
  * state accordingly.
  *
@@ -191,15 +195,20 @@ import Toybox.Time;
     public function processWifiCheckResponseAndTriggerNextRequest( result as TryWifiResult ) as Void {
         // Logger.debug( "ConnectionManager.processWifiCheckResponseAndTriggerNextRequest" );
         try {
-            // If since the request was made the state has been changed
-            // back to BLUETOOTH_CONNECTED, we ignore the result
-            if( _state != BLUETOOTH_CONNECTED && result[:wifiAvailable] == true ) {
-                // If WiFi is available ...
-                _lastSuccessfullConnection = Time.now();
-                // ... we update the state.
-                updateStateAndUi( WIFI_CONNECTED );
-            } else {
-                updateStateAndUi( OFFLINE );
+            // If the state has changed back to BLUETOOTH_CONNECTED since the
+            // check was started (i.e. BLE recovered while it was running),
+            // the Wi-Fi result is ignored completely: neither the state, nor
+            // the last successful connection timestamp, nor the UI may be
+            // touched, so updateStateAndUi() must not be called.
+            if( _state != BLUETOOTH_CONNECTED ) {
+                if( result[:wifiAvailable] == true ) {
+                    // If WiFi is available ...
+                    _lastSuccessfullConnection = Time.now();
+                    // ... we update the state.
+                    updateStateAndUi( WIFI_CONNECTED );
+                } else {
+                    updateStateAndUi( OFFLINE );
+                }
             }
         } catch( ex ) {
             ExceptionHandler.handleBackgroundException( ex );
