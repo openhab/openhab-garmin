@@ -53,6 +53,8 @@ Contains `SitemapElement` subclasses representing concrete sitemap widgets, such
 
 For container-type elements (e.g., frames or groups), the widget class describes the container itself and links to the corresponding implementation in `pages/` to represent its content.
 
+The item of a `Text` element is optional, as openHAB allows static text without an item. Such an element displays only its label and exposes no item through `SitemapWidget.getItem()`.
+
 #### Folder Structure
 
 - **`base/`**  

@@ -8,6 +8,9 @@ import Toybox.WatchUi;
  * both the label text and the state enclosed in square brackets.
  * This approach is preferred over retrieving the state from the associated item,
  * as the embedded state includes any formatting defined for the sitemap text element.
+ *
+ * A static Text element has no item and therefore no state. In that case no state
+ * text is displayed, so the no-state marker is omitted.
  */
 class TextMenuItem extends WidgetMenuItem {
     
@@ -19,7 +22,7 @@ class TextMenuItem extends WidgetMenuItem {
     ) {
         WidgetMenuItem.initialize( {
             :sitemapWidget => sitemapText,
-            :stateTextResponsive => sitemapText.getDisplayState(),
+            :stateTextResponsive => sitemapText.getDisplayStateOrNull(),
             :parent => parent,
             :processingMode => processingMode
         } );
@@ -27,7 +30,7 @@ class TextMenuItem extends WidgetMenuItem {
 
     // When the state changes, change the displayed state text
     public function onStateChanged() as Void {
-        setStateTextResponsive( getSitemapWidget().getDisplayState() );
+        setStateTextResponsive( getSitemapWidget().getDisplayStateOrNull() );
     }
 
 }

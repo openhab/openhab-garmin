@@ -105,5 +105,6 @@ See [Switch and Selection](https://next.openhab.org/docs/apps/garmin/#switch-and
 ### Subfolder `text/`
 
 Implements the Text widget, which displays the current state of an item without allowing user interaction.
+If the Text element has no item, it is displayed as static text: only the label is shown and selecting it has no effect.
 
 See also [Text](https://next.openhab.org/docs/apps/garmin/#text) in the user manual.

@@ -148,6 +148,12 @@ class WidgetMenuItem extends StructuredMenuItem {
             ViewStack.pushView( page, PageMenuDelegate.get(), WatchUi.SLIDE_LEFT );
             return true;
         } else {
+            // A widget without a linked page and without an item, such as a
+            // static Text element, has no action to perform. Return without
+            // requiring a connection, since no command can be sent.
+            if( _sitemapWidget.getItem() == null ) {
+                return true;
+            }
             if( ! ConnectionManager.get().isConnected() ) {
                 throw new OfflineCommandException();
             }
