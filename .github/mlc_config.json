@@ -4,6 +4,9 @@
   "retryCount": 3,
   "fallbackRetryDelay": "10s",
   "aliveStatusCodes": [200, 206],
+  "ignorePatterns": [
+    { "pattern": "^https?://yourhost" }
+  ],
   "httpHeaders": [
     {
       "urls": ["https://", "http://"],

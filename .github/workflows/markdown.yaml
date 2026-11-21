@@ -69,4 +69,12 @@ jobs:
             fi
           } | tee -a "$GITHUB_STEP_SUMMARY"
 
+          # Annotations are visible without repository access, so emit one per
+          # failing link instead of hiding the URL in the step log.
+          if [[ -n "${MLC_OUTPUT:-}" ]]; then
+            while IFS= read -r line; do
+              echo "::error::${line}"
+            done < <(printf '%s\n' "${MLC_OUTPUT}" | grep -E '\[✖\]')
+          fi
+
           echo "::error title=Broken links::Markdown link check failed, see the job summary."
