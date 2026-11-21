@@ -96,13 +96,22 @@ affected resource back.
   Verify access with read endpoints. If a probe was created by mistake, delete it
   immediately and confirm only the intended content remains.
 
-## Commits on the main branch
+## Branches, pull requests and pushes
 
-When working on the `main` branch, commit only with explicit operator authorization.
+Never create a branch, push a branch, or open a pull request on your own
+initiative. Do these only when the operator explicitly asks for them.
 
-Do not push directly to `main`: this repository has an active `main` branch PR
-ruleset. Push the commit to a feature branch and open a pull request instead,
-unless the operator explicitly instructs otherwise.
+- Commit locally when the operator asks for a commit, and stop there unless a
+  push was requested as well. Commit to `main` only with explicit operator
+  authorization.
+- If no branch or pull request was authorized and a direct push to `main` is
+  rejected, report the rejection to the operator instead of creating a branch.
+- Do not push to `main`: this repository has an active `main` branch PR ruleset.
+  When the operator authorizes a pull request, push the commit to a feature
+  branch and open the pull request against `main`, unless the operator
+  explicitly instructs otherwise.
+- Branch names follow `<issue>-<short-description>` (see `CONTRIBUTING.md`); use a
+  descriptive name when there is no issue.
 
 To prepare a feature branch from an up-to-date `main` without accidentally
 pushing to it:
@@ -113,6 +122,5 @@ git branch --unset-upstream      # never inherit main as the push target
 git push -u origin HEAD
 ```
 
-Branch names follow `<issue>-<short-description>` (see `CONTRIBUTING.md`); use a
-descriptive name when there is no issue. After pushing, open a pull request and
-report its URL.
+After pushing an authorized branch, open the pull request only if that was
+requested, and report its URL.
