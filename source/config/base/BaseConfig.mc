@@ -23,6 +23,18 @@ class BaseConfig {
     // was possible
     public static const STATE_EXPIRATION_TIME as Number = 10;
 
+    // Number of consecutive failed sitemap requests after which a temporary
+    // error is escalated to a full-screen error. With a value of 3, the first
+    // two failures are shown as toast notifications and the third one as a
+    // full-screen error. Counting failures instead of using the age of the
+    // last successful response keeps the escalation independent of the
+    // configured polling interval.
+    //
+    // Inherited constants cannot be resolved through `Config` inside static
+    // functions; reference this one as `BaseConfig.SITEMAP_FAILURE_ESCALATION_COUNT`
+    // there.
+    public static const SITEMAP_FAILURE_ESCALATION_COUNT as Number = 3;
+
 
     /******* SCREEN INFO *******/ 
 

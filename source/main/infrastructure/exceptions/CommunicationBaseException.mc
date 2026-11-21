@@ -36,7 +36,8 @@ class CommunicationBaseException extends Exception {
     * This applies only to sitemap-related exceptions:
     * - Errors that require a full-screen error are shown immediately.
     * - All other polling errors first show a toast notification.
-    *   If they persist past the configured threshold, a full-screen error is displayed.
+    *   After a configured number of consecutive failures, a full-screen
+    *   error is displayed.
     *
     * This only describes how the error is presented: sitemap polling continues
     * in both cases, so the app can recover without a restart. Terminal states,

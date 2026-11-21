@@ -869,7 +869,7 @@ The app distinguishes between **temporary**, **critical**, and **fatal** errors:
 - All communication-related issues when sending a command.
 - Issues that occur while processing user input.
 
-> Note: Temporary errors during sitemap polling become critical if they persist for more than 10 seconds.
+> Note: Temporary errors during sitemap polling become critical after three consecutive failures. If no sitemap has been received yet, the first failure is shown immediately as a critical error.
 
 #### Critical errors (full-screen error, recoverable)
 
@@ -897,7 +897,7 @@ When this option is enabled in the [Settings](#configuration), toast notificatio
 - `INVRES` – Invalid response (error code `-400`)
 - `EMRES` – Empty response
 
-However, if these errors persist for more than 10 seconds, they will be treated as critical, and a full-screen error view will be shown.
+Suppressed errors still count as consecutive sitemap failures. After three consecutive failures, they are treated as critical, and a full-screen error view is shown.
 
 ### Communication Error Codes (Prefix: `S:`/`C:`)
 

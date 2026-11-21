@@ -7,8 +7,10 @@ import Toybox.Math;
  *
  * Its behavior includes:
  * - Showing a toast notification for sitemap communication errors that do not
- *   require a full-screen error.
- * - Displaying a full-screen error view for those sitemap errors if the state is stale.
+ *   require a full-screen error and that occur before the failure tolerance is
+ *   exceeded.
+ * - Displaying a full-screen error view for those sitemap errors once the
+ *   tolerance is exceeded, and immediately when no sitemap is cached.
  * - Showing a toast notification for command communication errors, as these typically affect only 
  *   individual items and do not compromise the entire sitemap view.
  * - Displaying a full-screen error view immediately for all other errors.
@@ -47,8 +49,8 @@ public class ExceptionHandler {
     *
     * NOTE: The "force view" flag is not necessarily the same as
     * `exception.requiresFullScreenError()`. An exception might not require a
-    * full-screen error in itself, but may still be treated as such if it has
-    * persisted beyond a configured threshold.
+    * full-screen error in itself, but may still be treated as such if too many
+    * consecutive sitemap requests failed, or if no sitemap is cached.
     */
     typedef DeferredException as [Exception, Boolean];
     private static var _deferredException as DeferredException?;
@@ -62,21 +64,63 @@ public class ExceptionHandler {
         // Logger.debug( "ExceptionHandler.handleBackgroundException" );
         Logger.debugException( ex );
 
-        var isSitemapFresh = SitemapStore.isSitemapFresh();
-        
+        /*
+        * Sitemap communication errors are escalated by counting consecutive
+        * failures instead of using the age of the last successful response.
+        * The age depends on the polling interval: with a long interval the
+        * first failure would already be a full-screen error, while with a
+        * short interval many toasts would be shown before escalating.
+        *
+        * - The counter is reset whenever a sitemap response is applied
+        *   successfully or confirmed to be unchanged.
+        * - Errors that are fatal in themselves bypass the counter.
+        * - Command errors never affect the counter.
+        */
+        var isSitemapError = false;
+        var requiresFullScreenError = false;
+        if( ex instanceof CommunicationBaseException ) {
+            isSitemapError = ex.isFrom( CommunicationBaseException.EX_SOURCE_SITEMAP );
+            requiresFullScreenError = ex.requiresFullScreenError();
+        }
+        var hasCachedSitemap = SitemapStore.hasSitemap();
+
+        var failureCount = 0;
+        if( isSitemapError && ! requiresFullScreenError ) {
+            failureCount = SitemapStore.noteSitemapFailure();
+        }
+
+        /*
+        * Without a cached sitemap there is nothing to display instead, so the
+        * first failure is escalated immediately.
+        */
+        var isEscalated = 
+            isSitemapError
+            && ( requiresFullScreenError
+                 || ! hasCachedSitemap
+                 || failureCount >= BaseConfig.SITEMAP_FAILURE_ESCALATION_COUNT );
+
+        if( isSitemapError && ! requiresFullScreenError ) {
+            Logger.debug( 
+                "ExceptionHandler: consecutive sitemap failures=" + failureCount
+                + ", has sitemap=" + ( hasCachedSitemap ? "yes" : "no" )
+                + ", escalated=" + ( isEscalated ? "yes" : "no" )
+            );
+        }
+
         // Supress emtpy responses
         // If 
         // - the setting to suppress empty response errors is enabled
         // - and this exception is classified as such
-        // - and the state is still within the expiry time, 
-        // we do nothing further
+        // - and the error did not escalate to a full-screen error,
+        // we do nothing further. The failure still counts towards the
+        // escalation, so a persistent problem is shown eventually.
         // Reading the configuration may lead to an error, in which case we
         // process this exception with the remainder of this function
         try {
             if( ex instanceof CommunicationBaseException
                 && ex.suppressAsEmptyResponse()
                 && AppSettings.suppressEmptyResponseExceptions()
-                && isSitemapFresh 
+                && ! isEscalated
             ) {
                     // Logger.debug( "ExceptionHandler: Suppressing empty response" );
                     return;
@@ -89,15 +133,14 @@ public class ExceptionHandler {
         * A toast notification will be shown under the following conditions:
         * - Only if the current view has indicated to the `WarningToastHandler` that toasts are allowed.
         * - For all non-sitemap (i.e., command) communication errors.
-        * - For sitemap errors that do not require a full-screen error and
-        *   the state is still fresh (within the state expiry time).
+        * - For sitemap errors that did not escalate to a full-screen error.
         *
         * In all other cases, a full-screen error view is displayed instead.
         */
         if( WarningToastHandler.useToasts()
             && ex instanceof CommunicationBaseException 
             &&  ( ! ex.isFrom( CommunicationBaseException.EX_SOURCE_SITEMAP )
-                  || ( isSitemapFresh && !ex.requiresFullScreenError() ) )
+                  || ! isEscalated )
         ) {
             // Logger.debug( "ExceptionHandler: error shown as toast: " + ex.getToastMessage().toUpper() );
             

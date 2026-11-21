@@ -12,8 +12,13 @@ import Toybox.System;
  * The JSON data is stored as a tuple with a timestamp indicating its age.
  * Based on this timestamp and a configurable expiry time, a flag indicating
  * whether the state is fresh is passed to the SitemapHomepage and propagated
- * to all sitemap-related classes. Error handling also uses this freshness flag,
- * determined by this class's isSitemapFresh() function.
+ * to all sitemap-related classes.
+ *
+ * Error escalation does not use the age of the data. This class counts the
+ * consecutive sitemap request failures (see noteSitemapFailure()), and
+ * `ExceptionHandler` escalates to a full-screen error after
+ * `BaseConfig.SITEMAP_FAILURE_ESCALATION_COUNT` failures. Without a cached sitemap
+ * (see hasSitemap()), the first failure is shown immediately.
  *
  * On older devices, the glance view may lack sufficient memory to read the 
  * full JSON from storage or handle web requests. To address this, the sitemap 
@@ -42,6 +47,11 @@ class SitemapStore  {
     // from the JSON in Storage. A JSON that was read from Storage must not be
     // written back, as its size is unknown and the write could fail.
     private static var _isJsonModified as Boolean = false;
+
+    // Number of consecutive sitemap request failures since the last response
+    // that was applied or confirmed to be unchanged. Reset by
+    // resetFailureCount() on every successful response.
+    private static var _consecutiveFailureCount as Number = 0;
 
     /*
      * Update gating
@@ -83,6 +93,7 @@ class SitemapStore  {
         _isJsonModified = false;
         _divergenceSince = null;
         _divergenceHoldMillis = null;
+        _consecutiveFailureCount = 0;
     }
 
     // Accessor functions for the label
@@ -169,6 +180,27 @@ class SitemapStore  {
         } else {
             return false;
         }
+    }
+
+    // Returns true if a sitemap is currently held in memory. Without a cached
+    // sitemap, the first failed sitemap request is shown immediately as a
+    // full-screen error, because there is nothing to display instead.
+    public static function hasSitemap() as Boolean {
+        return _json != null;
+    }
+
+    // Records a sitemap request failure and returns the number of consecutive
+    // failures. Called for sitemap errors that are not fatal in themselves,
+    // including suppressed empty-response errors.
+    public static function noteSitemapFailure() as Number {
+        _consecutiveFailureCount++;
+        return _consecutiveFailureCount;
+    }
+
+    // Called whenever a sitemap response was applied or confirmed to be
+    // unchanged, because that ends a series of failures.
+    private static function resetFailureCount() as Void {
+        _consecutiveFailureCount = 0;
     }
 
     // Persist the current data to storage
@@ -278,6 +310,7 @@ class SitemapStore  {
     // see isSitemapFresh().
     (:typecheck(disableGlanceCheck))
     public static function refreshStored( incomingJson as SitemapJsonIncoming ) as Void {
+        resetFailureCount();
         if( _json != null ) {
             ( _json as StoredJson )[1] = incomingJson.timestamp;
             _estimatedSitemapSize = incomingJson.estimatedSize;
@@ -300,6 +333,7 @@ class SitemapStore  {
             isSyncInProgress ? false : true  // in sync mode, we use synchronous processing, otherwise asynchronous processing
         );
         _title = homepage.title;
+        resetFailureCount();
         markModelApplied();
         return homepage;
     }
