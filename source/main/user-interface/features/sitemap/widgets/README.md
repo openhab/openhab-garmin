@@ -84,13 +84,13 @@ Contains multiple widgets covering both Switch and Selection sitemap elements. T
   Provides a shared base class with reusable functionality used by all switch-related widgets.
 
 - `switch/generic/`  
-  Used for items whose available commands are not covered by the toggle rules. This includes non-`Switch` items with commands that do not represent an undescribed ON/OFF toggle (including `ON`/`OFF` commands with descriptions), and `Switch` items with described ON/OFF commands (so the descriptions can be shown).  
+  Used for items whose available commands are not covered by the toggle rules. This includes `Switch` items with described ON/OFF commands (so the descriptions can be shown), `Dimmer` items with described ON/OFF commands or other commands, and all other item types with available commands (including undescribed ON/OFF commands).  
   - If only one command is available, it is sent directly when the menu item is selected.  
   - If two commands are available and the current state matches one of them, the other command is sent.  
   - In all other cases, a command selection menu is displayed.
 
 - `switch/onoff/`  
-  For `Switch` items without commands, with non-ON/OFF commands, or with undescribed ON/OFF commands; for `Dimmer` items without commands; and for non-`Switch` items whose available commands are exactly ON and OFF without descriptions. Displays an interactive toggle switch directly within the menu item.
+  For `Switch` items without commands, with non-ON/OFF commands, or with undescribed ON/OFF commands; and for `Dimmer` items without commands or with undescribed ON/OFF commands. Displays an interactive toggle switch directly within the menu item. `Switch` and `Dimmer` are the only item types eligible for the toggle, since only their state can be interpreted as binary without losing information.
 
 - `switch/player/`  
   For Player items. Displays the PLAY or PAUSE state in the menu item and opens a full-screen control view with PLAY, PAUSE, NEXT, and PREVIOUS controls when selected.

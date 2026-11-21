@@ -6,6 +6,10 @@ import Toybox.Graphics;
  * A menu item that displays an on/off switch as its state.
  * Selecting the item toggles the switch state, or displays
  * a command selection menu if the current state is unknown.
+ *
+ * This menu item is only used for Switch and Dimmer items. Those are the
+ * only item types whose state can be interpreted as binary without losing
+ * information. See MenuItemFactory.getSwitchMenuItemType().
  */
 class OnOffSwitchMenuItem extends SwitchMenuItem {
 
@@ -105,10 +109,12 @@ class OnOffSwitchMenuItem extends SwitchMenuItem {
     }
 
     // Converts the string state to a nullable Boolean for _isEnabled
-    // The widget supports string states:
+    // The widget supports the string states of Switch items:
     // "ON" => true; "OFF" => false
-    // And numeric states:
+    // And the numeric states of Dimmer items:
     // 0 => false; 1-100 => true
+    // The numeric handling is only valid because this menu item is restricted
+    // to Switch and Dimmer items, see MenuItemFactory.getSwitchMenuItemType().
     // If the state is NO_STATE, then null will be returned.
     private function parseItemState( itemState as String ) as Boolean? {
         if( itemState.equals( Item.NO_STATE ) ) {

@@ -52,9 +52,12 @@ class MenuItemFactory {
      * precedence. Switch items are normalized in the data layer to either no
      * mappings or exactly ON/OFF mappings. They use the generic switch only
      * when those mappings have descriptions; otherwise they use the toggle.
-     * For other items, ON/OFF commands are only treated as a toggle if they
-     * have no descriptions; otherwise the generic switch is used so the
-     * descriptions can be displayed.
+     *
+     * The toggle is limited to Switch and Dimmer items, because only their
+     * state models can be interpreted as binary without losing information.
+     * All other item types with available commands use the generic switch,
+     * including when their commands are an undescribed ON/OFF pair. Items
+     * without commands are not supported.
      */
     private static function getSwitchMenuItemType( 
         sitemapSwitch as SitemapSwitch 
@@ -72,9 +75,12 @@ class MenuItemFactory {
             return sitemapSwitch.hasDescribedToggleSwitchMappings()
                 ? GENERIC_SWITCH
                 : ON_OFF_SWITCH;
-        } else if( itemType.equals( "Dimmer" ) && ! sitemapSwitch.hasMappings() ) {
-            return ON_OFF_SWITCH;
-        } else if( sitemapSwitch.hasToggleSwitchMappingsWithoutDescriptions() ) {
+        } else if( itemType.equals( "Dimmer" )
+            && ( ! sitemapSwitch.hasMappings()
+                 || sitemapSwitch.hasToggleSwitchMappingsWithoutDescriptions() ) ) {
+            // A Dimmer uses the toggle when it has no commands or an undescribed
+            // ON/OFF pair, because its numeric state maps to the binary model
+            // (0 = off, 1-100 = on).
             return ON_OFF_SWITCH;
         } else if( sitemapSwitch.hasMappings() ) {
             return GENERIC_SWITCH;
