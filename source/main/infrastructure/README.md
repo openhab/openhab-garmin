@@ -15,7 +15,8 @@ Contains the `OHApp` class, the main entry point for the app. It handles:
 - Initialization of the initial view in both _Glance_ and _Widget_ modes
 - Startup and shutdown logic
 - Reactions to app updates and settings changes
-- The active/inactive lifecycle on devices that keep the app running when it is
+- The app state — widget active, widget inactive, or glance — including the
+  active/inactive lifecycle on devices that keep the app running when it is
   hidden (e.g. when the watch face is shown), see `AppLifecycle`
 
 Settings are read only once, when the app starts. Connect IQ provides no way to

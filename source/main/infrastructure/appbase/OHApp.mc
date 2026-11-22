@@ -8,22 +8,16 @@ import Toybox.Timer;
  * the initial view for both glance and widget modes, as well
  * as handling logic that runs during app startup and shutdown.
  *
- * It also implements the active/inactive lifecycle that devices with
- * API level 4.2.3 and later use when the app is hidden by the system
- * instead of being terminated (e.g. when the watch face is shown).
+ * It reports the active/inactive lifecycle that devices with API level 4.2.3
+ * and later use when the app is hidden by the system instead of being
+ * terminated (e.g. when the watch face is shown), as well as whether the
+ * process runs as a glance. Both are tracked by `AppLifecycle`.
  *
  * This file also includes logic executed when the app is updated
  * or when settings are changed.
  */
 (:glance)
 class OHApp extends Application.AppBase {
-
-    // In some places we have different logic depending on
-    // whether we are in the glance or widget
-    private static var _glanceView as GlanceSitemapView?;
-    public static function isGlance() as Boolean {
-        return _glanceView != null;
-    }
 
     // Constructor
     public function initialize() {
@@ -48,8 +42,10 @@ class OHApp extends Application.AppBase {
     public function onActive(state as Dictionary?) as Void {
         // Logger.debug( "OHApp.onActive" );
 
-        // The glance process is not affected by the foreground lifecycle
-        if( isGlance() ) {
+        // Defensive: a glance is a separate process with its own lifecycle
+        // (onStart/getGlanceView/onStop) and never receives active/inactive
+        // callbacks.
+        if( AppLifecycle.isGlance() ) {
             return;
         }
 
@@ -94,8 +90,10 @@ class OHApp extends Application.AppBase {
     public function onInactive(state as Dictionary?) as Void {
         // Logger.debug( "OHApp.onInactive" );
 
-        // The glance process is not affected by the foreground lifecycle
-        if( isGlance() ) {
+        // Defensive: a glance is a separate process with its own lifecycle
+        // (onStart/getGlanceView/onStop) and never receives active/inactive
+        // callbacks.
+        if( AppLifecycle.isGlance() ) {
             return;
         }
 
@@ -116,7 +114,7 @@ class OHApp extends Application.AppBase {
     (:typecheck(disableGlanceCheck))
     public function onStop(state as Dictionary?) as Void {
         // Logger.debug( "OHApp.onStop" );
-        if( ! isGlance() ) {
+        if( ! AppLifecycle.isGlance() ) {
             try {
                 // Latch the request loop off before cancelling, so that a
                 // command response cannot restart it during teardown.
@@ -188,8 +186,8 @@ class OHApp extends Application.AppBase {
     // Initializes the glance view
     function getGlanceView() as [ GlanceView ] or [ GlanceView, GlanceViewDelegate ] or Null {
         // Logger.debug( "OHApp.getGlanceView" );
-        _glanceView = new GlanceSitemapView();
-        return [ _glanceView ];
+        AppLifecycle.setGlance();
+        return [ new GlanceSitemapView() ];
     }
 
     /*
@@ -258,7 +256,7 @@ class OHApp extends Application.AppBase {
         }
 
         // The glance process has no views and does not poll.
-        if( isGlance() ) {
+        if( AppLifecycle.isGlance() ) {
             return;
         }
 
@@ -298,7 +296,7 @@ class OHApp extends Application.AppBase {
         // The ThemeManager exists only in the foreground scope.
         // In the glance scope, theme handling is very simple and
         // implemented directly in the onUpdate() of the glance view.
-        if( ! isGlance() ) {
+        if( ! AppLifecycle.isGlance() ) {
             NightModeTracker.get().update();
             ThemeManager.update();
         }
