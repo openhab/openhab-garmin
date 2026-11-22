@@ -1,4 +1,4 @@
-# Copilot Instructions
+# Agent Instructions
 
 ## Do not create unit tests
 
@@ -27,9 +27,10 @@ If the work relates to a GitHub issue, reference the issue number in the commit 
 ## GitHub access (issues, pull requests, releases)
 
 Never assume that GitHub is unavailable just because a tool is missing. In this
-environment the GitHub MCP tools are read-only, `gh` is often not installed, and
-`GH_TOKEN`/`GITHUB_TOKEN` are usually unset, yet Git Credential Manager normally
-holds a valid credential for `github.com`. Resolve access in this order:
+environment the available GitHub MCP tools are read-only, `gh` is often not
+installed, and `GH_TOKEN`/`GITHUB_TOKEN` are usually unset, yet Git Credential
+Manager normally holds a valid credential for `github.com`. Resolve access in
+this order:
 
 1. Use the GitHub MCP tools when they expose the operation you need.
 2. Use the `gh` CLI if it is installed and authenticated (`gh auth status`).
@@ -66,7 +67,7 @@ affected resource back.
   $headers = @{
       Authorization = "Bearer $token"
       Accept        = "application/vnd.github+json"
-      "User-Agent"  = "openhab-garmin-copilot"
+      "User-Agent"  = "openhab-garmin-agent"
   }
   ```
 
