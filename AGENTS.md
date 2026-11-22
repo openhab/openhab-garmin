@@ -33,8 +33,8 @@ Manager normally holds a valid credential for `github.com`. Resolve access in
 this order:
 
 1. Use the GitHub MCP tools when they expose the operation you need.
-2. Use the `gh` CLI if it is installed and authenticated (`gh auth status`).
-3. Otherwise use the GitHub REST API with the credential Git already uses for
+1. Use the `gh` CLI if it is installed and authenticated (`gh auth status`).
+1. Otherwise use the GitHub REST API with the credential Git already uses for
    `origin`, as described below.
 
 Report which route you used, and verify every remote write by reading the

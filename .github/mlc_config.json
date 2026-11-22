@@ -5,7 +5,10 @@
   "fallbackRetryDelay": "10s",
   "aliveStatusCodes": [200, 206],
   "ignorePatterns": [
-    { "pattern": "^https?://yourhost" }
+    { "pattern": "^https?://yourhost" },
+    {
+      "pattern": "^https?://(www\\.)?adrien-coquet\\.com(/.*)?$"
+    }
   ],
   "httpHeaders": [
     {

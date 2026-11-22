@@ -70,11 +70,18 @@ jobs:
           } | tee -a "$GITHUB_STEP_SUMMARY"
 
           # Annotations are visible without repository access, so emit one per
-          # failing link instead of hiding the URL in the step log.
+          # failing link instead of hiding the URL in the step log. The verbose
+          # checker prints each dead link twice (status line and error detail),
+          # so only the first line per link is kept.
           if [[ -n "${MLC_OUTPUT:-}" ]]; then
-            while IFS= read -r line; do
-              echo "::error::${line}"
-            done < <(printf '%s\n' "${MLC_OUTPUT}" | grep -E '\[✖\]')
+            printf '%s\n' "${MLC_OUTPUT}" | grep -E '\[✖\]' |
+              awk 'match($0, /\[✖\] [^ ]+/) {
+                     key = substr($0, RSTART, RLENGTH)
+                     if (!(key in seen)) { seen[key] = 1; print }
+                   }' |
+              while IFS= read -r line; do
+                echo "::error::${line}"
+              done
           fi
 
           echo "::error title=Broken links::Markdown link check failed, see the job summary."
