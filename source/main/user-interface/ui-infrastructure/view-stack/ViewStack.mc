@@ -118,6 +118,9 @@ import Toybox.WatchUi;
     // This function must be called in OHApp.getInitialView() to store the initial view.
     // The initial view only needs to be stored, since the API automatically
     // pushes it onto the stack when it is returned from getInitialView().
+    //
+    // The initial view is always registered in the MAIN scope. Because it is
+    // the base entry, this establishes the invariant that resetTo() relies on.
     public static function registerInitialView( view as Views, delegate as InputDelegates? ) as Void {
         // Safeguard against registerInitialView being called multiple times
         if( _viewStack.size() > 0 ) {
@@ -129,7 +132,13 @@ import Toybox.WatchUi;
 
     // Removes all views from the stack except the base view
     // and replaces the base view with the specified view.
-    // The resulting view is always in the MAIN scope.
+    //
+    // The resulting view is always in the MAIN scope. This is not set
+    // explicitly here: it relies on the base entry being MAIN, as established
+    // by registerInitialView(), and on switchToView() below inheriting the
+    // scope of the entry it replaces. The base entry must therefore always
+    // remain in MAIN, otherwise resetTo() would carry another scope over to
+    // the view it installs.
     public static function resetTo( view as Views, delegate as InputDelegates? ) as Void {
         // Logger.debug( "ViewStack.resetTo: previous stack size=" + _viewStack.size() );
         while( _viewStack.size() > 1 ) {
@@ -141,6 +150,8 @@ import Toybox.WatchUi;
 
     // Switches the view on the top of the view stack, replaces ViewStack.switchToView()
     // The new view inherits the scope of the view it replaces.
+    // This includes the base view, which is how resetTo() keeps the resulting
+    // view in the MAIN scope.
     public static function switchToView( view as Views, delegate as InputDelegates?, transition as SlideType ) as Void {
         // Logger.debug( "ViewStack.switchToView: stack size=" + _viewStack.size() );
         var scope = getCurrentScope();
