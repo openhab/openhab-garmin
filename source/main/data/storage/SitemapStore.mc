@@ -275,7 +275,9 @@ class SitemapStore  {
 
     // Keeps the stored JSON but refreshes its timestamp and size estimate,
     // e.g. when an identical response is received. The data must not age out,
-    // see isSitemapFresh().
+    // see isSitemapFresh(). Keeping the stored JSON is safe even if a Storage
+    // round-trip changed numeric types, because JsonComparer compares numeric
+    // values by value (see #216).
     (:typecheck(disableGlanceCheck))
     public static function refreshStored( incomingJson as SitemapJsonIncoming ) as Void {
         if( _json != null ) {

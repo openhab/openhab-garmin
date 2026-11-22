@@ -11,6 +11,16 @@ import Toybox.Lang;
  *
  * `Object.equals()` compares dictionaries and arrays by reference, so a
  * recursive comparison is required.
+ *
+ * Numeric values are compared by value, not by type: Monkey C's `==` operator
+ * promotes Number, Float, Long and Double, so 5 == 5.0 is true. This matters
+ * because the JSON parser maps the same literal to Number or Float depending
+ * on the device/runtime, and a Storage round-trip may change the type as well
+ * (see issues #216 and #355). `Object.equals()` is type-strict for numbers
+ * (1.equals( 1.0 ) is false), so mixed numeric types rely on `==`; the
+ * `equals()` fallback only adds the remaining scalar cases, such as equal
+ * String contents. Numeric values are deliberately not normalised, as that
+ * would traverse the whole payload on every poll.
  */
 class JsonComparer {
 

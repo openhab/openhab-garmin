@@ -35,6 +35,8 @@ The Connect IQ API delivers JSON data as a dictionary.
 
 `JsonComparer` provides a recursive structural comparison of two JSON values. `SitemapComparison` builds on it to compare a received sitemap with the stored one. The comparison is split over several asynchronous tasks (the root first, then one task per top level element), so that no single task blocks the UI for the whole sitemap. It is used to detect that a received sitemap is identical to the stored one, so that the data layer and the menu do not need to be rebuilt. In addition, it records the indices of the top-level elements that differ. Only those elements are rebuilt and only their menu items are updated when a partial update is safe. Structural changes (root or homepage metadata, element count, `widgetId` reorder or replacement, item type changes, page additions or removals) still use the full rebuild.
 
+Numeric values are compared by value across `Number`, `Float`, `Long` and `Double`: Monkey C's `==` operator promotes numeric types, so `5` and `5.0` compare equal even though `Object.equals()` is type-strict. This matters because the Connect IQ JSON parser may return a different numeric type for the same payload depending on the device or runtime, and a Storage round-trip may change it as well (see #216). Numeric values are deliberately not normalised, since that would traverse the whole payload on every poll.
+
 This layer isolates JSON handling details from the higher-level sitemap model.
 
 ### Subfolder `pages/`
