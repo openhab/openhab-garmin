@@ -15,15 +15,18 @@ import Toybox.Lang;
  *    It creates a `SitemapHomepage` and schedules the next task in the sequence.
  *
  *    If the menu already displays the stored JSON (i.e. nothing has diverged,
- *    see SitemapStore.noteModelDivergence()), the response is compared with the
- *    stored one first. The comparison is split over several tasks:
+ *    see SitemapStore.noteModelDivergence()), or while a post-command hold is
+ *    active, the response is compared with the stored one first. The comparison
+ *    is split over several tasks:
  *      1.0) CompareSitemapTask:
  *           Compares the root of both sitemaps and schedules one
  *           CompareSitemapElementTask per top level element, followed by
  *           FinishSitemapComparisonTask.
  *
  *    If the response is unchanged, it is dropped and the next request is
- *    triggered. Otherwise the menu is created or updated as described below.
+ *    triggered. This is also safe while a post-command hold is active, because
+ *    the held item ignores updates by design and all other items already show
+ *    the stored values. A response that differs is always applied.
  *
  *    If only top level elements changed and the displayed model is complete
  *    and in sync, only those elements and their menu items are rebuilt
@@ -95,10 +98,12 @@ class ProcessIncomingJsonTask extends BaseSitemapProcessorTask {
         // An unchanged sitemap does not change anything on screen. Rebuilding
         // the data layer and the menu is the most expensive part of the
         // polling cycle, so skip it as long as the displayed model is in sync
-        // with the stored JSON. See SitemapStore.noteModelDivergence().
+        // with the stored JSON, or while a post-command hold is active and an
+        // identical response may be dropped.
+        // See SitemapStore.noteModelDivergence() and isPostCommandHoldActive().
         if( ! isSyncInProgress
             && HomepageMenu.exists()
-            && SitemapStore.isModelInSync()
+            && ( SitemapStore.isModelInSync() || SitemapStore.isPostCommandHoldActive() )
         ) {
             AsyncTaskQueue.get().add( new CompareSitemapTask( _json ) );
             return;
@@ -178,8 +183,9 @@ class FinishSitemapComparisonTask extends BaseSitemapProcessorTask {
 
     public function invoke() as Void {
         // The model can diverge while the comparison is running, e.g. if a
-        // command is sent in the meantime. In that case the response must be
-        // applied even if it is unchanged. See SitemapStore.noteModelDivergence().
+        // command is sent in the meantime. A partial update is then no longer
+        // safe, and the full path below decides whether to apply or drop the
+        // response. See SitemapStore.noteModelDivergence().
         if( _comparison.isDifferent
             && canApplyPartially()
             && SitemapApplier.applyPartial( 
@@ -191,7 +197,17 @@ class FinishSitemapComparisonTask extends BaseSitemapProcessorTask {
             return;
         }
 
-        if( _comparison.isDifferent || ! SitemapStore.isModelInSync() ) {
+        // Apply the response if anything changed, or if an unchanged response
+        // is needed to reconcile the model. During an active post-command hold
+        // an unchanged response is dropped: the held item ignores updates by
+        // design and all other items already show the stored values. Once the
+        // hold has elapsed, an unchanged response must be applied so that the
+        // locally applied state is reconciled with the server.
+        // See SitemapStore.noteModelDivergence() and isPostCommandHoldActive().
+        if( _comparison.isDifferent
+            || ( ! SitemapStore.isModelInSync()
+                 && ! SitemapStore.isPostCommandHoldActive() )
+        ) {
             SitemapApplier.apply( _json );
             return;
         }

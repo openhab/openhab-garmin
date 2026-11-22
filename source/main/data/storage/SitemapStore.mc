@@ -51,8 +51,11 @@ class SitemapStore  {
      * - the states have been hidden because the phone connection was lost,
      * - the model was restored from stale data at startup.
      * While such a divergence exists, an incoming JSON that is identical to
-     * the stored one must still be applied to bring the model back in sync.
-     * See ProcessIncomingJsonTask.
+     * the stored one must normally still be applied to bring the model back in
+     * sync. The exception is an unexpired post-command hold: the affected item
+     * ignores incoming updates by design, so an identical response changes
+     * nothing on screen and may be dropped. See isPostCommandHoldActive() and
+     * ProcessIncomingJsonTask.
      *
      * The divergence is tracked with the millisecond timer so that the
      * post-command hold time can be honored with millisecond precision.
@@ -248,6 +251,8 @@ class SitemapStore  {
     // Same as noteModelDivergence(), but the divergence cannot be reconciled
     // before `holdMillis` (in ms) has elapsed. Used after a command, because the
     // affected item ignores updates during the configured post-command hold time.
+    // While the hold is active, identical responses are dropped instead of being
+    // applied; see isPostCommandHoldActive().
     public static function noteModelDivergenceFor( holdMillis as Number ) as Void {
         _divergenceSince = System.getTimer();
         _divergenceHoldMillis = holdMillis;
@@ -256,6 +261,26 @@ class SitemapStore  {
     // True if the model can be assumed to match the stored JSON.
     public static function isModelInSync() as Boolean {
         return _divergenceSince == null;
+    }
+
+    // True while a divergence recorded by noteModelDivergenceFor() is still
+    // within its hold time. During a post-command hold the affected item
+    // ignores incoming updates by design, so an identical response changes
+    // nothing on screen and can be dropped. Any other divergence cause, and
+    // an elapsed hold, require an identical response to be applied so that
+    // the model is reconciled with the stored JSON.
+    public static function isPostCommandHoldActive() as Boolean {
+        if( _divergenceSince == null || _divergenceHoldMillis == null ) {
+            return false;
+        }
+        var holdMillis = _divergenceHoldMillis as Number;
+        if( holdMillis <= 0 ) {
+            return false;
+        }
+        var elapsed = System.getTimer() - ( _divergenceSince as Number );
+        // A negative elapsed time can only occur if the millisecond timer wrapped
+        // around (about every 50 days). The hold has then certainly elapsed.
+        return elapsed >= 0 && elapsed < holdMillis;
     }
 
     // Called whenever an incoming JSON has been applied.

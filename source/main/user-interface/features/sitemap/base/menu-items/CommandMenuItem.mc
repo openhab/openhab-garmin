@@ -80,9 +80,12 @@ class CommandMenuItem extends WidgetMenuItem {
             // Update state displayed by the menu item
             onStateChangedLocally();
 
-            // The item now shows a locally applied state. Until the configured
-            // post-command hold time has elapsed, an unchanged response cannot
-            // reconcile it, so upcoming responses must not be skipped.
+            // The item now shows a locally applied state. During the configured
+            // post-command hold time an unchanged response changes nothing on
+            // screen, so it is dropped rather than applied; the comparison still
+            // detects changes to other items. After the hold has elapsed, an
+            // unchanged response is applied to reconcile this item with the
+            // server state.
             SitemapStore.noteModelDivergenceFor( AppSettings.getPostCommandHoldTimeMillis() );
  
             WatchUi.requestUpdate();
