@@ -19,6 +19,15 @@ class ThemeManager extends BaseNightModeThemeManager {
         BaseNightModeThemeManager.initialize();
     }
 
+    // Returns the theme to use for focused menu items.
+    // Technically, compilation works without overriding this, by just inheriting
+    // getFocusedTheme(). However that is a glitch in the compiler and causes
+    // issues at runtime, because the inherited function cannot resolve
+    // BaseNightModeThemeManager.current. See also update() below.
+    public static function getFocusedTheme() as Theme {
+        return BaseNightModeThemeManager.getFocusedTheme();
+    }
+
     // Public function to update the current theme
     // Technically, compilation works without overriding
     // this, by just inheriting update(). However that

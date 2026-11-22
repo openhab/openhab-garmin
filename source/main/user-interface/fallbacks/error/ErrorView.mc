@@ -111,19 +111,7 @@ import Toybox.System;
         dc.setColor( ThemeManager.current.errorColor, ThemeManager.current.backgroundColor );
         dc.clear();
 
-        dc.setColor( ThemeManager.current.errorColor, ThemeManager.current.backgroundColor );
-        dc.clear();
-        dc.drawText(
-            10, 60, Graphics.FONT_SMALL,
-            "TEST", Graphics.TEXT_JUSTIFY_LEFT
-        );
-        dc.drawText(
-            dc.getWidth() / 2, dc.getHeight() / 2,
-            Graphics.FONT_SMALL, "Configuration: URL is missing",
-            Graphics.TEXT_JUSTIFY_CENTER | Graphics.TEXT_JUSTIFY_VCENTER
-        );
-
-        //drawTextArea( dc );
+        drawTextArea( dc );
     }
 
     // Draw the error message in a TextArea

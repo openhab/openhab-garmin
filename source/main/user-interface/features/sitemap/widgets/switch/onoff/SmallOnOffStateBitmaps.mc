@@ -10,7 +10,7 @@ import Toybox.Graphics;
  * while this class offers a smaller version intended for use 
  * alongside a submenu indicator.
  *
- * See OnOffStateBitmaps for details about lazy creation and sharing.
+ * See OnOffStateBitmaps for details about creation and sharing.
  */
 class SmallOnOffStateBitmaps extends OnOffStateBitmaps {
     

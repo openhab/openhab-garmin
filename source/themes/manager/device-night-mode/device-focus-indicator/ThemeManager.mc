@@ -79,11 +79,14 @@ class ThemeManager extends BaseNightModeThemeManager {
     }
 
     // Public function to update the current theme
-    // Updates the base class and drops the cached focus theme, which is
-    // recreated on the next use because it depends on the night mode.
+    // Updates the base class and recreates the cached focus theme, which
+    // depends on the night mode. The focus theme is created here, outside
+    // of a draw, because creating it allocates toggle switch bitmaps.
+    // See OnOffStateBitmaps for why those must not be allocated during a draw.
     public static function update() as Void {
         BaseNightModeThemeManager.update();
         _focused = null;
+        getFocusedTheme();
     }
 
     // Constructor

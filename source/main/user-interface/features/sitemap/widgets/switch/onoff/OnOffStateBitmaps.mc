@@ -9,8 +9,15 @@ import Toybox.Graphics;
  * Each BufferedBitmap is used to obtain a corresponding Dc (Drawing Context),
  * allowing the switch to be rendered using primitive shapes such as circles and rectangles.
  *
- * The bitmaps are allocated lazily, on first access, and are then reused for the
- * lifetime of the app. Themes with identical colors share one instance, see getShared().
+ * The bitmaps are created when the instance is created, which happens while the
+ * themes are constructed at startup, and are then reused for the lifetime of the app.
+ * Themes with identical colors share one instance, see getShared(), so each color
+ * combination allocates its bitmaps only once.
+ *
+ * Note: The bitmaps must not be created on first use. Delaying the allocation until
+ * a toggle is first drawn has been observed to break text rendering on Edge x50
+ * devices, so the constructor creates them.
+ *
  * If no bitmap can be allocated, the getters return null and the caller renders the
  * switch directly instead, see drawDirectly().
  */
@@ -38,7 +45,7 @@ class OnOffStateBitmaps {
     private var _switchColor as ColorType;
 
     // The BufferedBitmaps for ON, OFF and no available state.
-    // Created lazily on first access, null if they could not be allocated.
+    // Created in the constructor, null if they could not be allocated.
     private var _on as BufferedBitmapType?;
     private var _off as BufferedBitmapType?;
     private var _noState as BufferedBitmapType?;
@@ -73,6 +80,11 @@ class OnOffStateBitmaps {
     }
 
     // Constructor
+    //
+    // The bitmaps are created immediately, while the themes are constructed.
+    // They must not be created on first use: delaying the allocation until the
+    // first toggle is drawn has been observed to break text rendering on Edge
+    // x50 devices. See the class documentation.
     public function initialize(
         onFillColor as ColorType,
         offFillColor as ColorType,
@@ -81,6 +93,8 @@ class OnOffStateBitmaps {
         _onFillColor = onFillColor;
         _offFillColor = offFillColor;
         _switchColor = switchColor;
+
+        createBitmaps();
     }
 
     // Returns true if this instance creates its bitmaps with the given colors.
@@ -100,20 +114,22 @@ class OnOffStateBitmaps {
             _switchColor == switchColor;
     }
 
-    // Returns the bitmap for the "on" state, or null if it could not be allocated
+    // Returns the bitmap for the "on" state.
+    // Returns null if it could not be allocated; creation is retried in that case.
     public function getOn() as BufferedBitmapType? {
         createBitmaps();
         return _on;
     }
 
-    // Returns the bitmap for the "off" state, or null if it could not be allocated
+    // Returns the bitmap for the "off" state.
+    // Returns null if it could not be allocated; creation is retried in that case.
     public function getOff() as BufferedBitmapType? {
         createBitmaps();
         return _off;
     }
 
-    // Returns the bitmap for the state not being available,
-    // or null if it could not be allocated
+    // Returns the bitmap for the state not being available.
+    // Returns null if it could not be allocated; creation is retried in that case.
     public function getNoState() as BufferedBitmapType? {
         createBitmaps();
         return _noState;
@@ -151,6 +167,9 @@ class OnOffStateBitmaps {
     }
 
     // Creates the bitmaps if they do not exist yet.
+    //
+    // Called from the constructor, and from the getters so that a failed
+    // allocation is retried on a later access.
     //
     // If an allocation fails, partially created bitmaps are discarded so that a
     // later call retries. The getters then return null and the caller falls back
@@ -196,6 +215,12 @@ class OnOffStateBitmaps {
         } );
 
         var dc = bufferedBitmap.getDc();
+
+        // Clear explicitly to transparent. Dc.clear() fills with the background
+        // color last set on the Dc, which is not guaranteed to be transparent
+        // when the bitmap is created while a draw is in progress. Without this,
+        // the area around the switch can end up opaque (white or black).
+        dc.setColor( Graphics.COLOR_TRANSPARENT, Graphics.COLOR_TRANSPARENT );
         dc.clear();
 
         drawSwitch( dc, 0, 0, WIDTH, HEIGHT, isEnabled, fillColor, switchColor );

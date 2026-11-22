@@ -93,6 +93,11 @@ class BaseMenu extends CustomMenu {
         );
 
         _theme = ThemeManager.current;
+
+        // Create the focus theme now, while no draw is in progress. Constructing
+        // it allocates its toggle switch bitmaps for themes with distinct colors,
+        // which must not happen during a draw. See OnOffStateBitmaps for details.
+        ThemeManager.getFocusedTheme();
     }
 
     // The base class already defines setTitle() with a Drawable argument,

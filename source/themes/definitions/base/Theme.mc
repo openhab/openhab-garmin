@@ -64,8 +64,8 @@ typedef Theme as interface {
     var iconPrevious as ResourceId;
 
     // The bitmaps for displaying a ON/OFF toggle switch.
-    // The bitmaps are created lazily on first use and are shared by
-    // all themes that use the same colors. See OnOffStateBitmaps.
+    // The bitmaps are created with the theme and are shared by all themes that
+    // use the same colors. See OnOffStateBitmaps.
     var onOffBitmaps as OnOffStateBitmaps;
     var smallOnOffBitmaps as SmallOnOffStateBitmaps; 
 };
