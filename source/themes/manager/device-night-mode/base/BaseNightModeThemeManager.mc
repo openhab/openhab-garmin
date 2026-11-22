@@ -16,9 +16,8 @@ class BaseNightModeThemeManager {
     public static var dark as Theme = new DarkTheme();
     public static var light as Theme = new LightTheme();
 
-    // Override the current and focus theme
+    // Override the current theme
     public static var current as Theme = getCurrent();
-    public static var focused as Theme = current;
 
     // Internal function to determine the current theme
     // Used when defining the member above and in onUpdate below
@@ -26,10 +25,25 @@ class BaseNightModeThemeManager {
         return NightModeTracker.get().isNightModeEnabled() ? dark : light;
     }
 
+    /*
+     * Returns the theme to use for focused menu items.
+     *
+     * This implementation does not provide a dedicated focus theme, so
+     * focused items are rendered with the current theme. Implementations
+     * for devices with a focus indicator override this function.
+     *
+     * This is deliberately a function and not a static variable: focus
+     * themes must never be constructed while the ThemeManager class is
+     * being initialized, because an exception there would also make
+     * ThemeManager.current unavailable to the fallback views.
+     */
+    public static function getFocusedTheme() as Theme {
+        return current;
+    }
+
     // Public function that updates the current theme
     public static function update() as Void {
         current = getCurrent();
-        focused = current;
     }
 
     // Constructor

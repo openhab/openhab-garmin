@@ -13,9 +13,12 @@ class ThemeManager {
 
     // The main theme
     public static var current as Theme = new DefaultTheme();
-    
-    // The theme used for focused menu items
-    public static var focused as Theme = current;
+
+    // Returns the theme to use for focused menu items.
+    // This device has no dedicated focus theme, so the current theme is used.
+    public static function getFocusedTheme() as Theme {
+        return current;
+    }
 
     // Called by the OhApp when the conditions for
     // choosing the theme shall be re-evaluated

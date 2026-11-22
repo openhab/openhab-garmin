@@ -151,7 +151,15 @@ class SitemapStore  {
             // response must be applied even if its JSON is identical.
             noteModelDivergence();
         }
-        return getSitemapFromMemory( isFresh );
+        try {
+            return getSitemapFromMemory( isFresh );
+        } catch( ex ) {
+            // The stored data can no longer be parsed (for example an empty
+            // sitemap stored by an older version). Discard it so that the
+            // next start does not fail again.
+            invalidateSitemap();
+            throw ex;
+        }
     }
 
     // Returns true if the currently held JSON's age is 
@@ -292,15 +300,18 @@ class SitemapStore  {
     public static function updateSitemapFromJson( 
         incomingJson as SitemapJsonIncoming
     ) as SitemapHomepage {
-        _json = incomingJson.getForStorage();
-        _estimatedSitemapSize = incomingJson.estimatedSize;
-        _isJsonModified = true;
         var isSyncInProgress = SafeSitemapSyncDelegate.isSyncInProgress();
+        // Construct the homepage first. A parsing error must leave the stored
+        // JSON untouched, so that an invalid or empty sitemap is never
+        // persisted and restored as an empty menu on the next start.
         var homepage = new SitemapHomepage( 
             new JsonAdapter( incomingJson.json ), 
             isSyncInProgress ? false : true, // in sync mode, we mark the sitemap as stale/not fresh because we do not want to display states
             isSyncInProgress ? false : true  // in sync mode, we use synchronous processing, otherwise asynchronous processing
         );
+        _json = incomingJson.getForStorage();
+        _estimatedSitemapSize = incomingJson.estimatedSize;
+        _isJsonModified = true;
         _title = homepage.title;
         markModelApplied();
         return homepage;

@@ -84,3 +84,28 @@ Therefore, nothing may cache a theme-dependent value beyond a single draw:
   applies the theme in `drawFooter()`, which is the draw callback of the `CustomMenu`
   base class. That is where the default footer logo and the menu background color
   are refreshed.
+
+---
+
+## Toggle Switch Bitmaps
+
+The toggle switch bitmaps defined by the themes are expensive to allocate and stay in
+memory for the lifetime of the app. `OnOffStateBitmaps` therefore creates them lazily
+on first use, and `getShared()`/`getSharedSmall()` share one instance between all
+themes that use the same colors.
+
+Because sharing is keyed on the colors that feed into the bitmaps (`onColor`,
+`stateColor`, and `backgroundColor`), and not on the theme class, derived focus themes
+reuse the bitmaps of the theme they are based on. Focus themes that only override
+colors not used by the toggle switch therefore allocate nothing extra.
+
+The focus themes themselves are created on first use by `ThemeManager.getFocusedTheme()`.
+They must never be constructed while the `ThemeManager` class is being initialized:
+an exception during class initialization cannot be caught and would also make
+`ThemeManager.current` unavailable to the views. Devices that suppress the focus
+indicator (`Config.UI_MENU_FOCUS_EDGEX50_SUPRESS_FOCUS_INDICATOR`) never create them
+at all.
+
+If a bitmap cannot be allocated, the getters return `null` and `OnOffStateDrawable`
+draws the switch directly instead. See `drawWithoutBitmap()` in
+`BufferedBitmapDrawable`.

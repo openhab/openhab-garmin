@@ -17,7 +17,8 @@ For screenshots and additional details, see the [Network Access](https://next.op
 Contains classes that represent and enhance drawable objects from the Garmin SDK. These abstractions extend the SDK’s functionality, particularly to improve positioning flexibility and maintain compatibility with older Connect IQ versions.
 
 - `BufferedBitmapDrawable`, `BufferedBitmapFactory`, and `LegacyBufferedBitmap`  
-  Provide workarounds for limitations in the Garmin SDK prior to CIQ 4.0.0, where `BufferedBitmap` did not offer sufficient support for custom positioning logic.
+  Provide workarounds for limitations in the Garmin SDK prior to CIQ 4.0.0, where `BufferedBitmap` did not offer sufficient support for custom positioning logic.  
+  `BufferedBitmapDrawable` can also be used without a bitmap, in which case subclasses may render their content directly by overriding `drawWithoutBitmap()`. This allows a drawable to keep its dimensions and display something even when no bitmap can be allocated.
 
 - `CachedText`, `CachedTextArea`, `TextCache`, and `TextBitmapPool`  
   Cache the rendered content of text drawables in `BufferedBitmap`s and blit it on subsequent draws. Rendering text is the dominant cost when drawing menu items, especially on touch devices where all visible items are redrawn on every frame of a scroll gesture. The number of cached bitmaps is limited by `Config.UI_TEXT_CACHE_SIZE` (0 disables the cache). The two drawable classes keep the interface of the SDK classes they extend, so they can be used in place of `Text` and `TextArea`.

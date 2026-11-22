@@ -51,6 +51,8 @@ For a partial update, `SitemapContainer.updateWidgets()` queues build tasks only
 
 Empty nested containers are valid. openHAB returns an empty `widgets` array for a `Frame` without children and for containers whose children are all hidden by `visibility`. `SitemapContainer.hasWidgets()` records whether the received JSON contained children (or whether a derived widget such as the Group control was added). Do not use `getWidgets().size()` for this check: widgets are created asynchronously, so an empty array may only mean that the page is still being built. The UI uses `hasWidgets()` to show a toast instead of opening an empty page.
 
+The homepage is the exception: a missing **or empty** top-level `widgets` array is rejected as a `JsonParsingException`. An empty home screen cannot be used to navigate, so it is reported as an error instead of being stored and restored as a menu with a blank title and no items.
+
 ### Subfolder `widgets/`
 
 Contains `SitemapElement` subclasses representing concrete sitemap widgets, such as switches, sliders, text labels, and container elements.

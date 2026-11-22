@@ -75,7 +75,7 @@ class BaseMenuItem extends CustomMenuItem {
     // apply colors on every onUpdate() call, as the theme may change at any time.
     public function getCurrentTheme() as Theme {
         return isFocused()
-               ? ThemeManager.focused
+               ? ThemeManager.getFocusedTheme()
                : ThemeManager.current;
     }
 

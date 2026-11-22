@@ -5,8 +5,11 @@ import Toybox.Graphics;
 /*
  * Drawable for rendering an on/off toggle switch.
  *
- * Uses the three bitmaps provided by OnOffStateBitmaps and updates
- * the BufferedBitmap in its base class based on the current toggle state.
+ * Uses the bitmaps provided by OnOffStateBitmaps and updates the
+ * BufferedBitmap in its base class based on the current toggle state.
+ *
+ * If no bitmap can be allocated for the active theme, the switch is
+ * drawn directly instead, see BufferedBitmapDrawable.drawWithoutBitmap().
  */
 class OnOffStateDrawable extends BufferedBitmapDrawable {
 
@@ -29,8 +32,11 @@ class OnOffStateDrawable extends BufferedBitmapDrawable {
         _useSmallIcon = useSmallIcon;
         _theme = getCurrentTheme( isFocused );
 
+        var bitmaps = getBitmaps( _useSmallIcon, _theme );
         BufferedBitmapDrawable.initialize( {
-            :bufferedBitmap => getOnOffBitmap( isEnabled, useSmallIcon, _theme )
+            :bufferedBitmap => getOnOffBitmap( bitmaps, isEnabled ),
+            :width => bitmaps.WIDTH,
+            :height => bitmaps.HEIGHT
         } );
     }
 
@@ -38,8 +44,18 @@ class OnOffStateDrawable extends BufferedBitmapDrawable {
     // Returns the theme to apply when drawing.
     private function getCurrentTheme( isFocused as Boolean ) as Theme {
         return isFocused
-               ? ThemeManager.focused
+               ? ThemeManager.getFocusedTheme()
                : ThemeManager.current;
+    }
+
+
+    // Returns the bitmaps to apply when drawing.
+    // The themes share the bitmap sets, so switching between themes
+    // does not create additional bitmaps.
+    private function getBitmaps( useSmallIcon as Boolean, theme as Theme ) as OnOffStateBitmaps {
+        return useSmallIcon
+               ? theme.smallOnOffBitmaps
+               : theme.onOffBitmaps;
     }
 
 
@@ -50,7 +66,7 @@ class OnOffStateDrawable extends BufferedBitmapDrawable {
         if( _isEnabled != isEnabled || _useSmallIcon != useSmallIcon ) {
             _isEnabled = isEnabled;
             _useSmallIcon = useSmallIcon;
-            setBufferedBitmap( getOnOffBitmap( isEnabled, useSmallIcon, _theme ) );
+            updateBitmap();
         }
     }
 
@@ -64,27 +80,53 @@ class OnOffStateDrawable extends BufferedBitmapDrawable {
         var currentTheme = getCurrentTheme( isFocused );
         if( _theme != currentTheme ) {
             _theme = currentTheme;
-            setBufferedBitmap( getOnOffBitmap( _isEnabled, _useSmallIcon, _theme ) );
+            updateBitmap();
         }
+    }
+
+
+    // Updates the bitmap from the current state, icon size and theme.
+    //
+    // The update sequence matches the one used when the bitmaps are available:
+    // only setBufferedBitmap() is called, which also applies the bitmap size.
+    // If no bitmap could be allocated, the bitmap is removed and the size is
+    // kept in sync explicitly, so that drawWithoutBitmap() renders within the
+    // correct bounds.
+    private function updateBitmap() as Void {
+        var bitmaps = getBitmaps( _useSmallIcon, _theme );
+        var bitmap = getOnOffBitmap( bitmaps, _isEnabled );
+        if( bitmap == null ) {
+            clearBufferedBitmap();
+            setSize( bitmaps.WIDTH, bitmaps.HEIGHT );
+        } else {
+            setBufferedBitmap( bitmap );
+        }
+    }
+
+
+    // Called by the base class if no BufferedBitmap is available.
+    // Renders the switch directly, so that an allocation failure
+    // does not prevent the menu item from being drawn.
+    protected function drawWithoutBitmap( 
+        dc as Dc, 
+        x as Lang.Numeric, 
+        y as Lang.Numeric 
+    ) as Void {
+        var bitmaps = getBitmaps( _useSmallIcon, _theme );
+        bitmaps.drawDirectly( dc, x.toNumber(), y.toNumber(), _isEnabled );
     }
 
 
     // Returns the right bitmap for a given state
     private function getOnOffBitmap( 
-        isEnabled as Boolean?, 
-        useSmallIcon as Boolean,
-        theme as Theme
-    ) as BufferedBitmapType {
-
-        var bitmaps = useSmallIcon
-                        ? theme.smallOnOffBitmaps
-                        : theme.onOffBitmaps;
-
+        bitmaps as OnOffStateBitmaps,
+        isEnabled as Boolean?
+    ) as BufferedBitmapType? {
         return isEnabled == null
-                ? bitmaps.nostate
+                ? bitmaps.getNoState()
                 : isEnabled
-                    ? bitmaps.on
-                    : bitmaps.off;
+                    ? bitmaps.getOn()
+                    : bitmaps.getOff();
     }
 
 }

@@ -43,9 +43,9 @@ class DefaultTheme extends BaseTheme {
     public var iconPrevious as ResourceId = Rez.Drawables.iconPreviousWhite;
 
     public var onOffBitmaps as OnOffStateBitmaps = 
-        new OnOffStateBitmaps( onColor, stateColor, backgroundColor );
+        OnOffStateBitmaps.getShared( onColor, stateColor, backgroundColor );
     public var smallOnOffBitmaps as SmallOnOffStateBitmaps = 
-        new SmallOnOffStateBitmaps( onColor, stateColor, backgroundColor );
+        SmallOnOffStateBitmaps.getSharedSmall( onColor, stateColor, backgroundColor );
 
     public function initialize() {
         BaseTheme.initialize();

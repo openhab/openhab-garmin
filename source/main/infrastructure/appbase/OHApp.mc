@@ -180,7 +180,7 @@ class OHApp extends Application.AppBase {
             // also displayed as error view
             var errorView = ErrorView.createOrUpdate( ex );
             ViewStack.registerInitialView( errorView, null );
-            return [ ErrorView.createOrUpdate( ex ) ];
+            return [ errorView ];
         }
     }
 

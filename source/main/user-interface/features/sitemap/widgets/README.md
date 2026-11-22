@@ -90,7 +90,8 @@ Contains multiple widgets covering both Switch and Selection sitemap elements. T
   - In all other cases, a command selection menu is displayed.
 
 - `switch/onoff/`  
-  For `Switch` items without commands, with non-ON/OFF commands, or with undescribed ON/OFF commands; and for `Dimmer` items without commands or with undescribed ON/OFF commands. Displays an interactive toggle switch directly within the menu item. `Switch` and `Dimmer` are the only item types eligible for the toggle, since only their state can be interpreted as binary without losing information.
+  For `Switch` items without commands, with non-ON/OFF commands, or with undescribed ON/OFF commands; and for `Dimmer` items without commands or with undescribed ON/OFF commands. Displays an interactive toggle switch directly within the menu item. `Switch` and `Dimmer` are the only item types eligible for the toggle, since only their state can be interpreted as binary without losing information.  
+  The switch bitmaps are created lazily and shared between themes with identical colors. If no bitmap can be allocated, the switch is drawn directly instead.
 
 - `switch/player/`  
   For Player items. Displays the PLAY or PAUSE state in the menu item and opens a full-screen control view with PLAY, PAUSE, NEXT, and PREVIOUS controls when selected.

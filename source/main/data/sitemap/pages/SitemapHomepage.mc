@@ -31,8 +31,12 @@ class SitemapHomepage extends SitemapPage {
         // it on to the base class. A homepage without widgets is not useful
         // and is therefore still treated as an error; nested pages may be
         // empty and are handled by the UI.
+        // Note: an empty widgets array is as useless as a missing one. Without
+        // this check, an empty sitemap is accepted and shown as a menu with a
+        // blank title and no items.
         var homepageJson = json.getObject( "homepage", "Homepage: homepage element missing" );
-        if( homepageJson.getOptionalArray( "widgets" ) == null ) {
+        var jsonWidgets = homepageJson.getOptionalArray( "widgets" );
+        if( jsonWidgets == null || jsonWidgets.size() == 0 ) {
             throw new JsonParsingException( "Homepage contains no elements" );
         }
         SitemapPage.initialize( 
@@ -65,7 +69,7 @@ class SitemapHomepage extends SitemapPage {
             "Homepage: homepage element missing" 
         );
         var jsonWidgets = homepageJson.getOptionalArray( "widgets" );
-        if( jsonWidgets == null ) {
+        if( jsonWidgets == null || jsonWidgets.size() == 0 ) {
             throw new JsonParsingException( "Homepage contains no elements" );
         }
 
