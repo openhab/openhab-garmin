@@ -42,13 +42,13 @@ a deliberate matrix decision instead of silently creating an uncovered variant.
 For each product in `manifest.xml`, the resolver:
 
 1. Parses `key = value` lines and comments from `monkey.jungle`.
-2. Expands `$(name)` recursively, including references to other device sections
+1. Expands `$(name)` recursively, including references to other device sections
    such as `venu3.excludeAnnotations = $(approachs50.excludeAnnotations)`, and
    fails on unknown names and cycles.
-3. Applies the `base.*` defaults (`excludeAnnotations`, `sourcePath`) when a
+1. Applies the `base.*` defaults (`excludeAnnotations`, `sourcePath`) when a
    device does not define the property itself.
-4. Splits `;`-separated annotation, resource and source lists.
-5. Reduces the result to the seven dimensions above.
+1. Splits `;`-separated annotation, resource and source lists.
+1. Reduces the result to the seven dimensions above.
 
 The manifest and jungle must declare the same product set: a product added to
 one and not the other fails the check. The current figures are 93 products and
