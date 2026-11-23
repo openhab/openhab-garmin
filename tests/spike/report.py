@@ -113,11 +113,13 @@ def render_markdown(
         "| # | Pass criterion | Status | Evidence |",
         "| --- | --- | --- | --- |",
     ]
+    labels = {"met": "met", "not-met": "not met", "skipped": "skipped"}
     for criterion in verdict.criteria:
         evidence = criterion.evidence()
         evidence_cell = ", ".join(f"`{path}`" for path in evidence) if evidence else "-"
+        status = labels.get(criterion.status, criterion.status)
         lines.append(
-            f"| {criterion.id} | {_cell(criterion.title)} | {criterion.status} "
+            f"| {criterion.id} | {_cell(criterion.title)} | {status} "
             f"| {_cell(evidence_cell)} |"
         )
 
