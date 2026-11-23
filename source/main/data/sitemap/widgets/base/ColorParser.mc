@@ -12,15 +12,20 @@ class ColorParser {
     // Otherwise, it can contain either a color name (e.g., "red") or a hex code 
     // (e.g., "#FF0000"). In both cases, a ColorType is returned—specifically, 
     // a number between 0x000000 and 0xFFFFFF.
+    //
+    // On error, `errorMessage` is formatted with the widget label and the
+    // invalid color string, so callers can include both in the message.
     public static function parse( 
         json as JsonAdapter, 
         id as String, 
-        errorMessage as String ) 
+        errorMessage as String,
+        label as String )
     as ColorType? {
         var colorString = json.getOptionalString( id );
         if( colorString == null || colorString.equals( "" ) ) {
             return null;
         }
+        var invalidColor = colorString;
         switch ( colorString ) {
             case "maroon": return 0x800000;
             case "red": return 0xff0000;
@@ -54,6 +59,6 @@ class ColorParser {
                 }
             }
         }
-        throw new JsonParsingException( errorMessage );
+        throw new JsonParsingException( Lang.format( errorMessage, [ label, invalidColor ] ) );
     }
 }

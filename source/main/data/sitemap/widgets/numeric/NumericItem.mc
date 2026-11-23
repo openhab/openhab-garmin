@@ -25,7 +25,10 @@ class NumericItem extends Item {
             if( numericState != null ) {
                 _numericState = numericState;
             } else {
-                throw new JsonParsingException( Application.loadResource( Rez.Strings.ErrorStateNotNumeric ) as String );
+                throw new JsonParsingException( Lang.format(
+                    Application.loadResource( Rez.Strings.ErrorStateNotNumeric ) as String,
+                    [ getName(), getState() ]
+                ) );
             }
         }
     }

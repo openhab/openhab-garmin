@@ -7,12 +7,15 @@ import Toybox.System;
 class MemoryManager {
 
     // Ensure at least 10 kB of free memory is available.
-    // If not, throw a catchable exception.
+    private static const MIN_FREE_MEMORY as Number = 10240;
+
+    // If less than the minimum is available, throw a catchable exception.
     // This threshold is intentionally generous but reasonable,
     // considering we only support devices with 500 kB or more of app memory.
     public static function ensureSufficientMemory() as Void {
-        if( System.getSystemStats().freeMemory < 10240 ) {
-            throw new OutOfMemoryException();
+        var freeMemory = System.getSystemStats().freeMemory;
+        if( freeMemory < MIN_FREE_MEMORY ) {
+            throw new OutOfMemoryException( freeMemory, MIN_FREE_MEMORY );
         }
     }
 }

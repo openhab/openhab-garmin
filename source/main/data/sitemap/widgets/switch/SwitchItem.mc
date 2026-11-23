@@ -82,10 +82,18 @@ class SwitchItem extends Item {
         var hasOff = false;
         for( var i = 0; i < commandOptions.size(); i++ ) {
             var commandOption = commandOptions[i];
-            var command = commandOption.getString( 
-                "command", 
-                Application.loadResource( Rez.Strings.ErrorSwitchCommandMissing ) as String
-            );
+            var command = commandOption.getOptionalString( "command" );
+            if( command.equals( "" ) ) {
+                var optionLabel = commandOption.getOptionalString( "label" );
+                throw new JsonParsingException(
+                    optionLabel.equals( "" )
+                    ? Application.loadResource( Rez.Strings.ErrorSwitchCommandMissing ) as String
+                    : Lang.format(
+                        Application.loadResource( Rez.Strings.ErrorSwitchCommandMissingWithLabel ) as String,
+                        [ optionLabel ]
+                    )
+                );
+            }
             if( command.equals( ITEM_STATE_ON ) ) {
                 filtered.add( commandOption );
                 hasOn = true;

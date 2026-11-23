@@ -55,10 +55,19 @@ class SitemapWidget extends SitemapElement {
 
         _item = item;
 
-        _type = json.getString(
-            "type",
-            Application.loadResource( Rez.Strings.ErrorWidgetWithoutType ) as String
-        );
+        var type = json.getOptionalString( "type" );
+        if( type.equals( "" ) ) {
+            var typeContext = item != null ? item.getName() : "";
+            throw new JsonParsingException(
+                typeContext.equals( "" )
+                ? Application.loadResource( Rez.Strings.ErrorWidgetWithoutType ) as String
+                : Lang.format(
+                    Application.loadResource( Rez.Strings.ErrorWidgetWithoutTypeLabel ) as String,
+                    [ typeContext ]
+                )
+            );
+        }
+        _type = type;
 
         var jsonLinkedPage = json.getOptionalObject( "linkedPage" );
 
@@ -73,7 +82,10 @@ class SitemapWidget extends SitemapElement {
         var groupControlLabel = null;
         var rawLabel = json.getString(
             "label",
-            Application.loadResource( Rez.Strings.ErrorWidgetLabelMissing ) as String
+            Lang.format(
+                Application.loadResource( Rez.Strings.ErrorWidgetLabelMissing ) as String,
+                [ _type ]
+            )
         );
         if( isControllableGroup ) {
             var splitLabel = splitGroupLabel( rawLabel );
@@ -116,14 +128,18 @@ class SitemapWidget extends SitemapElement {
 
         _icon = getCurrentIcon();
 
-        _labelColor = ColorParser.parse( json, "labelcolor", Lang.format(
+        _labelColor = ColorParser.parse(
+            json,
+            "labelcolor",
             Application.loadResource( Rez.Strings.ErrorWidgetInvalidLabelColor ) as String,
-            [ _label ]
-        ) );
-        _valueColor = ColorParser.parse( json, "valuecolor", Lang.format(
+            _label
+        );
+        _valueColor = ColorParser.parse(
+            json,
+            "valuecolor",
             Application.loadResource( Rez.Strings.ErrorWidgetInvalidValueColor ) as String,
-            [ _label ]
-        ) );
+            _label
+        );
 
         if( linkedPage != null ) {
             _linkedPage = linkedPage;

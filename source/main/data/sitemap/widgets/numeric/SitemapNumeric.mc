@@ -77,20 +77,27 @@ class SitemapNumeric extends SitemapWidget {
         if( _step <= 0.0 ) {
             throw new JsonParsingException( 
                 getType() + " '" + getLabel() + "': "
-                + ( Application.loadResource( Rez.Strings.ErrorNumericStepInvalid ) as String ) );
+                + ( Lang.format(
+                    Application.loadResource( Rez.Strings.ErrorNumericStepInvalid ) as String,
+                    [ _step ]
+                ) ) );
         }
 
         if( _maxValue < _minValue ) {
             throw new JsonParsingException( 
                 getType() + " '" + getLabel() + "': "
-                + ( Application.loadResource( Rez.Strings.ErrorNumericMinMaxInvalid ) as String ) );
+                + ( Lang.format(
+                    Application.loadResource( Rez.Strings.ErrorNumericMinMaxInvalid ) as String,
+                    [ _maxValue, _minValue ]
+                ) ) );
         }
 
         // Verify that we do not have more steps than supported
         if( UI_NUMERIC_MAX_STEPS < ( _maxValue - _minValue ) / _step ) {
+            var requestedSteps = ( _maxValue - _minValue ) / _step;
             throw new JsonParsingException( Lang.format(
                 Application.loadResource( Rez.Strings.ErrorNumericTooManySteps ) as String,
-                [ getType() ]
+                [ getType(), getLabel(), UI_NUMERIC_MAX_STEPS, requestedSteps.format( "%.0f" ) ]
             ) );
         }
 

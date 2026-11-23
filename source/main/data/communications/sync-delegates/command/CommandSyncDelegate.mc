@@ -104,7 +104,11 @@ class CommandSyncDelegate extends BaseSyncDelegate {
         if( commandRequest != null ) {
             commandRequest.sendCommand( getCommand()[1] );
         } else {
-            throw new GeneralException( Application.loadResource( Rez.Strings.ErrorNoCommandTransport ) as String );
+            var command = getCommand();
+            throw new GeneralException( Lang.format(
+                Application.loadResource( Rez.Strings.ErrorNoCommandTransport ) as String,
+                [ command[1], command[0] ]
+            ) );
         }
     }
 

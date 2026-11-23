@@ -30,7 +30,12 @@ class OnOffSwitchMenuItem extends SwitchMenuItem {
         parent as BasePageMenu,
         processingMode as BasePageMenu.ProcessingMode
     ) {
-        _isEnabled = parseItemState( sitemapSwitch.getSwitchItem().getState() );
+        var switchItem = sitemapSwitch.getSwitchItem();
+        _isEnabled = parseItemState(
+            switchItem.getState(),
+            sitemapSwitch.getLabel(),
+            switchItem.getName()
+        );
 
         _smallIcon = sitemapSwitch.getLinkedPage() != null;
         _stateDrawable = new OnOffStateDrawable( _isEnabled, isFocused(), _smallIcon );
@@ -96,7 +101,13 @@ class OnOffSwitchMenuItem extends SwitchMenuItem {
     // Calling WatchUi.requestUpdate() is handled by the base class.
     public function onStateChanged() as Void {
         SwitchMenuItem.onStateChanged();
-        _isEnabled = parseItemState( getSitemapSwitch().getSwitchItem().getState() );
+        var sitemapSwitch = getSitemapSwitch();
+        var switchItem = sitemapSwitch.getSwitchItem();
+        _isEnabled = parseItemState(
+            switchItem.getState(),
+            sitemapSwitch.getLabel(),
+            switchItem.getName()
+        );
         _stateDrawable.setEnabledAndIconSize( _isEnabled, _smallIcon );
     }
 
@@ -117,7 +128,15 @@ class OnOffSwitchMenuItem extends SwitchMenuItem {
     // The numeric handling is only valid because this menu item is restricted
     // to Switch and Dimmer items, see MenuItemFactory.getSwitchMenuItemType().
     // If the state is NO_STATE, then null will be returned.
-    private function parseItemState( itemState as String ) as Boolean? {
+    //
+    // The widget label and item name are passed in because the base class is
+    // not initialized yet when this function is called from the constructor.
+    // They are only used to provide context if the state is unsupported.
+    private function parseItemState(
+        itemState as String,
+        widgetLabel as String,
+        itemName as String
+    ) as Boolean? {
         if( itemState.equals( Item.NO_STATE ) ) {
             return null;
         } else if( itemState.equals( SwitchItem.ITEM_STATE_ON ) ) {
@@ -136,7 +155,7 @@ class OnOffSwitchMenuItem extends SwitchMenuItem {
         }
         throw new GeneralException( Lang.format(
             Application.loadResource( Rez.Strings.ErrorUnsupportedState ) as String,
-            [ itemState ]
+            [ widgetLabel, itemName, itemState ]
         ) );
     }
 

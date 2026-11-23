@@ -8,14 +8,21 @@ public class CommandDescriptions extends BaseDescriptions {
         if( jsonCommandDescriptions != null ) {
             for( var i = 0; i < jsonCommandDescriptions.size(); i++ ) {
                 var jsonCommandDescription = jsonCommandDescriptions[i];
+                var command = jsonCommandDescription.getOptionalString( "command" );
+                if( command.equals( "" ) ) {
+                    var errorLabel = jsonCommandDescription.getOptionalString( "label" );
+                    throw new JsonParsingException(
+                        errorLabel.equals( "" )
+                        ? Application.loadResource( Rez.Strings.ErrorSwitchCommandMissing ) as String
+                        : Lang.format(
+                            Application.loadResource( Rez.Strings.ErrorSwitchCommandMissingWithLabel ) as String,
+                            [ errorLabel ]
+                        )
+                    );
+                }
+                var label = jsonCommandDescription.getOptionalString( "label" );
                 commandDescriptions.add( 
-                    new CommandDescription( 
-                        jsonCommandDescription.getString(
-                            "command",
-                            Application.loadResource( Rez.Strings.ErrorSwitchCommandMissing ) as String
-                        ),
-                        jsonCommandDescription.getOptionalString( "label" )
-                    )
+                    new CommandDescription( command, label )
                 );
             }
         }

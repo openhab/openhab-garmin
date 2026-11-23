@@ -27,11 +27,14 @@ class CommunicationException extends CommunicationBaseException {
         // For some errors we return specific messages,
         // for all others a generic one
         if( isNoPhone() && ConnectionManager.get().isWifiConnected() ) {
-            return Application.loadResource( Rez.Strings.ErrorWifiConnectionLost ) as String;
+            return Lang.format(
+                Application.loadResource( Rez.Strings.ErrorWifiConnectionLost ) as String,
+                [ getSourceName() ]
+            );
         } else if( isNoPhone() ) {
             return Lang.format(
                 Application.loadResource( Rez.Strings.ErrorNoPhoneDetail ) as String,
-                [ _responseCode ]
+                [ getSourceName(), _responseCode ]
             );
         } else if ( _responseCode == Communications.INVALID_HTTP_BODY_IN_NETWORK_RESPONSE ) {
             errorMsg = Lang.format(

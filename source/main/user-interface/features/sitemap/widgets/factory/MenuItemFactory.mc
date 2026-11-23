@@ -42,7 +42,7 @@ class MenuItemFactory {
         } else {
             throw new JsonParsingException( Lang.format(
                 Application.loadResource( Rez.Strings.ErrorElementNotSupported ) as String,
-                [ sitemapWidget.getLabel() ]
+                [ sitemapWidget.getLabel(), sitemapWidget.getType() ]
             ) );
         }
     }
@@ -89,7 +89,7 @@ class MenuItemFactory {
         } else {
             throw new JsonParsingException( Lang.format(
                 Application.loadResource( Rez.Strings.ErrorElementNotSupported ) as String,
-                [ sitemapSwitch.getLabel() ]
+                [ sitemapSwitch.getLabel(), itemType ]
             ) );
         }
     }

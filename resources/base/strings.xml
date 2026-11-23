@@ -50,8 +50,8 @@
     <string id="ErrorCommandSource" scope="background">Command</string>
 
     <!-- Communication errors -->
-    <string id="ErrorWifiConnectionLost" scope="background">Wi-Fi connection lost</string>
-    <string id="ErrorNoPhoneDetail" scope="background">No phone&#10;($1$)</string>
+    <string id="ErrorWifiConnectionLost" scope="background">$1$: Wi-Fi connection lost</string>
+    <string id="ErrorNoPhoneDetail" scope="background">$1$: No phone&#10;($2$)</string>
     <string id="ErrorInvalidResponseDetail" scope="background">Invalid response&#10;($1$)</string>
     <string id="ErrorSitemapTooLargeDetail" scope="background">Sitemap too large&#10;($1$)</string>
     <string id="ErrorRequestFailedDetail" scope="background">Request failed&#10;($1$)</string>
@@ -65,7 +65,7 @@
 
     <!-- Other runtime errors -->
     <string id="ErrorOfflineNoSitemap" scope="background">Offline and no sitemap is cached. Move into phone or Wi-Fi range.</string>
-    <string id="ErrorOutOfMemory" scope="background">Out of memory. Attempting recovery. If the issue persists, try reducing the sitemap size.</string>
+    <string id="ErrorOutOfMemory" scope="background">Out of memory ($1$ B free, $2$ B required). Attempting recovery. If the issue persists, try reducing the sitemap size.</string>
     <string id="ErrorSettingsChanged" scope="background">Settings changed. Please close and reopen the app.</string>
     <string id="ErrorFatalUi" scope="background">Fatal UI error: $1$</string>
     <string id="ErrorOfflineCommand" scope="background">OFFLINE</string>
@@ -80,28 +80,33 @@
     <string id="ErrorJsonNotArray" scope="background">'$1$' is not an Array</string>
     <string id="ErrorJsonNotDictionary" scope="background">'$1$' is not a Dictionary</string>
     <string id="ErrorJsonNotString" scope="background">'$1$' is not a String</string>
-    <string id="ErrorStateNotNumeric" scope="background">State is not numeric</string>
+    <string id="ErrorStateNotNumeric" scope="background">Item '$1$': state '$2$' is not numeric</string>
     <string id="ErrorLabelMissingState" scope="background">Label '$1$' does not have label before the [state]</string>
     <string id="ErrorHomepageNoElements" scope="background">Homepage contains no elements</string>
     <string id="ErrorHomepageElementMissing" scope="background">Homepage element missing</string>
     <string id="ErrorPageTitleMissing" scope="background">Page title is missing</string>
     <string id="ErrorFrameLabelMissing" scope="background">Frame label is missing</string>
     <string id="ErrorUnsupportedElementType" scope="background">Unsupported element type '$1$'.</string>
+    <string id="ErrorUnsupportedElementTypeForElement" scope="background">Element '$1$' has unsupported type '$2$'.</string>
     <string id="ErrorWidgetWithoutType" scope="background">Widget without type</string>
-    <string id="ErrorWidgetLabelMissing" scope="background">Widget label is missing</string>
-    <string id="ErrorWidgetInvalidLabelColor" scope="background">Widget '$1$': invalid label color</string>
-    <string id="ErrorWidgetInvalidValueColor" scope="background">Widget '$1$': invalid value color</string>
+    <string id="ErrorWidgetWithoutTypeLabel" scope="background">Widget '$1$' has no type</string>
+    <string id="ErrorWidgetLabelMissing" scope="background">Widget of type '$1$' has no label</string>
+    <string id="ErrorWidgetInvalidLabelColor" scope="background">Widget '$1$': invalid label color '$2$'</string>
+    <string id="ErrorWidgetInvalidValueColor" scope="background">Widget '$1$': invalid value color '$2$'</string>
     <string id="ErrorGroupWithoutItem" scope="background">Group without item</string>
+    <string id="ErrorGroupWithoutItemLabel" scope="background">Group '$1$' has no item</string>
     <string id="ErrorItemNameMissing" scope="background">Item name is missing</string>
     <string id="ErrorItemWithoutType" scope="background">Item '$1$' has no type</string>
     <string id="ErrorItemNotFound" scope="background">Item not found. Check if the name is correct.</string>
-    <string id="ErrorNumericStepInvalid" scope="background">step must be greater than 0</string>
-    <string id="ErrorNumericMinMaxInvalid" scope="background">maxValue must be greater than or equal to minValue</string>
-    <string id="ErrorNumericTooManySteps" scope="background">$1$ does not support more than 100 steps.</string>
+    <string id="ErrorNumericStepInvalid" scope="background">step must be greater than 0 (got $1$)</string>
+    <string id="ErrorNumericMinMaxInvalid" scope="background">maxValue ($1$) must be greater than or equal to minValue ($2$)</string>
+    <string id="ErrorNumericTooManySteps" scope="background">$1$ '$2$' supports at most $3$ steps (requested $4$).</string>
     <string id="ErrorSwitchCommandMissing" scope="background">Switch: command is missing from mapping/command description</string>
+    <string id="ErrorSwitchCommandMissingWithLabel" scope="background">Switch: command is missing from mapping/command description (label '$1$')</string>
     <string id="ErrorSwitchValueMissing" scope="background">Switch: value is missing from state description</string>
-    <string id="ErrorSwitchLabelMissing" scope="background">Switch: label is missing from state description</string>
-    <string id="ErrorElementNotSupported" scope="background">Element '$1$' is not supported</string>
-    <string id="ErrorUnsupportedState" scope="background">Toggle switch: unsupported state '$1$'.</string>
-    <string id="ErrorNoCommandTransport" scope="background">Cannot send command: REST API and Webhook unavailable.</string>
+    <string id="ErrorSwitchValueMissingWithLabel" scope="background">Switch: value is missing from state description (label '$1$')</string>
+    <string id="ErrorSwitchLabelMissingWithValue" scope="background">Switch: label is missing from state description (value '$1$')</string>
+    <string id="ErrorElementNotSupported" scope="background">Element '$1$' (type '$2$') is not supported</string>
+    <string id="ErrorUnsupportedState" scope="background">Toggle switch '$1$' (item '$2$'): unsupported state '$3$'.</string>
+    <string id="ErrorNoCommandTransport" scope="background">Cannot send command '$1$' for item '$2$': REST API and Webhook unavailable.</string>
 </strings>
