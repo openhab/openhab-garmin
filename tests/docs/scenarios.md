@@ -92,16 +92,23 @@ The app emits, in debug builds only, one line per event:
 E2E:<EVENT>;field=<value>;field=<value>
 ```
 
-| Event | Fields (at the time of writing) |
+| Event | Fields (in emission order) |
 | --- | --- |
-| `VIEW` | `category`, `view` |
-| `CONNECTION` | `mode` |
-| `SITEMAP` | `result`, `code`, `bytes` |
-| `COMMAND` | `result`, `code` |
-| `ERROR` | `kind` (`temporary`/`critical`/`fatal`), `id`, `code` |
+| `VIEW` | `category` (`sitemap`/`settings`/`error`/`sync`/`glance`), `view`, `depth` |
+| `CONNECTION` | `mode` (`BLE`/`WIFI_CHECK_PENDING`/`WIFI`/`OFFLINE`) |
+| `SITEMAP` | `result` (`success`/`unchanged`/`error`), `code`, `bytes` |
+| `COMMAND` | `result` (`success`/`error`), `code`, `item`, `value` |
+| `ERROR` | `kind` (`temporary`/`critical`/`fatal`), `id`, `code`, `source` (`sitemap`/`command`/`ui`) |
 | `TOAST` | `id` |
 | `ERRORVIEW` | `id`, `code` |
 | `LANGUAGE` | `code` |
+
+`code` is an HTTP status, an SDK error code (possibly negative, or prefixed such
+as `S:-104` or `UI:CONFIG`), or `-` when unavailable. `COMMAND.item` and
+`COMMAND.value` are percent-encoded (space, `|`, `%`, CR, LF); a scenario may
+assert either the encoded or the human-readable value. Unknown events and fields
+in the stream are ignored; unknown _field names in a scenario_ for a known event
+are rejected at load time.
 
 The parser (`e2e/trace.py`) splits on `;`, then on the first `=`, keeps unknown
 events and fields, and timestamps each line on receipt. Lines that are not trace

@@ -42,6 +42,7 @@ from shim.faults import ShimScriptError, parse_script
 
 from .config import SCENARIO_DIR, ConfigError, load_devices
 from .settings import KNOWN_PROPERTIES
+from .trace import EVENT_FIELDS, validate_match_fields
 
 TIERS = ("protocol", "ui")
 SUITES = ("smoke", "regression", "extended")
@@ -293,6 +294,14 @@ def _step_wait_for_event(raw: Mapping[str, Any], where: str) -> Dict[str, Any]:
 
     if "event" not in params and "contains" not in params:
         raise ScenarioError(f"{where}: needs 'event' (preferred) or 'contains'")
+
+    unknown = validate_match_fields(params.get("event"), params.get("fields", {}))
+    if unknown:
+        known = EVENT_FIELDS.get(params["event"], ())
+        raise ScenarioError(
+            f"{where}.fields: {', '.join(unknown)} not emitted by {params['event']}; "
+            f"valid fields: {', '.join(known)}"
+        )
 
     params["timeout_ms"] = _int(raw.get("timeout_ms", 30_000), f"{where}.timeout_ms", 1, 600_000)
     if "description" in raw:

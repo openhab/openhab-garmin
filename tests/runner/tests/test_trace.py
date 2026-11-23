@@ -11,6 +11,7 @@ from __future__ import annotations
 import pytest
 
 from e2e.trace import (
+    EVENT_FIELDS,
     KNOWN_EVENTS,
     TRACE_PREFIX,
     EventMatch,
@@ -18,32 +19,104 @@ from e2e.trace import (
     TraceLog,
     parse_line,
     parse_lines,
+    validate_match_fields,
+)
+
+#: Verbatim sample lines from the ``E2ETrace`` class header and emit methods
+#: (source/main/infrastructure/logging/E2ETrace.mc). They are the contract: if
+#: the app changes field names or ordering, this list must change with it.
+REAL_SAMPLES = (
+    "E2E:VIEW;category=sitemap;view=HomepageMenu;depth=2",
+    "E2E:VIEW;category=glance;view=GlanceSitemapView;depth=1",
+    "E2E:VIEW;category=error;view=ErrorView;depth=3",
+    "E2E:VIEW;category=sync;view=SystemSyncView;depth=2",
+    "E2E:VIEW;category=sitemap;view=ActionMenu;depth=3",
+    "E2E:CONNECTION;mode=BLE",
+    "E2E:CONNECTION;mode=WIFI_CHECK_PENDING",
+    "E2E:CONNECTION;mode=WIFI",
+    "E2E:CONNECTION;mode=OFFLINE",
+    "E2E:SITEMAP;result=success;code=200;bytes=4096",
+    "E2E:SITEMAP;result=unchanged;code=200;bytes=4096",
+    "E2E:SITEMAP;result=error;code=-402;bytes=-",
+    "E2E:COMMAND;result=success;code=200;item=E2E_Light;value=ON",
+    "E2E:COMMAND;result=error;code=S:-104;item=Kitchen%20Light;value=ON",
+    "E2E:ERROR;kind=temporary;id=communication.sitemap;code=-400;source=sitemap",
+    "E2E:ERROR;kind=critical;id=communication.sitemap;code=404;source=sitemap",
+    "E2E:ERROR;kind=fatal;id=settings.changed;code=-;source=ui",
+    "E2E:TOAST;id=S:EMRES",
+    "E2E:ERRORVIEW;id=S:-104;code=-",
+    "E2E:LANGUAGE;code=eng",
 )
 
 
 def test_parses_a_known_event() -> None:
-    event = parse_line("E2E:ERROR;kind=critical;id=SITEMAP_PARSE;code=0")
+    event = parse_line("E2E:ERROR;kind=critical;id=communication.sitemap;code=404;source=sitemap")
     assert event is not None
     assert event.event == "ERROR"
-    assert event.fields == {"kind": "critical", "id": "SITEMAP_PARSE", "code": "0"}
+    assert event.fields == {
+        "kind": "critical",
+        "id": "communication.sitemap",
+        "code": "404",
+        "source": "sitemap",
+    }
     assert event.known
 
 
-def test_all_documented_events_parse() -> None:
-    samples = [
-        "E2E:VIEW;category=home;view=menu",
-        "E2E:CONNECTION;mode=ble",
-        "E2E:SITEMAP;result=ok;code=200;bytes=1234",
-        "E2E:COMMAND;result=ok;code=200",
-        "E2E:ERROR;kind=temporary;id=EMRES;code=-400",
-        "E2E:TOAST;id=EMRES",
-        "E2E:ERRORVIEW;id=SITEMAP_PARSE;code=0",
-        "E2E:LANGUAGE;code=eng",
-    ]
-    for sample in samples:
-        event = parse_line(sample)
-        assert event is not None, sample
-        assert event.event in KNOWN_EVENTS, sample
+@pytest.mark.parametrize("sample", REAL_SAMPLES)
+def test_real_app_samples_parse(sample: str) -> None:
+    event = parse_line(sample)
+    assert event is not None, sample
+    assert event.event in KNOWN_EVENTS, sample
+    expected = EVENT_FIELDS[event.event]
+    # Every documented field is present, in the documented order.
+    assert tuple(event.fields) == expected, sample
+
+
+def test_real_samples_carry_no_timestamp_so_it_is_stamped_on_receipt() -> None:
+    first = parse_line(REAL_SAMPLES[0])
+    second = parse_line(REAL_SAMPLES[0])
+    assert first is not None and second is not None
+    assert "timestamp" not in first.raw and "time=" not in first.raw
+    assert first.received_at > 0 and second.received_at >= first.received_at
+
+
+def test_error_codes_keep_their_prefix_and_negative_sign() -> None:
+    event = parse_line("E2E:ERRORVIEW;id=S:-104;code=-")
+    assert event is not None
+    assert event.fields["id"] == "S:-104"
+    assert event.fields["code"] == "-"
+
+
+def test_command_values_are_percent_encoded_on_the_wire() -> None:
+    event = parse_line("E2E:COMMAND;result=success;code=200;item=Kitchen%20Light;value=OPEN%7CON")
+    assert event is not None
+    assert event.fields["item"] == "Kitchen%20Light"
+    assert event.fields["value"] == "OPEN%7CON"
+
+
+def test_match_accepts_the_human_readable_command_value() -> None:
+    event = parse_line("E2E:COMMAND;result=success;code=200;item=Kitchen%20Light;value=OPEN%7CON")
+    assert event is not None
+    match = EventMatch(event="COMMAND", fields={"item": "Kitchen Light", "value": "OPEN|ON"})
+    assert match.matches(event)
+
+
+@pytest.mark.parametrize(
+    "event,fields,expected",
+    [
+        ("ERROR", {"kind": "fatal"}, []),
+        ("ERROR", {"kindd": "fatal"}, ["kindd"]),
+        ("SITEMAP", {"result": "success", "code": "200", "bytes": "1"}, []),
+        ("VIEW", {"depth": "2", "view": "HomepageMenu"}, []),
+        ("FUTURE_EVENT", {"anything": "goes"}, []),
+    ],
+)
+def test_validate_match_fields(event: str, fields: dict, expected: list) -> None:
+    assert validate_match_fields(event, fields) == expected
+
+
+def test_validate_match_fields_without_event_accepts_anything() -> None:
+    assert validate_match_fields(None, {"kind": "fatal"}) == []
 
 
 def test_event_without_fields_is_accepted() -> None:
