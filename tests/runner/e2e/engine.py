@@ -422,18 +422,37 @@ class ScenarioRunner:
                 notes.append("no_error_view: skipped (driver has no console event stream)")
             else:
                 context.trace.poll()
-                showing = context.trace.has_error_view()
+                category = context.trace.current_view_category()
+                showing = context.trace.is_showing_error_view()
                 if no_error_view and showing:
                     raise AssertionFailure(
-                        "expected no error view but the app reported an ERRORVIEW; "
-                        f"seen: {context.trace.describe()}"
+                        "expected the current view not to be the error view, but the "
+                        f"app is showing category={category or 'unknown'}; a dismissed "
+                        f"error view does not fail this check. seen: {context.trace.describe()}"
                     )
                 if not no_error_view and not showing:
                     raise AssertionFailure(
-                        "expected the app to show an error view but no ERRORVIEW was seen; "
+                        "expected the current view to be the error view, but the app "
+                        f"is showing category={category or 'unknown'}; "
                         f"seen: {context.trace.describe()}"
                     )
-                notes.append("no_error_view: ok")
+                notes.append(f"no_error_view: ok (current view: {category or 'unknown'})")
+                evaluated = True
+
+        # The historical reading: an error view that appeared at any point,
+        # even if it was dismissed later. Separate from `no_error_view`, which
+        # only describes the current view.
+        if step.get("never_error_view"):
+            if not context.driver.supports_events or context.trace is None:
+                notes.append("never_error_view: skipped (driver has no console event stream)")
+            else:
+                context.trace.poll()
+                if context.trace.has_error_view():
+                    raise AssertionFailure(
+                        "expected no error view during the whole run, but an "
+                        f"ERRORVIEW event was observed; seen: {context.trace.describe()}"
+                    )
+                notes.append("never_error_view: ok")
                 evaluated = True
 
         status = PASSED if evaluated else SKIPPED

@@ -10,14 +10,16 @@ from __future__ import annotations
 
 import json
 import xml.etree.ElementTree as ET
+from dataclasses import replace
 from pathlib import Path
+from typing import ClassVar, List, Sequence
 
 from e2e import engine
 from e2e.config import default_device_id, find_device
 from e2e.contract import FAIL, PASS, run_contract, summary
 from e2e.engine import run_scenario
 from e2e.reporting import Report
-from e2e.scenarios import find_scenario
+from e2e.scenarios import find_scenario, parse_steps
 from e2e.sim.null import NullDriver, png_bytes
 
 
@@ -127,6 +129,108 @@ def test_null_driver_contract_passes(tmp_path: Path) -> None:
     assert counts[PASS] >= 10
 
 
+class _ScriptedEventsDriver(NullDriver):
+    """Null driver with a fixed console stream, for assertion-plumbing tests."""
+
+    supports_events: ClassVar[bool] = True
+
+    def __init__(self, lines: Sequence[str], **kwargs: object) -> None:
+        super().__init__(**kwargs)
+        self._lines: List[str] = list(lines)
+
+    def events(self) -> Sequence[str]:
+        return list(self._lines)
+
+
+#: A critical error was raised and presented, then dismissed by the recovery.
+DISMISSED_ERROR_VIEW = (
+    "E2E:LANGUAGE;code=eng",
+    "E2E:VIEW;category=sitemap;view=LoadingView;depth=1",
+    "E2E:ERROR;kind=critical;id=communication.sitemap;code=404;source=sitemap",
+    "E2E:ERRORVIEW;id=S:-104;code=-",
+    "E2E:VIEW;category=error;view=ErrorView;depth=1",
+    "E2E:VIEW;category=sitemap;view=HomepageMenu;depth=1",
+)
+
+#: The error view is still on screen; polling continues behind it.
+UNDISMISSED_ERROR_VIEW = (
+    "E2E:VIEW;category=sitemap;view=LoadingView;depth=1",
+    "E2E:ERRORVIEW;id=S:-104;code=-",
+    "E2E:VIEW;category=error;view=ErrorView;depth=1",
+)
+
+#: A healthy run: no error view at all.
+CLEAN_TRACE = ("E2E:VIEW;category=sitemap;view=HomepageMenu;depth=1",)
+
+
+def _run_assert(tmp_path: Path, monkeypatch, lines: Sequence[str], **params: object):
+    """Run a launch plus one assert step against a scripted trace."""
+    scenario = find_scenario("smoke/launch-and-poll")
+    steps = parse_steps(
+        [{"action": "launch"}, {"action": "assert", **params}],
+        "test",
+    )
+    monkeypatch.setattr(
+        engine, "create_driver", lambda *args, **kwargs: _ScriptedEventsDriver(lines)
+    )
+    return run_scenario(
+        replace(scenario, steps=steps),
+        find_device(default_device_id()),
+        openhab_url="http://openhab.invalid:8080",
+        shim_url="http://shim.invalid:8080",
+        artifacts_dir=tmp_path / "artifacts",
+        dry_run=True,
+    )
+
+
+def test_recovery_assertion_passes_when_the_error_view_was_dismissed(
+    tmp_path: Path, monkeypatch
+) -> None:
+    result = _run_assert(tmp_path, monkeypatch, DISMISSED_ERROR_VIEW, no_error_view=True)
+    assert result.status == "passed", result.failures
+    assert result.steps[-1].status == "passed"
+    assert "current view: sitemap" in result.steps[-1].message
+
+
+def test_recovery_assertion_fails_when_the_error_view_is_still_shown(
+    tmp_path: Path, monkeypatch
+) -> None:
+    result = _run_assert(tmp_path, monkeypatch, UNDISMISSED_ERROR_VIEW, no_error_view=True)
+    assert result.status == "failed"
+    assert any("category=error" in failure for failure in result.failures)
+
+
+def test_current_error_view_assertion_passes_while_it_is_shown(
+    tmp_path: Path, monkeypatch
+) -> None:
+    result = _run_assert(tmp_path, monkeypatch, UNDISMISSED_ERROR_VIEW, no_error_view=False)
+    assert result.status == "passed", result.failures
+
+
+def test_current_error_view_assertion_fails_when_it_never_appeared(
+    tmp_path: Path, monkeypatch
+) -> None:
+    result = _run_assert(tmp_path, monkeypatch, CLEAN_TRACE, no_error_view=False)
+    assert result.status == "failed"
+    assert any(
+        "expected the current view to be the error view" in failure
+        for failure in result.failures
+    )
+
+
+def test_history_assertion_fails_for_a_dismissed_error_view(
+    tmp_path: Path, monkeypatch
+) -> None:
+    result = _run_assert(tmp_path, monkeypatch, DISMISSED_ERROR_VIEW, never_error_view=True)
+    assert result.status == "failed"
+    assert any("ERRORVIEW" in failure for failure in result.failures)
+
+
+def test_history_assertion_passes_without_an_error_view(tmp_path: Path, monkeypatch) -> None:
+    result = _run_assert(tmp_path, monkeypatch, CLEAN_TRACE, never_error_view=True)
+    assert result.status == "passed", result.failures
+
+
 def test_png_helper_produces_a_valid_header() -> None:
     data = png_bytes(2, 2)
     assert data.startswith(b"\x89PNG\r\n\x1a\n")
@@ -138,8 +242,6 @@ def test_failure_is_reported_for_an_unknown_settings_fixture(tmp_path: Path) -> 
     scenario = find_scenario("smoke/launch-and-poll")
     # A scenario object is frozen; rebuild it with a broken fixture reference to
     # assert the engine reports the problem instead of crashing.
-    from dataclasses import replace
-
     broken = replace(scenario, fixture="does-not-exist")
     result = run_scenario(
         broken,

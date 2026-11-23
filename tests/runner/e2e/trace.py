@@ -260,7 +260,54 @@ class TraceLog:
             self.poll()
 
     def has_error_view(self) -> bool:
+        """History: True once an ``ERRORVIEW`` event has been observed.
+
+        The app emits ``ERRORVIEW`` when it shows or updates the full-screen
+        error view and emits nothing when the error is dismissed, so this stays
+        true for the rest of the run after a recovery. It answers "did an error
+        view appear", never "is one shown now"; use
+        :meth:`is_showing_error_view` for the current state.
+        """
         return any(event.event == "ERRORVIEW" for event in self._events)
+
+    def current_view_event(self) -> Optional[TraceEvent]:
+        """The newest ``VIEW`` event, or ``None`` before the first one.
+
+        ``ViewStack`` emits one ``VIEW`` line for every stack change (push,
+        pop, switch, reset), including the change that dismisses the error
+        view, so the newest line describes the view that is on screen now.
+        """
+        for event in reversed(self._events):
+            if event.event == "VIEW":
+                return event
+        return None
+
+    def current_view_category(self) -> Optional[str]:
+        """Category of the current view, e.g. ``sitemap`` or ``error``.
+
+        ``None`` when no ``VIEW`` event with a ``category`` field has been
+        observed yet, so callers can distinguish "not known yet" from a real
+        category.
+        """
+        event = self.current_view_event()
+        if event is None:
+            return None
+        return event.get("category")
+
+    def is_showing_error_view(self) -> bool:
+        """State: True while the full-screen error view is the current view.
+
+        Derived from the newest ``VIEW`` event instead of
+        :meth:`has_error_view`, so an error view that was shown and then
+        dismissed stops counting. Before the first ``VIEW`` line, the
+        historical ``ERRORVIEW`` is the only evidence available and is used
+        instead, so an error raised before the app reported a view is not
+        ignored.
+        """
+        category = self.current_view_category()
+        if category is None:
+            return self.has_error_view()
+        return category == "error"
 
     def describe(self, limit: int = 12) -> str:
         if not self._events:

@@ -137,7 +137,7 @@ a run.
 | `screenshot` | `name` | lower-case slug; stored as `NN-name.png` |
 | `command` | `item`, `value`, `via` (`rest`/`shim`) | `rest` talks to openHAB directly |
 | `wait_for_event` | `event`, `fields`, `contains`, `timeout_ms` | see trace events below |
-| `assert` | `shim_requests`, `golden`, `no_error_view`, `description` | at least one condition |
+| `assert` | `shim_requests`, `golden`, `no_error_view`, `never_error_view`, `description` | at least one condition |
 
 ### `assert`
 
@@ -168,8 +168,37 @@ Goldens live in `tests/goldens/<device>/<name>.png`. Capture them with
 `--update-goldens`, review the image, then commit it. A golden assertion is
 compared against the screenshot captured earlier in the same scenario.
 
-`no_error_view: true` fails if the app reported an `ERRORVIEW` trace event;
-`no_error_view: false` asserts the opposite.
+`no_error_view` is a statement about the view the app is showing _now_, not
+about the whole run:
+
+```yaml
+- action: assert
+  description: The error view was dismissed and the sitemap is back.
+  no_error_view: true
+```
+
+`no_error_view: true` fails when the current view is the error view;
+`no_error_view: false` fails unless the error view is the current view. The
+current view is the `category` of the newest `VIEW` trace event, so an error
+view that was shown and then dismissed satisfies `true` again. That is what
+makes a recovery assertion — critical error, then a valid response, then the
+sitemap — provable instead of screenshot-only.
+
+`never_error_view: true` is the historical check, for scenarios that must prove
+an error view never appeared at all, for example a healthy run or a temporary
+error that must stay a toast:
+
+```yaml
+- action: assert
+  description: A command error must never raise the full-screen error view.
+  never_error_view: true
+```
+
+It fails when any `ERRORVIEW` event was observed, even if the error view was
+dismissed later. Use it when "it never happened" is the point, and
+`no_error_view` when "it is not happening now" is the point. `ERRORVIEW` is
+emitted when the app shows _and_ when it updates the error view, and never when
+it dismisses it, so it cannot answer the current-state question on its own.
 
 ## Trace events
 
@@ -201,6 +230,13 @@ The parser (`e2e/trace.py`) splits on `;`, then on the first `=`, keeps unknown
 events and fields, and timestamps each line on receipt. Lines that are not trace
 lines are ignored. Assertions must use structured fields, not rendered text: the
 toast text is localised and is not a stable assertion surface.
+
+`VIEW` is emitted on every view-stack change (push, pop, switch and reset), so
+the newest `VIEW` event describes the view that is on screen now — including the
+change that dismisses the error view. `ERRORVIEW` only records that the error
+view was shown or updated, never that it was cleared. `TraceLog` exposes this
+split as `current_view_category()`/`is_showing_error_view()` against
+`has_error_view()`.
 
 ```yaml
 - action: wait_for_event

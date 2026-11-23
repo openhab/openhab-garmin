@@ -68,4 +68,5 @@ steps:
     name: empty-page-toast
 
   - action: assert
-    no_error_view: true
+    description: The empty page stays a toast, never a full-screen error.
+    never_error_view: true

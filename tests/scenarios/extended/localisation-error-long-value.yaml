@@ -40,8 +40,8 @@ covers:
   - errors.critical
 manual_checks:
   - >-
-    Only the ERRORVIEW existence is machine-asserted; the long dynamic value
-    wrapping is review-only.
+    The error view being the current view is machine-asserted; the long dynamic
+    value wrapping is review-only.
 
 settings:
   sitemap_0: garmin_localisation_long
@@ -70,4 +70,5 @@ steps:
     name: error-long-value
 
   - action: assert
+    description: The full-screen error view is the current view.
     no_error_view: false

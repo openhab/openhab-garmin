@@ -32,8 +32,8 @@ covers:
   - errors.codes-messages
 manual_checks:
   - >-
-    Only the ERRORVIEW id is machine-asserted; the wrapped or truncated
-    rendered text is review-only.
+    The ERRORVIEW id and the error view being the current view are
+    machine-asserted; the wrapped or truncated rendered text is review-only.
 
 settings:
   sitemap_0: garmin_localisation

@@ -289,6 +289,68 @@ def test_error_view_detection() -> None:
     assert log.has_error_view()
 
 
+def test_is_showing_error_view_tracks_the_current_view_not_the_history() -> None:
+    buffer = _Buffer()
+    log = TraceLog(buffer)
+    buffer.lines = [
+        "E2E:VIEW;category=sitemap;view=LoadingView;depth=1",
+        "E2E:ERROR;kind=critical;id=communication.sitemap;code=404;source=sitemap",
+        "E2E:ERRORVIEW;id=S:-104;code=-",
+        "E2E:VIEW;category=error;view=ErrorView;depth=1",
+    ]
+    log.poll()
+    assert log.current_view_category() == "error"
+    assert log.is_showing_error_view()
+    assert log.has_error_view()
+
+    # Recovering from a critical error pops the error view and re-emits the
+    # view underneath it.
+    buffer.lines.append("E2E:VIEW;category=sitemap;view=HomepageMenu;depth=1")
+    log.poll()
+    assert log.current_view_category() == "sitemap"
+    assert not log.is_showing_error_view()
+    assert log.has_error_view(), "the run still contains an error view"
+
+
+def test_current_view_category_ignores_non_view_events() -> None:
+    buffer = _Buffer()
+    log = TraceLog(buffer)
+    buffer.lines = ["E2E:VIEW;category=settings;view=SettingsMenu;depth=2"]
+    log.poll()
+    buffer.lines.append("E2E:SITEMAP;result=error;code=-402;bytes=-")
+    log.poll()
+    assert log.current_view_category() == "settings"
+
+
+def test_current_view_category_is_unknown_before_the_first_view() -> None:
+    log = TraceLog(_Buffer())
+    assert log.current_view_category() is None
+    assert log.current_view_event() is None
+    assert not log.is_showing_error_view()
+
+
+def test_is_showing_error_view_falls_back_to_history_before_the_first_view() -> None:
+    buffer = _Buffer()
+    log = TraceLog(buffer)
+    buffer.lines = ["E2E:ERRORVIEW;id=S:-104;code=-"]
+    log.poll()
+    assert log.current_view_category() is None
+    assert log.is_showing_error_view(), "an error raised before any view must not be ignored"
+
+
+def test_error_view_history_survives_the_recovery() -> None:
+    buffer = _Buffer()
+    log = TraceLog(buffer)
+    buffer.lines = [
+        "E2E:ERRORVIEW;id=UI:CONFIG;code=-",
+        "E2E:VIEW;category=error;view=ErrorView;depth=1",
+        "E2E:VIEW;category=sitemap;view=HomepageMenu;depth=1",
+    ]
+    log.poll()
+    assert not log.is_showing_error_view()
+    assert log.has_error_view()
+
+
 def test_describe_is_bounded() -> None:
     buffer = _Buffer()
     log = TraceLog(buffer)

@@ -27,11 +27,6 @@ covers:
   - errors.codes-messages
 manual_checks:
   - >-
-    The app has no trace event for dismissing the error view (ERRORVIEW is
-    emitted when it is shown, not when it is cleared), so the `recovered`
-    screenshot is the visual proof that the sitemap is back. The trace assertion
-    proves only that polling continued and a 200 arrived.
-  - >-
     The -1001 and -403 critical paths are not exercised, and neither are the
     NO PHONE, INVRES and UNRES messages.
 
@@ -98,3 +93,9 @@ steps:
 
   - action: screenshot
     name: recovered
+
+  - action: assert
+    description: >-
+      The error view was dismissed: the current view is the sitemap view again,
+      without a restart.
+    no_error_view: true

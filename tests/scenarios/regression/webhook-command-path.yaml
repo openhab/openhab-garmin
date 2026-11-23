@@ -71,4 +71,5 @@ steps:
     name: webhook-command
 
   - action: assert
-    no_error_view: true
+    description: No error view appears on a successful command.
+    never_error_view: true

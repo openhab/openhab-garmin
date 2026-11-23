@@ -84,4 +84,5 @@ steps:
     name: error-memory-class
 
   - action: assert
+    description: The full-screen error view is the current view.
     no_error_view: false

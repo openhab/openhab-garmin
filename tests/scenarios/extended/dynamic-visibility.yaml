@@ -78,4 +78,5 @@ steps:
     name: visibility-restored
 
   - action: assert
-    no_error_view: true
+    description: No error view interrupts the dynamic update.
+    never_error_view: true

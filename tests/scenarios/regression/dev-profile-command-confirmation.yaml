@@ -103,4 +103,5 @@ steps:
       status: 200
 
   - action: assert
-    no_error_view: true
+    description: No error view appears on the confirmation path.
+    never_error_view: true

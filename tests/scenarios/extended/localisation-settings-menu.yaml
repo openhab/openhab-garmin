@@ -85,5 +85,5 @@ steps:
     name: localisation-settings-bottom
 
   - action: assert
-    description: The settings menu itself must not raise an error.
-    no_error_view: true
+    description: The settings menu itself must never raise an error.
+    never_error_view: true
