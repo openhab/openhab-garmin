@@ -1,0 +1,4 @@
+LISTEN 0      4096       127.0.0.1:8080       0.0.0.0:*    users:(("java",pid=4123,fd=87))
+LISTEN 0      128          0.0.0.0:8787       0.0.0.0:*    users:(("nginx",pid=842,fd=6))
+LISTEN 0      128             [::]:9999          [::]:*    users:(("node",pid=404,fd=21))
+LISTEN 0      128                *:9090             *:*     
