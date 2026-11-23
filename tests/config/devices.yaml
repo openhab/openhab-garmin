@@ -1,160 +1,366 @@
 # Device matrix for the E2E harness.
 #
 # ===========================================================================
-# STATUS: PROVISIONAL CANDIDATE SET - NOT THE APPROVED MATRIX.
+# STATUS: APPROVED MATRIX (issue #366, part of #140).
 #
-# This list exists so scenarios and the CLI have stable device ids. It is a
-# first guess at a representative subset and makes no claim of build-variant
-# coverage. The approved matrix, its variant-to-device coverage table and the
-# automated coverage check are tracked in issue #366 (part of #140):
+# The subset is the smallest one that covers every build variant produced by
+# monkey.jungle and manifest.xml: one device per variant combination. Each
+# entry records its resolved combination and the tiers it runs.
 #
-#   https://github.com/openhab/openhab-garmin/issues/366
+# The coverage check is enforced by tests/runner/tests/test_variants.py and
+# can be inspected with:
 #
-# Do not describe the scenarios in this repository as covering every build
-# variant until #366 lands and its coverage check passes.
+#   cd tests/runner && python -m e2e variants
+#
+# Re-run it whenever manifest.xml, the monkey.jungle annotations/resource
+# paths or this file change. Dimensions, the mapping table, the (currently
+# empty) waiver list and the re-evaluation rule are documented in
+# tests/docs/devices.md.
 # ===========================================================================
 #
 # `id` is what scenarios and the CLI use. `product` is the Connect IQ product
 # identifier passed to `monkeyc --device` and `monkeydo`, and must exist in
 # manifest.xml.
 #
-# `input` drives which interaction primitives a scenario may use:
-#   button       - only button events (up/down/enter/back/start)
-#   touch        - only taps
-#   touch+button - both
+# `input` is the device's interaction capability, not its build variant:
+#   button       - no touch screen; scenarios use button events only
+#   touch        - the app's navigation path is touch-only; scenarios tap
+#   touch+button - both work; UI scenarios should exercise both
+# Button-build devices with a touch screen (fenix 7, fr965, edge 850) are
+# `touch+button`. "Both input methods" is a capability, not a variant: a
+# device that supports both still builds the `button` annotation variant.
 #
-# `screen` is used to size the simulator window and to derive tap coordinates.
-# The values are the CIQ simulator's device resolutions; verify them once on a
-# new SDK and adjust here rather than in scenarios.
+# `screen` is the Connect IQ simulator resolution (`display.location` in the
+# SDK 9.3.0 device definition). It sizes the simulator window and derives tap
+# coordinates; adjust it here, never in a scenario.
 #
-# `tier` records how far a device is expected to be covered:
-#   protocol - sitemap polling and command paths only (no reliable input)
-#   ui       - full menu navigation and screenshots
+# `tiers` lists the suites this device runs:
+#   protocol - sitemap polling, request/command paths, trace events (cheap)
+#   ui       - menu navigation and screenshot goldens (expensive)
+# Every matrix device runs `protocol`. `ui` runs only on the interaction
+# representatives: fenix6pro, venu2, fenix7, fenix847mm, edge540 and edge1050.
 #
-# `variants` is an optional list of `dimension:value` tags. The dimensions that
-# #366's coverage table uses are:
-#   input          button | touch | touch+button
-#   ciq_tier       the Connect IQ capability tier of the product
-#   edge_form      button | touch
-#   edge_resources short | tall
-#   screen         round | rectangular
-#   menu           actionmenu | full
-#   source         config paths used by the device (see source/config/README.md)
-#   capability     wifi | glance | neither
-#
-# Tags are additive and optional: a device may carry none, some or all of them.
-# The coverage check in #366 will read this field; nothing in the harness
-# requires it yet, so adding a tag later needs no code change.
+# `variants` is the resolved build-variant tuple. It must equal the tuple
+# resolved from monkey.jungle; the coverage test fails on any difference.
+# Dimension values are documented in tests/docs/devices.md:
+#   ciq_tier        pre400 | 400plus | 510plus
+#   input           button | touch
+#   screen          round | rectangular
+#   menu            actionmenu | fullmenu
+#   edge_resources  none | short | tall
+#   settings_entry  footer | menu-item
+#   config          source/config variant, e.g. default | fenix6pro | ...
 #
 # `notes` is free-form operator context.
 
 version: 1
 default: fenix7
 
+# Deliberate gaps: a combination with no device must be listed here with a
+# reason. A waiver that matches nothing, duplicates a covered combination or
+# lacks a reason fails the coverage check. The approved matrix needs none,
+# because the protocol tier makes one device per combination affordable.
+waivers: []
+
 devices:
-  - id: fenix7
-    product: fenix7
+  # CIQ < 4.0.0
+  - id: fenix6pro
+    product: fenix6pro
     family: fenix
     input: button
     screen: { shape: round, width: 260, height: 260 }
-    tier: ui
+    tiers: [protocol, ui]
     variants:
+      - ciq_tier:pre400
       - input:button
       - screen:round
-    notes: Provisional candidate. Button-only round watch.
+      - menu:actionmenu
+      - edge_resources:none
+      - settings_entry:footer
+      - config:fenix6pro
+    notes: >-
+      Pre-4.0 button watch with the fenix6pro Config override. UI representative
+      for the pre-4.0 tier and the settings footer.
 
+  - id: fr945lte
+    product: fr945lte
+    family: forerunner
+    input: button
+    screen: { shape: round, width: 240, height: 240 }
+    tiers: [protocol]
+    variants:
+      - ciq_tier:pre400
+      - input:button
+      - screen:round
+      - menu:actionmenu
+      - edge_resources:none
+      - settings_entry:footer
+      - config:25deg-select
+    notes: >-
+      Pre-4.0 select-button position variant (25 degrees); the only device with
+      this config.
+
+  # CIQ 4.0.0 to 5.0.0
+  - id: venu2
+    product: venu2
+    family: venu
+    input: touch
+    screen: { shape: round, width: 416, height: 416 }
+    tiers: [protocol, ui]
+    variants:
+      - ciq_tier:400plus
+      - input:touch
+      - screen:round
+      - menu:actionmenu
+      - edge_resources:none
+      - settings_entry:menu-item
+      - config:default
+    notes: >-
+      UI representative for the 4.0-5.0 tier and touch-only round watches.
+
+  - id: venusq2
+    product: venusq2
+    family: venu
+    input: touch
+    screen: { shape: rectangular, width: 320, height: 360 }
+    tiers: [protocol]
+    variants:
+      - ciq_tier:400plus
+      - input:touch
+      - screen:rectangular
+      - menu:actionmenu
+      - edge_resources:none
+      - settings_entry:menu-item
+      - config:venu2sq
+    notes: >-
+      Square-screen Venu config override. venusq2m shares the combination.
+
+  - id: edgeexplore2
+    product: edgeexplore2
+    family: edge
+    input: touch
+    screen: { shape: rectangular, width: 240, height: 400 }
+    tiers: [protocol]
+    variants:
+      - ciq_tier:400plus
+      - input:touch
+      - screen:rectangular
+      - menu:fullmenu
+      - edge_resources:tall
+      - settings_entry:menu-item
+      - config:edge-x40-touch
+    notes: >-
+      Only 4.0-5.0 Edge device: tall resources, full menu, touch-only.
+
+  # CIQ >= 5.1.0 - watches
   - id: fenix847mm
     product: fenix847mm
     family: fenix
     input: touch+button
-    screen: { shape: round, width: 416, height: 416 }
-    tier: ui
+    screen: { shape: round, width: 454, height: 454 }
+    tiers: [protocol, ui]
     variants:
-      - input:touch+button
+      - ciq_tier:510plus
+      - input:button
       - screen:round
-    notes: Provisional candidate. Round watch with touch and buttons.
+      - menu:actionmenu
+      - edge_resources:none
+      - settings_entry:footer
+      - config:no-left-padding
+    notes: >-
+      UI representative for the left-aligned menu layout used by fenix 8+ and
+      forerunner x65+: the item content starts at the screen edge and selection
+      is a background highlight. Touch and buttons both work.
+
+  - id: fenix7
+    product: fenix7
+    family: fenix
+    input: touch+button
+    screen: { shape: round, width: 260, height: 260 }
+    tiers: [protocol, ui]
+    variants:
+      - ciq_tier:510plus
+      - input:button
+      - screen:round
+      - menu:actionmenu
+      - edge_resources:none
+      - settings_entry:footer
+      - config:default
+    notes: >-
+      Default device and UI representative for the default Config layout. Touch
+      and buttons both work. 29 products share this combination.
+
+  - id: fr265
+    product: fr265
+    family: forerunner
+    input: touch+button
+    screen: { shape: round, width: 416, height: 416 }
+    tiers: [protocol]
+    variants:
+      - ciq_tier:510plus
+      - input:button
+      - screen:round
+      - menu:actionmenu
+      - edge_resources:none
+      - settings_entry:footer
+      - config:no-left-padding-27deg
+    notes: >-
+      Left-aligned menu with the 27-degree select-button position.
 
   - id: fr965
     product: fr965
     family: forerunner
     input: touch+button
     screen: { shape: round, width: 454, height: 454 }
-    tier: ui
+    tiers: [protocol]
     variants:
-      - input:touch+button
+      - ciq_tier:510plus
+      - input:button
       - screen:round
-    notes: Provisional candidate.
+      - menu:actionmenu
+      - edge_resources:none
+      - settings_entry:footer
+      - config:no-left-padding-25deg
+    notes: >-
+      Left-aligned menu with the 25-degree select-button position.
 
   - id: venu3
     product: venu3
     family: venu
     input: touch
     screen: { shape: round, width: 454, height: 454 }
-    tier: ui
+    tiers: [protocol]
     variants:
+      - ciq_tier:510plus
       - input:touch
       - screen:round
-    notes: Provisional candidate. Touch-only round watch.
+      - menu:actionmenu
+      - edge_resources:none
+      - settings_entry:menu-item
+      - config:default
+    notes: >-
+      Settings as a menu item on a touch-only round watch.
 
-  - id: vivoactive5
-    product: vivoactive5
-    family: vivoactive
+  - id: venux1
+    product: venux1
+    family: venu
     input: touch
-    screen: { shape: round, width: 390, height: 390 }
-    tier: ui
+    screen: { shape: rectangular, width: 448, height: 486 }
+    tiers: [protocol]
     variants:
+      - ciq_tier:510plus
       - input:touch
-      - screen:round
-    notes: Provisional candidate.
+      - screen:rectangular
+      - menu:actionmenu
+      - edge_resources:none
+      - settings_entry:menu-item
+      - config:venux1
+    notes: >-
+      Only rectangular watch: ActionMenu on a rectangular Venu screen with the
+      venux1 Config override.
 
+  # CIQ >= 5.1.0 - Edge cycling computers
   - id: edge540
     product: edge540
     family: edge
     input: button
     screen: { shape: rectangular, width: 246, height: 322 }
-    tier: ui
+    tiers: [protocol, ui]
     variants:
+      - ciq_tier:510plus
       - input:button
       - screen:rectangular
-      - edge_form:button
-    notes: Provisional candidate. Button-only Edge; settings entry is a dedicated home-screen item.
+      - menu:fullmenu
+      - edge_resources:short
+      - settings_entry:menu-item
+      - config:edge-x40-button
+    notes: >-
+      UI representative for button Edge, short resources and the settings
+      menu item. No touch screen.
 
   - id: edge550
     product: edge550
     family: edge
     input: button
-    screen: { shape: rectangular, width: 246, height: 322 }
-    tier: ui
+    screen: { shape: rectangular, width: 420, height: 600 }
+    tiers: [protocol]
     variants:
+      - ciq_tier:510plus
       - input:button
       - screen:rectangular
-      - edge_form:button
+      - menu:fullmenu
+      - edge_resources:short
+      - settings_entry:menu-item
+      - config:edge-x50-550
     notes: >-
-      Provisional candidate. Menu focus indicator workaround (thin left rule),
-      see docs/USAGE.md.
+      x50 button generation: inverted focus indicator in night mode.
 
   - id: edge850
     product: edge850
     family: edge
     input: touch+button
-    screen: { shape: rectangular, width: 282, height: 470 }
-    tier: ui
+    screen: { shape: rectangular, width: 420, height: 600 }
+    tiers: [protocol]
     variants:
-      - input:touch+button
+      - ciq_tier:510plus
+      - input:button
       - screen:rectangular
-      - edge_form:touch
+      - menu:fullmenu
+      - edge_resources:short
+      - settings_entry:menu-item
+      - config:edge-x50-850
     notes: >-
-      Provisional candidate. Focus indicator is not drawn; touch is the
-      supported navigation path.
+      x50 button build with a touch screen; touch and buttons both work.
+
+  - id: edge1060
+    product: edge1060
+    family: edge
+    input: touch+button
+    screen: { shape: rectangular, width: 480, height: 800 }
+    tiers: [protocol]
+    variants:
+      - ciq_tier:510plus
+      - input:button
+      - screen:rectangular
+      - menu:fullmenu
+      - edge_resources:tall
+      - settings_entry:menu-item
+      - config:edge-x50-1060
+    notes: >-
+      Only button-build Edge with tall resources.
+
+  - id: edge1040
+    product: edge1040
+    family: edge
+    input: touch
+    screen: { shape: rectangular, width: 282, height: 470 }
+    tiers: [protocol]
+    variants:
+      - ciq_tier:510plus
+      - input:touch
+      - screen:rectangular
+      - menu:fullmenu
+      - edge_resources:tall
+      - settings_entry:menu-item
+      - config:edge-x40-touch
+    notes: >-
+      x40 touch generation with tall resources; night-mode focus handling
+      differs from the x50 touch generation.
 
   - id: edge1050
     product: edge1050
     family: edge
     input: touch+button
     screen: { shape: rectangular, width: 480, height: 800 }
-    tier: ui
+    tiers: [protocol, ui]
     variants:
-      - input:touch+button
+      - ciq_tier:510plus
+      - input:touch
       - screen:rectangular
-      - edge_form:touch
-    notes: Provisional candidate.
+      - menu:fullmenu
+      - edge_resources:tall
+      - settings_entry:menu-item
+      - config:edge-x50-touch
+    notes: >-
+      UI representative for touch Edge and tall resources. Touch and buttons
+      both work.

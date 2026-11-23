@@ -124,6 +124,7 @@ class Device:
     tier: str
     notes: str = ""
     variants: Tuple[str, ...] = ()
+    tiers: Tuple[str, ...] = ()
 
     @property
     def supports_touch(self) -> bool:
@@ -133,12 +134,21 @@ class Device:
     def supports_buttons(self) -> bool:
         return self.input in ("button", "touch+button")
 
+    @property
+    def tiers_run(self) -> Tuple[str, ...]:
+        """Tiers this device runs, e.g. ``("protocol", "ui")``.
+
+        ``tiers`` is the current field; ``tier`` remains the first entry for
+        callers that predate the list and for files that still use one tier.
+        """
+        return self.tiers or (self.tier,)
+
 
 _DEVICE_INPUTS = ("button", "touch", "touch+button")
 _DEVICE_TIERS = ("protocol", "ui")
 
-#: Optional ``dimension:value`` tags used by the build-variant coverage table
-#: tracked in issue #366. Dimensions are documented in ``config/devices.yaml``.
+#: Optional ``dimension:value`` tags describing the resolved build variant.
+#: Dimensions and the coverage check are documented in ``tests/docs/devices.md``.
 _VARIANT_TAG = re.compile(r"^[a-z0-9_]+:[a-z0-9+_-]+$")
 
 
@@ -162,6 +172,17 @@ def load_devices(path: Path = DEVICES_FILE) -> Tuple[Device, ...]:
         raw_variants = raw.get("variants", [])
         if isinstance(raw_variants, (str, bytes)) or not isinstance(raw_variants, (list, tuple)):
             raise ConfigError(f"{where}: 'variants' must be a list of 'dimension:value' tags")
+        raw_tiers = raw.get("tiers")
+        if raw_tiers is None:
+            tiers: Tuple[str, ...] = (str(raw.get("tier", "ui")),)
+        elif isinstance(raw_tiers, (str, bytes)) or not isinstance(raw_tiers, (list, tuple)):
+            raise ConfigError(f"{where}: 'tiers' must be a list of 'tier' values")
+        else:
+            tiers = tuple(str(tier) for tier in raw_tiers)
+            if not tiers:
+                raise ConfigError(f"{where}: 'tiers' must not be empty")
+            if len(set(tiers)) != len(tiers):
+                raise ConfigError(f"{where}: 'tiers' must not repeat a tier")
         try:
             device_id = str(raw["id"])
             screen = raw["screen"]
@@ -173,9 +194,10 @@ def load_devices(path: Path = DEVICES_FILE) -> Tuple[Device, ...]:
                 screen_shape=str(screen["shape"]),
                 screen_width=int(screen["width"]),
                 screen_height=int(screen["height"]),
-                tier=str(raw.get("tier", "ui")),
+                tier=tiers[0],
                 notes=str(raw.get("notes", "")),
                 variants=tuple(str(tag) for tag in raw_variants),
+                tiers=tiers,
             )
         except (KeyError, TypeError, ValueError) as error:
             raise ConfigError(f"{where}: {error}") from None
@@ -184,13 +206,17 @@ def load_devices(path: Path = DEVICES_FILE) -> Tuple[Device, ...]:
                 raise ConfigError(
                     f"{where}: variant tag {tag!r} must look like 'dimension:value'"
                 )
+        dimensions = [tag.partition(":")[0] for tag in device.variants]
+        if len(set(dimensions)) != len(dimensions):
+            raise ConfigError(f"{where}: 'variants' names a dimension more than once")
         if device.id in seen:
             raise ConfigError(f"{where}: duplicate device id {device.id!r}")
         seen.add(device.id)
         if device.input not in _DEVICE_INPUTS:
             raise ConfigError(f"{where}: input must be one of {_DEVICE_INPUTS}")
-        if device.tier not in _DEVICE_TIERS:
-            raise ConfigError(f"{where}: tier must be one of {_DEVICE_TIERS}")
+        for tier in device.tiers:
+            if tier not in _DEVICE_TIERS:
+                raise ConfigError(f"{where}: tier must be one of {_DEVICE_TIERS}")
         devices.append(device)
     return tuple(devices)
 
