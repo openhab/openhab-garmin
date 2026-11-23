@@ -43,9 +43,9 @@
         Background scope keeps them available in every mode, including Wi-Fi
         sync, the background service, and glance mode.
     -->
-    <string id="ErrorUnknownException" scope="background">Unknown Exception</string>
+    <string id="ErrorUnknownException" scope="background">Unknown exception</string>
     <string id="ErrorUnknownGlance" scope="background">Unknown error</string>
-    <string id="ErrorSyncPrefix" scope="background">Comm Error $1$</string>
+    <string id="ErrorSyncPrefix" scope="background">Comm error $1$</string>
     <string id="ErrorSitemapSource" scope="background">Sitemap</string>
     <string id="ErrorCommandSource" scope="background">Command</string>
 
@@ -80,10 +80,10 @@
     <string id="ErrorJsonNotArray" scope="background">'$1$' is not an Array</string>
     <string id="ErrorJsonNotDictionary" scope="background">'$1$' is not a Dictionary</string>
     <string id="ErrorJsonNotString" scope="background">'$1$' is not a String</string>
-    <string id="ErrorStateNotNumeric" scope="background">state is not numeric</string>
+    <string id="ErrorStateNotNumeric" scope="background">State is not numeric</string>
     <string id="ErrorLabelMissingState" scope="background">Label '$1$' does not have label before the [state]</string>
     <string id="ErrorHomepageNoElements" scope="background">Homepage contains no elements</string>
-    <string id="ErrorHomepageElementMissing" scope="background">Homepage: homepage element missing</string>
+    <string id="ErrorHomepageElementMissing" scope="background">Homepage element missing</string>
     <string id="ErrorPageTitleMissing" scope="background">Page title is missing</string>
     <string id="ErrorFrameLabelMissing" scope="background">Frame label is missing</string>
     <string id="ErrorUnsupportedElementType" scope="background">Unsupported element type '$1$'.</string>
@@ -102,6 +102,6 @@
     <string id="ErrorSwitchValueMissing" scope="background">Switch: value is missing from state description</string>
     <string id="ErrorSwitchLabelMissing" scope="background">Switch: label is missing from state description</string>
     <string id="ErrorElementNotSupported" scope="background">Element '$1$' is not supported</string>
-    <string id="ErrorUnsupportedState" scope="background">OnOffSwitchMenuItem: state '$1$' is not supported</string>
-    <string id="ErrorNoCommandTransport" scope="background">CommandSyncDelegate: neither REST API nor Webhook are available</string>
+    <string id="ErrorUnsupportedState" scope="background">Toggle switch: unsupported state '$1$'.</string>
+    <string id="ErrorNoCommandTransport" scope="background">Cannot send command: REST API and Webhook unavailable.</string>
 </strings>
