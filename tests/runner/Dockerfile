@@ -20,12 +20,16 @@ ENV DEBIAN_FRONTEND=noninteractive \
 
 # wine32:i386 is required: the simulator is a 32-bit Windows binary, and a
 # wine64-only install fails at launch with an opaque loader error.
+#
+# default-jre-headless is required by `linux/bin/monkeyc`, which is a shell
+# wrapper around monkeybrains.jar; without a JRE the image cannot build a PRG.
 RUN dpkg --add-architecture i386 \
     && apt-get update \
     && apt-get install -y --no-install-recommends \
         ca-certificates \
         curl \
         wget \
+        default-jre-headless \
         python3 \
         python3-venv \
         xvfb \
