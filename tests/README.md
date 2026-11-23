@@ -26,6 +26,7 @@ This directory is the foundation tracked by
 | Device matrix covering all 17 build variants from `monkey.jungle` and `manifest.xml` | approved in [#366](https://github.com/openhab/openhab-garmin/issues/366); enforced by `runner/tests/test_variants.py` |
 | Protocol-tier scenarios (shim trace + `E2E:` trace events) | ready; need the debug trace build from [#364](https://github.com/openhab/openhab-garmin/issues/364) |
 | Wine simulator driver | contract fixed, implementation skeleton only (see [docs/simulator-driver.md](docs/simulator-driver.md)) |
+| Wine feasibility spike | ready to run on an approved Linux host with Docker and the SDK (see [spike/README.md](spike/README.md), issue [#370](https://github.com/openhab/openhab-garmin/issues/370)) |
 
 Nothing here provisions a VM, changes infrastructure, or ships the Connect IQ SDK.
 
@@ -131,6 +132,25 @@ error.
   screenshots before committing them.
 - `--skip-events` skips trace-event assertions (for builds without `(:debug)`).
 - `--prg <file>` reuses a build instead of compiling.
+
+## Wine spike (#370)
+
+`spike/` is a separate, opt-in experiment, not part of the harness run. It
+builds the same `runner` image, starts the simulator under Xvfb, launches the
+PRG with `monkeydo` on one button and one touch device, drives input and the
+`Simulation`/`Connection` menus, switches the language, measures polling and the
+escalation window, and writes a per-criterion verdict.
+
+```bash
+cd tests
+CIQ_SDK_HOST_PATH=/opt/garmin/connectiq-sdk-9.3.0 python -m spike run
+```
+
+The result is `tests/artifacts/spike/verdict.json` and `verdict.md`; both mark
+each #370 criterion `met`/`not-met`/`skipped` with evidence. The spike is never
+scheduled in CI; only its pure logic is covered by
+`runner/tests/test_spike.py`. Layout, flags, outputs and the decision rule are in
+[spike/README.md](spike/README.md).
 
 ## Scenarios
 
@@ -351,4 +371,5 @@ Do this once after the stack is up, and again after touching fixtures or the shi
 - [docs/localisation.md](docs/localisation.md) – language coverage, device choice and review-only assertions
 - [docs/sdk.md](docs/sdk.md) – SDK layout, version pinning, licence handling
 - [docs/simulator-driver.md](docs/simulator-driver.md) – driver contract and Wine plan
+- [spike/README.md](spike/README.md) – the #370 Wine feasibility spike and its verdict
 - [shim/README.md](shim/README.md) – shim control API and fault-script format

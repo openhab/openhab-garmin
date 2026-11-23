@@ -23,6 +23,25 @@ engine reports event and golden assertions as **skipped**, never passed.
 `pass` / `fail` / `not-implemented` per case. `--driver null` proves the harness
 itself works; `--driver wine` lists exactly what is still missing.
 
+## Feasibility spike first
+
+The contract above is implemented only if the [#370](https://github.com/openhab/openhab-garmin/issues/370)
+feasibility spike passes or partially passes. The spike is a separate package
+under [`spike/`](../spike/README.md); it runs the procedure against the same
+runner image and writes a verdict with one of three recommendations:
+
+- **pass** -- implement this driver and continue on Linux only;
+- **partial** -- record the failing capability, waive the affected scenarios and
+  keep the remaining tiers;
+- **fail** -- use a Windows guest with this same contract.
+
+The spike deliberately does **not** implement the driver. Its evidence answers
+the open questions this plan leaves: whether native menus are scriptable, whether
+a watch-face-only screenshot is obtainable, and whether the console timestamps
+are tight enough for polling assertions. Implement the driver against this
+contract once the verdict says it is worth it; do not let the spike's helper code
+become a second driver implementation.
+
 ## Why the Wine driver is a skeleton
 
 The investigation recorded in

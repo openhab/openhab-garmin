@@ -31,7 +31,9 @@ SDK cannot be compared with anyone else's.
 Both spellings are accepted because the Linux SDK archive and the Windows SDK
 archive use different directory layouts, and a contributor may have either.
 
-- `monkeyc` is required: the runner compiles the PRG from the checkout.
+- `monkeyc` is required: the runner compiles the PRG from the checkout. It is a
+  shell wrapper around `monkeybrains.jar`, so the runner image installs a
+  headless JRE; a host that runs `monkeyc` directly needs Java 11 or newer.
 - `monkeydo` is required to launch the app in the simulator.
 - `simulator.exe` is required for `ui`-tier scenarios only. Protocol-tier scenarios
   can build and assert without it (`e2e sdk-check` reports it as absent).
