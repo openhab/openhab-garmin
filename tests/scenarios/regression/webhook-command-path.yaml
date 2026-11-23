@@ -1,0 +1,74 @@
+# Regression: the webhook command path.
+#
+# With `restapi_0: false` and a webhook identifier, commands go to
+# `GET {url}webhook/{id}?action=sendCommand&itemName=...&command=...` instead of
+# `POST /rest/items/{name}` (docs/USAGE.md, "Sending Commands"). The shim sees
+# both the sitemap poll and the webhook request, so the two paths are
+# distinguishable in one trace.
+
+name: webhook-command-path
+description: With the REST API disabled, the command is sent to the webhook path.
+tier: ui
+suite: regression
+device: fenix7
+mode: ble
+fixture: webhook-only
+openhab:
+  profile: stable
+  sitemap: garmin_e2e
+  items:
+    E2E_Toggle: "OFF"
+language: eng
+timeout_s: 90
+
+covers:
+  - commands.paths
+manual_checks:
+  - >-
+    The webhook is answered by openHAB with 404 because the Webhook binding is
+    not installed in the fixture; the scenario asserts the request path, not a
+    successful openHAB-side webhook execution.
+  - A missing or incorrect webhook identifier is not exercised.
+
+steps:
+  - action: launch
+
+  - action: wait_for_request
+    method: GET
+    path_prefix: /rest/sitemaps/garmin_e2e
+    min_count: 1
+    timeout_ms: 30000
+
+  - action: reset_shim
+
+  # Widgets frame -> Toggle Switch.
+  - action: press
+    button: DOWN
+  - action: press
+    button: ENTER
+
+  - action: wait_for_request
+    method: GET
+    path_prefix: /webhook/e2e-webhook
+    min_count: 1
+    timeout_ms: 15000
+
+  - action: assert
+    description: The command used the webhook GET path, not the REST item path.
+    shim_requests:
+      method: GET
+      path_prefix: /webhook/e2e-webhook
+      min_count: 1
+
+  - action: assert
+    description: No REST command is sent when the REST API is disabled.
+    shim_requests:
+      method: POST
+      path_prefix: /rest/items/
+      max_count: 0
+
+  - action: screenshot
+    name: webhook-command
+
+  - action: assert
+    no_error_view: true

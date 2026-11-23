@@ -1,0 +1,106 @@
+# Regression: command confirmation depends on the dev openHAB profile.
+#
+# `commandConfirmMessage` is read from the sitemap JSON. The stable profile
+# does not reliably carry the parameter, so this scenario runs against the dev
+# milestone: selecting the element must open the confirmation dialog and send
+# nothing until the dialog is confirmed.
+#
+# The machine assertion is the empty shim trace after the first ENTER. If the
+# parameter is missing (for example on a profile that strips it), the first
+# ENTER sends the command directly and this assertion fails, which is the point.
+# The dialog itself is a screenshot for review because the harness cannot
+# assert rendered dialog text.
+
+name: dev-profile-command-confirmation
+description: Command confirmation is present on the dev profile and sends nothing before confirming.
+tier: ui
+suite: regression
+device: fenix7
+mode: ble
+fixture: fast-polling
+openhab:
+  profile: dev
+  sitemap: garmin_e2e
+  items:
+    E2E_GarageDoor: "OFF"
+language: eng
+timeout_s: 120
+
+covers:
+  - sitemap.parameters-mappings
+  - commands.types
+manual_checks:
+  - >-
+    Start the stack with the dev profile:
+    `COMPOSE_PROFILES=dev docker compose -f compose.yaml -f compose.dev.yaml up -d`.
+    On the stable profile `commandConfirmMessage` may be absent, which is why
+    this scenario is not part of the stable-profile runs.
+  - >-
+    The confirmation dialog rendering is review-only; the machine assertion is
+    that no command is sent before it is confirmed.
+
+steps:
+  - action: launch
+
+  - action: wait_for_request
+    method: GET
+    path_prefix: /rest/sitemaps/garmin_e2e
+    min_count: 1
+    timeout_ms: 30000
+
+  - action: reset_shim
+
+  # Widgets -> Generic Switch -> Metadata -> Garage Door Confirm.
+  - action: press
+    button: DOWN
+  - action: press
+    button: ENTER
+  - action: press
+    button: DOWN
+  - action: press
+    button: ENTER
+  - action: press
+    button: DOWN
+  - action: press
+    button: ENTER
+  - action: press
+    button: DOWN
+  - action: press
+    button: ENTER
+
+  # Selecting the element opens the confirmation dialog.
+  - action: press
+    button: ENTER
+
+  - action: screenshot
+    name: confirmation-dialog
+
+  - action: assert
+    description: Nothing is sent until the confirmation is accepted.
+    shim_requests:
+      method: POST
+      path_prefix: /rest/items/E2E_GarageDoor
+      max_count: 0
+
+  # ENTER accepts the dialog; only now must the command be sent.
+  - action: press
+    button: ENTER
+
+  - action: wait_for_request
+    method: POST
+    path_prefix: /rest/items/E2E_GarageDoor
+    min_count: 1
+    timeout_ms: 15000
+
+  - action: assert
+    description: Confirming sends exactly one command for the selected mapping.
+    shim_requests:
+      method: POST
+      path_prefix: /rest/items/E2E_GarageDoor
+      min_count: 1
+      max_count: 1
+      body_equals: "ON"
+      status: 200
+
+  - action: assert
+    no_error_view: true

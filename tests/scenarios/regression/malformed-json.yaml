@@ -20,6 +20,15 @@ openhab:
 language: eng
 timeout_s: 120
 
+covers:
+  - errors.critical
+  - errors.recovery
+  - errors.codes-messages
+manual_checks:
+  - >-
+    No trace event distinguishes a cached sitemap from a fresh one, so cache
+    invalidation before the error repeats is not asserted.
+
 shim:
   rules:
     - name: truncated

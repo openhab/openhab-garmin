@@ -1,0 +1,91 @@
+# Extended: an openHAB restart while the app is running.
+#
+# A restart is a period in which the sitemap polls fail and then succeed again
+# with the same sitemap. The runner has no way to stop and start the openHAB
+# container (the runner image has no Docker socket), so the outage window is
+# modelled with a finite shim fault: 20 failed 503 polls at the 250 ms interval,
+# then normal proxying. That is the app-observable part of the restart.
+#
+# The scenario asserts that the outage stays a temporary error (it is shorter
+# than the 10 s escalation window), that polling never stops, and that the app
+# returns to the sitemap without a restart. The container restart itself and a
+# changed sitemap after the return are explicit manual checks.
+
+name: openhab-restart
+description: The app survives an openHAB outage window and returns to the sitemap.
+tier: protocol
+suite: extended
+device: fenix7
+mode: ble
+fixture: fast-polling
+openhab:
+  profile: stable
+  sitemap: garmin_e2e
+  items:
+    E2E_Temperature: "20.0"
+language: eng
+timeout_s: 180
+
+covers:
+  - resilience.openhab-restart
+  - resilience.downtime
+manual_checks:
+  - >-
+    The openHAB container is not restarted by the scenario. With the stack up,
+    run `docker compose -f tests/compose/compose.yaml restart openhab-stable`
+    during this scenario (or repeat it by hand) to prove a real restart rather
+    than the modelled outage window.
+  - >-
+    A restart that returns with a changed sitemap (removed items or changed
+    structure) is not exercised; only an unchanged sitemap is.
+  - >-
+    Restart while the app is in Wi-Fi or offline mode, during startup, or while
+    a command is in flight is not exercised.
+
+shim:
+  rules:
+    - name: restart-window
+      match:
+        method: GET
+        path_prefix: /rest/sitemaps/garmin_e2e
+      times: 20
+      response:
+        status: 503
+        body: Service Unavailable
+
+steps:
+  - action: launch
+
+  # 20 failures at 250 ms is about 5 s: long enough to be a real outage, short
+  # enough to stay below the 10 s critical escalation threshold.
+  - action: wait_for_event
+    description: Polls during the restart window are temporary errors.
+    event: ERROR
+    fields:
+      kind: temporary
+    timeout_ms: 30000
+
+  - action: screenshot
+    name: restart-outage
+
+  # Polling must continue and the next poll after the window must succeed.
+  - action: wait_for_request
+    method: GET
+    path_prefix: /rest/sitemaps/garmin_e2e
+    min_count: 25
+    timeout_ms: 60000
+
+  - action: assert
+    description: A poll after the outage window is served from openHAB with 200.
+    shim_requests:
+      method: GET
+      path_prefix: /rest/sitemaps/garmin_e2e
+      min_count: 1
+      status: 200
+
+  - action: screenshot
+    name: after-restart
+
+  - action: assert
+    description: The app returns to the sitemap without a restart of its own.
+    no_error_view: true

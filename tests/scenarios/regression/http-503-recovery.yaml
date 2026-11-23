@@ -21,6 +21,16 @@ openhab:
 language: eng
 timeout_s: 120
 
+covers:
+  - errors.temporary
+  - errors.no-escalation
+  - errors.recovery
+  - resilience.connection-loss
+manual_checks:
+  - >-
+    This proves a three-poll sitemap outage stays temporary; it does not prove
+    loss and recovery of the phone, Wi-Fi or the local network.
+
 shim:
   rules:
     - name: unavailable

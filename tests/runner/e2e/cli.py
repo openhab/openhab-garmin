@@ -8,6 +8,7 @@ Subcommands:
     status            one-shot health summary of every component
     list-scenarios    list the scenarios that would run
     variants          show build-variant coverage of the device matrix
+    coverage          map #140 scope entries to scenarios and check for gaps
     contract-test     exercise a simulator driver against the driver contract
     validate-compose  static validation of the Compose stack (no Docker needed)
     pin-images        resolve/verify image digests from Docker Hub
@@ -42,6 +43,14 @@ from .contract import format_report as format_contract_report
 from .contract import run_contract
 from .contract import exit_code as contract_exit_code
 from .contract import summary as contract_summary
+from .coverage import (
+    COVERAGE_DOC,
+    CoverageProblem,
+    build_report,
+    document_is_current,
+    report_document,
+    write_markdown,
+)
 from .engine import run_scenario
 from .openhab import OpenHabClient, OpenHabError
 from .paths import tests_root
@@ -372,6 +381,45 @@ def _cmd_variants(args: argparse.Namespace) -> int:
     return EXIT_FAILURES if problems else EXIT_OK
 
 
+def _cmd_coverage(args: argparse.Namespace) -> int:
+    report = build_report()
+    problems = list(report.problems)
+
+    document_current = document_is_current(report)
+    if args.check and not document_current:
+        problems.append(
+            CoverageProblem(
+                "stale-document",
+                f"{COVERAGE_DOC} is out of date; run `python -m e2e coverage --write`",
+            )
+        )
+
+    if args.write:
+        output = Path(args.output) if args.output else COVERAGE_DOC
+        path = write_markdown(report, output)
+        document_current = True
+        print(f"wrote {path}")
+
+    if args.json:
+        document = dict(report_document(report))
+        document["document_current"] = document_current
+        document["ok"] = not problems
+        document["problems"] = [str(problem) for problem in problems]
+        _emit_json(document)
+    else:
+        print(f"scope entries: {len(report.entries)}")
+        print(f"covered:       {len(report.covered)}")
+        print(f"waived:        {len(report.waived)}")
+        print(f"empty:         {len(report.empty)}")
+        print(f"scenarios:     {report.scenario_files} file(s), {len(report.scenarios)} run(s)")
+        if args.check:
+            print(f"document:      {'current' if document_current else 'stale'}")
+        for problem in problems:
+            print(f"coverage: {problem}", file=sys.stderr)
+
+    return EXIT_FAILURES if problems else EXIT_OK
+
+
 def _cmd_list_scenarios(args: argparse.Namespace) -> int:
     scenarios = discover_scenarios(suite=args.suite)
     if args.tier:
@@ -556,6 +604,23 @@ def build_parser() -> argparse.ArgumentParser:
     variants.add_argument("--devices", help="device matrix (default: tests/config/devices.yaml)")
     variants.add_argument("--json", action="store_true", help="emit machine-readable JSON")
     variants.set_defaults(handler=_cmd_variants)
+
+    coverage = subparsers.add_parser(
+        "coverage", help="map the #140 scope to scenarios and check for gaps"
+    )
+    coverage.add_argument(
+        "--write",
+        action="store_true",
+        help="regenerate tests/docs/coverage.md from the scope and scenario metadata",
+    )
+    coverage.add_argument(
+        "--check",
+        action="store_true",
+        help="also fail when tests/docs/coverage.md is out of date",
+    )
+    coverage.add_argument("--output", help="coverage document path (default: tests/docs/coverage.md)")
+    coverage.add_argument("--json", action="store_true", help="emit machine-readable JSON")
+    coverage.set_defaults(handler=_cmd_coverage)
 
     contract = subparsers.add_parser("contract-test", help="exercise a simulator driver against its contract")
     contract.add_argument("--driver", choices=DRIVER_NAMES, default="null")

@@ -25,6 +25,8 @@ Optional::
     settings        app settings overrides merged onto `fixture`
     shim            {rules: [...]} fault script, see tests/shim/faults.py
     notes           free-form operator note
+    covers          scope ids from tests/config/scope.yaml, see e2e/scope.py
+    manual_checks   behaviours the scenario exercises but cannot assert yet
 
 A scenario declares either one `language` or a `languages` list. The matrix
 form expands into one scenario per language, with ``-<language>`` appended to
@@ -48,6 +50,7 @@ import yaml
 from shim.faults import ShimScriptError, parse_script
 
 from .config import SCENARIO_DIR, ConfigError, load_devices
+from .scope import find_unknown_ids, load_scope
 from .settings import KNOWN_PROPERTIES
 from .trace import EVENT_FIELDS, validate_match_fields
 
@@ -156,6 +159,33 @@ def _languages(mapping: Mapping[str, Any], where: str) -> Tuple[Tuple[str, ...],
             raise ScenarioError(f"{where}: languages[{index}] repeats {language!r}")
         languages.append(language)
     return tuple(languages), True
+
+
+def _string_list(value: Any, where: str) -> Tuple[str, ...]:
+    """Validate a non-empty, unique list of non-empty strings."""
+    if isinstance(value, (str, bytes)) or not isinstance(value, (list, tuple)):
+        raise ScenarioError(f"{where}: expected a list of strings")
+    if not value:
+        raise ScenarioError(f"{where}: must not be empty")
+    items: List[str] = []
+    for index, raw in enumerate(value):
+        text = _match_text(raw, f"{where}[{index}]")
+        if text in items:
+            raise ScenarioError(f"{where}[{index}]: repeats {text!r}")
+        items.append(text)
+    return tuple(items)
+
+
+def _covers(value: Any, where: str) -> Tuple[str, ...]:
+    """Validate scope ids against the checked-in scope definition."""
+    ids = _string_list(value, where)
+    unknown = find_unknown_ids(load_scope(), ids)
+    if unknown:
+        raise ScenarioError(
+            f"{where}: unknown scope id(s): {', '.join(unknown)}; "
+            "see tests/config/scope.yaml"
+        )
+    return ids
 
 
 def _substitute_language(value: Any, language: str) -> Any:
@@ -494,6 +524,8 @@ class Scenario:
     settings: Mapping[str, Any] = field(default_factory=dict)
     shim_rules: Tuple[Mapping[str, Any], ...] = field(default_factory=tuple)
     notes: str = ""
+    covers: Tuple[str, ...] = field(default_factory=tuple)
+    manual_checks: Tuple[str, ...] = field(default_factory=tuple)
 
     @property
     def scenario_id(self) -> str:
@@ -570,7 +602,7 @@ def load_scenarios(path: Path, known_devices: Optional[Sequence[str]] = None) ->
         mapping,
         {"name", "description", "tier", "suite", "device", "mode", "fixture",
          "openhab", "language", "languages", "timeout_s", "steps", "settings",
-         "shim", "notes"},
+         "shim", "notes", "covers", "manual_checks"},
         str(path),
     )
 
@@ -639,6 +671,10 @@ def load_scenarios(path: Path, known_devices: Optional[Sequence[str]] = None) ->
         shim_rules=rules,
         notes=("" if "notes" not in mapping
                else _string(mapping["notes"], f"{path}: notes")),
+        covers=(() if "covers" not in mapping
+                else _covers(mapping["covers"], f"{path}: covers")),
+        manual_checks=(() if "manual_checks" not in mapping
+                       else _string_list(mapping["manual_checks"], f"{path}: manual_checks")),
     )
 
     if not from_matrix:

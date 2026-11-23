@@ -30,6 +30,7 @@ DOCS_DIR = tests_root() / "docs"
 SDK_VERSION_FILE = CONFIG_DIR / "sdk.version"
 OPENHAB_VERSION_FILE = CONFIG_DIR / "openhab.version"
 DEVICES_FILE = CONFIG_DIR / "devices.yaml"
+SCOPE_FILE = CONFIG_DIR / "scope.yaml"
 APP_SETTINGS_DIR = FIXTURE_DIR / "app" / "settings"
 
 

@@ -19,6 +19,10 @@ openhab:
 language: eng
 timeout_s: 150
 
+covers:
+  - errors.temporary
+  - resilience.connection-loss
+
 shim:
   rules:
     - name: reset

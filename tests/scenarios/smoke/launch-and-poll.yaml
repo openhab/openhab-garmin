@@ -22,6 +22,15 @@ openhab:
 language: eng
 timeout_s: 90
 
+covers:
+  - sitemap.element-types
+  - lifecycle.cold-start
+  - limits.small-sitemaps
+manual_checks:
+  - >-
+    Selection, Setpoint and Slider elements are present in the fixture but are
+    not driven by this scenario.
+
 steps:
   - action: launch
 

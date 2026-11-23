@@ -1,0 +1,94 @@
+# Regression: a command failure is a temporary error.
+#
+# A failed command must show a toast, must not escalate to the full-screen
+# error view and must not disturb sitemap polling (docs/USAGE.md,
+# "How the App Handles Errors"). The shim fails only the command POST; the
+# sitemap polls keep reaching openHAB, which is what makes the "no escalation"
+# assertion meaningful.
+
+name: command-error-temporary
+description: A failed command shows a temporary toast and sitemap polling continues.
+tier: ui
+suite: regression
+device: fenix7
+mode: ble
+fixture: fast-polling
+openhab:
+  profile: stable
+  sitemap: garmin_e2e
+  items:
+    E2E_Toggle: "OFF"
+language: eng
+timeout_s: 120
+
+covers:
+  - commands.errors
+  - errors.temporary
+  - errors.no-escalation
+  - errors.codes-messages
+
+shim:
+  rules:
+    - name: command-fails
+      match:
+        method: POST
+        path_prefix: /rest/items/E2E_Toggle
+      times: 1
+      response:
+        status: 500
+        body: command failed
+
+steps:
+  - action: launch
+
+  - action: wait_for_request
+    method: GET
+    path_prefix: /rest/sitemaps/garmin_e2e
+    min_count: 1
+    timeout_ms: 30000
+
+  - action: reset_shim
+
+  # Widgets frame -> Toggle Switch.
+  - action: press
+    button: DOWN
+  - action: press
+    button: ENTER
+
+  - action: wait_for_request
+    method: POST
+    path_prefix: /rest/items/E2E_Toggle
+    min_count: 1
+    timeout_ms: 15000
+
+  - action: assert
+    description: The command reached the shim and was answered with the scripted failure.
+    shim_requests:
+      method: POST
+      path_prefix: /rest/items/E2E_Toggle
+      min_count: 1
+      max_count: 1
+      status: 500
+
+  - action: wait_for_event
+    description: A failed command is a temporary error sourced from the command path.
+    event: ERROR
+    fields:
+      kind: temporary
+      source: command
+    timeout_ms: 30000
+
+  - action: screenshot
+    name: command-error-toast
+
+  # The polling loop must be unaffected: at least three more polls within the
+  # next few seconds, while the command error is still the most recent failure.
+  - action: wait_for_request
+    method: GET
+    path_prefix: /rest/sitemaps/garmin_e2e
+    min_count: 3
+    timeout_ms: 15000
+
+  - action: assert
+    description: A command error must not raise the full-screen error view.
+    no_error_view: true

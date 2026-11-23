@@ -23,6 +23,16 @@ openhab:
 language: eng
 timeout_s: 120
 
+covers:
+  - communication.modes-start
+  - communication.wifi-sync
+  - limits.caching
+manual_checks:
+  - >-
+    Automatic startup sync when no cache exists, the manual update action, the
+    last-update timestamp, the Garmin sync views, a failed sync and the lower
+    -402 limit are not exercised.
+
 steps:
   - action: launch
 
