@@ -176,7 +176,7 @@ scheduled in CI; only its pure logic is covered by
 | extended | `escalation-window` | protocol | persistent failure escalates to critical, then recovers |
 | extended | `openhab-restart` | protocol | an openHAB outage window stays temporary and the app returns by itself |
 | extended | `oversized-response` | protocol | 2 MiB body is reported as a critical error |
-| extended | `slow-response` | protocol | 12 s responses escalate and then recover |
+| extended | `slow-response` | protocol | slow responses are applied without an error view |
 | extended | `connection-reset` | protocol | dropped connections are temporary errors |
 | extended | `dynamic-visibility` | ui | `visibility` reacts to a state change while the app is open |
 | extended | `wifi-mode` | protocol | Wi-Fi mode renders the cached sitemap and does not poll |

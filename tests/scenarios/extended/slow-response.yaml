@@ -1,13 +1,18 @@
 # Extended: a slow server.
 #
-# A poll that takes longer than the app's request timeout is a temporary error
-# first, and becomes critical only if it persists for more than 10 seconds
-# (docs/USAGE.md, "Temporary errors"). The delay is applied by the shim, so
-# openHAB itself stays healthy and the recovery is instant once the rule runs
-# out.
+# A slow sitemap poll is not an error while the response still arrives. The app
+# makes one request at a time, waits for the delayed response, applies the
+# sitemap and keeps polling. openHAB itself stays healthy because only the shim
+# delays the response.
+#
+# The Connect IQ SDK 9.3.0 API has no :timeout option for makeWebRequest and
+# does not document a request timeout default, so neither the app nor the
+# harness can turn a slow response into a timeout. This scenario therefore
+# proves latency tolerance, not escalation; extended/escalation-window asserts
+# escalation using repeated failures.
 
 name: slow-response
-description: Slow polls escalate from a toast to the critical error view, then recover.
+description: A slow sitemap response is applied without an error view.
 tier: protocol
 suite: extended
 device: fenix7
@@ -22,14 +27,13 @@ language: eng
 timeout_s: 180
 
 covers:
-  - errors.escalation
-  - errors.critical
-  - errors.recovery
   - limits.slow-and-rapid
 manual_checks:
   - >-
-    Escalation is asserted as temporary-then-critical; the documented 10 s
-    boundary and the exact poll counts are not measured.
+    "Applied without an error view" is machine-asserted as a SITEMAP success
+    event plus never_error_view. The exact latency bound, and whether a
+    response slower than the transport timeout would still be applied, are not
+    measured.
   - Rapid successive updates are not exercised; only delayed responses are.
 
 shim:
@@ -39,7 +43,7 @@ shim:
         method: GET
         path_prefix: /rest/sitemaps/garmin_e2e
       times: 3
-      delay_ms: 12000
+      delay_ms: 4000
       response:
         status: 200
         body: '{"homepage":{"id":"slow","widgets":[]}}'
@@ -55,31 +59,42 @@ steps:
     timeout_ms: 60000
 
   - action: assert
-    description: The delayed responses are recorded with their delay.
+    description: The delayed request is recorded and answered with 200.
     shim_requests:
       method: GET
       path_prefix: /rest/sitemaps/garmin_e2e
       min_count: 1
+      status: 200
+
+  # The app has exactly one request in flight, so the first accepted sitemap
+  # can only come from a delayed response. No error view may appear while the
+  # app waits for it.
+  - action: wait_for_event
+    description: The delayed response is applied to the sitemap.
+    event: SITEMAP
+    fields:
+      result: success
+    timeout_ms: 60000
 
   - action: screenshot
     name: slow-response
 
-  # After the three delayed polls the app must recover on its own.
+  # After the three delayed polls the app must keep polling on its own.
   - action: wait_for_request
     method: GET
     path_prefix: /rest/sitemaps/garmin_e2e
     min_count: 5
     timeout_ms: 90000
 
-  # One poll interval of fast-polling for the app to switch back.
+  # One poll interval of fast-polling for the app to settle.
   - action: wait
     ms: 1500
 
   - action: screenshot
-    name: recovered
+    name: applied
 
   - action: assert
     description: >-
-      The current view is the sitemap view, not the error view: the app kept
-      polling and recovered on its own.
-    no_error_view: true
+      No error view appeared at any point: a slow response was applied as a
+      normal update instead of being treated as a failure.
+    never_error_view: true
