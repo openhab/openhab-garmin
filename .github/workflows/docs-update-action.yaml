@@ -5,6 +5,10 @@ on:
     types: [published]
   workflow_dispatch:
 
+# No GITHUB_TOKEN scope is needed: the only step authenticates with the
+# DOCS_REPO_ACCESS_TOKEN secret, which is not this workflow's token.
+permissions: {}
+
 jobs:
   triggerWorkflowDispatch:
     runs-on: ubuntu-latest
