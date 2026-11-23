@@ -1,3 +1,22 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+# Installable so CI (and an operator) can run `python -m e2e` from any working
+# directory. The runtime dependency is kept in step with requirements.txt,
+# which the runner Dockerfile installs instead of the package.
+[project]
+name = "openhab-garmin-e2e"
+version = "0.1.0"
+description = "E2E harness runner for the openHAB Garmin app"
+requires-python = ">=3.10"
+dependencies = ["PyYAML>=6.0,<7"]
+
+# Only `e2e` (and its subpackages) belong to the distribution; `tests` is
+# pytest's directory, not an importable package.
+[tool.setuptools.packages.find]
+include = ["e2e*"]
+
 # pytest configuration for the harness unit tests.
 #
 # These tests must pass on a workstation with no Docker and no Connect IQ SDK:
