@@ -1,0 +1,4 @@
+CONTAINER ID   NAME                                      CPU %     MEM USAGE / LIMIT     MEM %     NET I/O         BLOCK I/O   PIDS
+3f2a9c1d4e5f   openhab-garmin-e2e-openhab-stable-1       0.38%     512.0MiB / 7.775GiB   6.43%     14.1kB / 3.4kB  0B / 0B     121
+7b1c2d3e4f50   openhab-garmin-e2e-shim-1                 0.09%     25.1MiB / 7.775GiB    0.32%     2.5kB / 1.5kB   0B / 0B     3
+9a8b7c6d5e4f   openhab-garmin-e2e-runner-1               0.04%     63.4MiB / 7.775GiB    0.79%     0B / 0B         0B / 0B     2

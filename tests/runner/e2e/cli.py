@@ -14,10 +14,12 @@ Subcommands:
     network-env       render/verify the generated loopback network block in .env.example
     pin-images        resolve/verify image digests from Docker Hub
     sdk-check         validate the mounted Connect IQ SDK
+    health-snapshot   record the stack's restart counts and memory before/after a run
     build             compile the PRG for one or more devices
 
 Exit codes: ``0`` success, ``1`` scenario failures, ``2`` configuration or
-environment error.
+environment error, ``3`` invalid environment (a container restarted or was
+killed during the run, so the results are not attributable to the app).
 """
 
 from __future__ import annotations
@@ -27,10 +29,12 @@ import json
 import os
 import sys
 from pathlib import Path
-from typing import Any, Dict, List, Mapping, Optional, Sequence
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 from . import compose as compose_module
+from . import health as health_module
 from . import network as network_module
+from . import reporting as reporting_module
 from .build import BuildError, build_prg
 from .compose import ComposeError
 from .config import (
@@ -54,6 +58,7 @@ from .coverage import (
     write_markdown,
 )
 from .engine import run_scenario
+from .health import EXIT_INVALID_ENVIRONMENT, HealthError
 from .openhab import OpenHabClient, OpenHabError
 from .paths import tests_root
 from .reporting import Report
@@ -144,6 +149,8 @@ def _cmd_status(args: argparse.Namespace) -> int:
         report["shim"] = {"ok": False, "url": shim.base_url, "error": str(error)}
 
     report["pins"] = compose_module.check_pins()
+    verdict = health_module.check()
+    report["stack"] = verdict.to_document()
 
     if args.json:
         _emit_json(report)
@@ -161,6 +168,15 @@ def _cmd_status(args: argparse.Namespace) -> int:
             print(
                 f"          upstream={health.get('upstream')} "
                 f"rules={health.get('rules')} requests={health.get('requests')}"
+            )
+        print(f"stack:    {verdict.verdict} - {verdict.summary}")
+        for container in verdict.containers:
+            print(
+                f"          {container.name}: state={container.state or 'unknown'} "
+                f"health={container.health or 'no healthcheck'} "
+                f"restarts={container.restart_count_after} "
+                f"peak working set={health_module.format_bytes(container.peak_working_set_bytes)} "
+                f"limit={health_module.describe_limit(container.memory_limit_bytes)}"
             )
         for problem in report["pins"]:
             print(f"pins:     {problem}")
@@ -256,6 +272,8 @@ def _cmd_run(args: argparse.Namespace) -> int:
     report = Report()
     built: Dict[str, Path] = {}
 
+    environment_before, environment_after = _environment_window(dry_run)
+
     for scenario in scenarios:
         device = _device_for(scenario, args)
         prg: Optional[Path] = None
@@ -294,6 +312,14 @@ def _cmd_run(args: argparse.Namespace) -> int:
             for failure in outcome.failures:
                 print(f"    {failure}")
 
+    if environment_after is None and environment_before.available:
+        environment_after, _recording = health_module.capture()
+    if environment_after is None:
+        environment_after = environment_before
+    report.environment = health_module.classify(environment_before, environment_after)
+    for line in report.environment.render_lines():
+        print(line)
+
     written = report.write_artifacts(artifacts)
     for name, path in written.items():
         print(f"{name}: {path}")
@@ -302,12 +328,63 @@ def _cmd_run(args: argparse.Namespace) -> int:
         _emit_json(
             {
                 "counts": report.counts(),
+                "environment": report.environment_document(),
                 "exit_code": report.exit_code,
                 "results": [result.to_document() for result in report.results],
             }
         )
 
     return report.exit_code
+
+
+def _environment_window(
+    dry_run: bool,
+) -> Tuple[health_module.HealthSnapshot, Optional[health_module.HealthSnapshot]]:
+    """The before snapshot for the run window, taken before the scenarios.
+
+    A dry run never probes Docker. When the probe cannot reach the daemon (the
+    runner container has no Docker socket by design) the snapshot records why,
+    and the verdict stays ``unknown`` instead of claiming health. A host-side
+    window captured with ``e2e health-snapshot`` can classify the finished run's
+    artifacts afterwards.
+    """
+    if dry_run:
+        snapshot, _recording = health_module.capture(dry_run=True)
+        return snapshot, snapshot
+    snapshot, _recording = health_module.capture()
+    return snapshot, None
+
+
+def _cmd_health_snapshot(args: argparse.Namespace) -> int:
+    path = health_module.write_snapshot_phase(args.output, args.phase)
+    print(f"health:   {args.phase} snapshot written to {path}")
+    if args.phase != "after":
+        return EXIT_OK
+
+    before, after = health_module.load_snapshot_file(path)
+    verdict = health_module.classify(before, after)
+    for line in verdict.render_lines():
+        print(line)
+
+    artifacts = Path(args.artifacts) if args.artifacts else None
+    if artifacts is not None and (artifacts / "report.json").is_file():
+        try:
+            report = reporting_module.load_report(artifacts)
+        except ValueError as error:
+            return _fail(str(error))
+        report.environment = verdict
+        written = report.write_artifacts(artifacts)
+        print(f"environment: {written['environment']}")
+        print(f"json: {written['json']}")
+        print(f"junit: {written['junit']}")
+        print(f"markdown: {written['markdown']}")
+    elif artifacts is not None:
+        print(
+            f"health:   {artifacts} has no report.json; nothing to re-render",
+            file=sys.stderr,
+        )
+
+    return EXIT_INVALID_ENVIRONMENT if verdict.invalid else EXIT_OK
 
 
 def _device_for(scenario: Scenario, args: argparse.Namespace) -> Device:
@@ -578,7 +655,9 @@ def build_parser() -> argparse.ArgumentParser:
         description="E2E harness for the openHAB Garmin app",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
-            "Exit codes: 0 success, 1 scenario failures, 2 configuration error.\n"
+            "Exit codes: 0 success, 1 scenario failures, 2 configuration error,\n"
+            "3 invalid environment (a stack container restarted or was killed during\n"
+            "the run, so the results are not attributable to the app).\n"
             "Every command that needs openHAB or the shim reads E2E_OPENHAB_URL and\n"
             "E2E_SHIM_URL first, then falls back to localhost."
         ),
@@ -690,6 +769,30 @@ def build_parser() -> argparse.ArgumentParser:
     sdk.add_argument("--quiet", action="store_true")
     sdk.set_defaults(handler=_cmd_sdk_check)
 
+    snapshot = subparsers.add_parser(
+        "health-snapshot",
+        help="record stack restart counts and memory for the before/after run window",
+    )
+    snapshot.add_argument(
+        "--phase",
+        required=True,
+        choices=("before", "after"),
+        help="before the run, then again after it; both phases go in one file",
+    )
+    snapshot.add_argument(
+        "--output",
+        required=True,
+        help="snapshot file shared by both phases (e.g. tests/artifacts/health-window.json)",
+    )
+    snapshot.add_argument(
+        "--artifacts",
+        help=(
+            "with --phase after: the run's artifacts directory; the finished "
+            "window is classified and its environment block is re-rendered there"
+        ),
+    )
+    snapshot.set_defaults(handler=_cmd_health_snapshot)
+
     build = subparsers.add_parser("build", help="compile the PRG")
     build.add_argument("--device", nargs="*", help="device ids (default: the matrix default)")
     build.add_argument("--output", help="output directory")
@@ -719,6 +822,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         SettingsError,
         ShimError,
         OpenHabError,
+        HealthError,
     ) as error:
         print(f"error: {error}", file=sys.stderr)
         return EXIT_CONFIG
