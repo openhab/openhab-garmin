@@ -85,4 +85,5 @@ steps:
       status: 200
 
   - action: assert
-    no_error_view: true
+    description: The outage never escalated to the full-screen error view.
+    never_error_view: true

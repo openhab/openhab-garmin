@@ -104,4 +104,5 @@ steps:
     name: glyphs-player
 
   - action: assert
-    no_error_view: true
+    description: No error view appears while the glyphs are rendered.
+    never_error_view: true

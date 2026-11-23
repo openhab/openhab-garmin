@@ -393,7 +393,7 @@ def _step_wait_for_event(raw: Mapping[str, Any], where: str) -> Dict[str, Any]:
 
 def _assertion_params(raw: Mapping[str, Any], where: str) -> Dict[str, Any]:
     _reject_unknown(raw, {"action", "description", "shim_requests", "golden",
-                          "no_error_view"}, where)
+                          "no_error_view", "never_error_view"}, where)
     params: Dict[str, Any] = {}
     if "description" in raw:
         params["description"] = _string(raw["description"], f"{where}.description")
@@ -441,9 +441,20 @@ def _assertion_params(raw: Mapping[str, Any], where: str) -> Dict[str, Any]:
     if "no_error_view" in raw:
         params["no_error_view"] = _bool(raw["no_error_view"], f"{where}.no_error_view")
 
-    if not any(key in params for key in ("shim_requests", "golden", "no_error_view")):
+    if "never_error_view" in raw:
+        value = _bool(raw["never_error_view"], f"{where}.never_error_view")
+        if not value:
+            raise ScenarioError(
+                f"{where}.never_error_view: only 'true' is meaningful; use "
+                "'no_error_view' to assert on the view that is shown now"
+            )
+        params["never_error_view"] = True
+
+    if not any(key in params for key in
+               ("shim_requests", "golden", "no_error_view", "never_error_view")):
         raise ScenarioError(
-            f"{where}: an assert step needs 'shim_requests', 'golden' or 'no_error_view'"
+            f"{where}: an assert step needs 'shim_requests', 'golden', "
+            "'no_error_view' or 'never_error_view'"
         )
     return params
 

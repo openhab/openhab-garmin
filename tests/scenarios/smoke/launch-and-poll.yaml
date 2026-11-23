@@ -52,8 +52,8 @@ steps:
       status: 200
 
   - action: assert
-    description: No error view is shown on a healthy run.
-    no_error_view: true
+    description: No error view is shown at any point in a healthy run.
+    never_error_view: true
 
   - action: assert
     description: The homepage renders as expected (baseline captured once and reviewed by a human).

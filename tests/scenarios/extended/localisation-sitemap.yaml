@@ -104,4 +104,4 @@ steps:
 
   - action: assert
     description: No error view interrupts the normal page.
-    no_error_view: true
+    never_error_view: true

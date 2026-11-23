@@ -90,5 +90,5 @@ steps:
     timeout_ms: 15000
 
   - action: assert
-    description: A command error must not raise the full-screen error view.
-    no_error_view: true
+    description: A command error must never raise the full-screen error view.
+    never_error_view: true

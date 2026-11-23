@@ -122,9 +122,10 @@ Machine-asserted today:
 
 - the simulator language (`LANGUAGE;code=<lang>`);
 - that the expected view is shown (`VIEW;category=...;view=...`);
-- that a toast or full-screen error view exists, including stable ids
-  (`TOAST;id=UI:03`, `ERRORVIEW;id=UI:CONFIG`, `ERRORVIEW;id=S:-402`);
-- that no error view appears where none is expected;
+- that the full-screen error view is the current view, including its stable id
+  (`ERRORVIEW;id=UI:CONFIG`, `ERRORVIEW;id=S:-402`);
+- that no error view appears where none is expected, checked against the whole
+  run rather than only the final state (`never_error_view`);
 - that an offline command sends no request (shim trace).
 
 Not machine-asserted yet: any judgement about the rendered text. The harness has

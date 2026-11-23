@@ -88,4 +88,5 @@ steps:
       min_count: 2
 
   - action: assert
-    no_error_view: true
+    description: No error view appears while the command is held.
+    never_error_view: true

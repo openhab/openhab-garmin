@@ -71,5 +71,15 @@ steps:
     min_count: 5
     timeout_ms: 90000
 
+  # One poll interval of fast-polling for the app to switch back.
+  - action: wait
+    ms: 1500
+
+  - action: screenshot
+    name: recovered
+
   - action: assert
+    description: >-
+      The current view is the sitemap view, not the error view: the app kept
+      polling and recovered on its own.
     no_error_view: true

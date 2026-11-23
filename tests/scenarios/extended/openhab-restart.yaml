@@ -89,3 +89,7 @@ steps:
   - action: assert
     description: The app returns to the sitemap without a restart of its own.
     no_error_view: true
+
+  - action: assert
+    description: The outage window never escalated to the full-screen error view.
+    never_error_view: true

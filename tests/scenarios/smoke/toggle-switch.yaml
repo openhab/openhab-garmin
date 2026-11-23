@@ -68,4 +68,5 @@ steps:
     name: after-toggle
 
   - action: assert
-    no_error_view: true
+    description: No error view appears on the happy path.
+    never_error_view: true

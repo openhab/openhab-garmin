@@ -472,6 +472,23 @@ def test_assert_needs_a_condition(tmp_path: Path) -> None:
     assert "needs 'shim_requests'" in str(error.value)
 
 
+def test_assert_never_error_view_is_a_history_condition(tmp_path: Path) -> None:
+    document = _with(
+        steps=[{"action": "launch"}, {"action": "assert", "never_error_view": True}]
+    )
+    scenario = load_scenario(_write(tmp_path, document))
+    assert scenario.steps[-1].get("never_error_view") is True
+
+
+def test_assert_never_error_view_rejects_false(tmp_path: Path) -> None:
+    document = _with(
+        steps=[{"action": "launch"}, {"action": "assert", "never_error_view": False}]
+    )
+    with pytest.raises(ScenarioError) as error:
+        load_scenario(_write(tmp_path, document))
+    assert "no_error_view" in str(error.value)
+
+
 def test_assert_request_spec_needs_an_explicit_count(tmp_path: Path) -> None:
     document = _with(
         steps=[

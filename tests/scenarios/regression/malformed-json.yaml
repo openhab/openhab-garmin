@@ -66,6 +66,13 @@ steps:
       kind: critical
     timeout_ms: 30000
 
+  - action: wait_for_event
+    description: The critical error reaches the full-screen error view.
+    event: VIEW
+    fields:
+      category: error
+    timeout_ms: 30000
+
   - action: screenshot
     name: critical-error
 
@@ -77,8 +84,15 @@ steps:
     min_count: 4
     timeout_ms: 45000
 
+  # One poll interval of fast-polling for the app to switch back.
+  - action: wait
+    ms: 1500
+
   - action: screenshot
     name: recovered
 
   - action: assert
+    description: >-
+      The error view was dismissed: the current view is the sitemap view, not
+      the error view, without a restart.
     no_error_view: true

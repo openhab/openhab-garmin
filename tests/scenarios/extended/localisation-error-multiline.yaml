@@ -34,8 +34,8 @@ covers:
   - errors.critical
 manual_checks:
   - >-
-    Only the ERRORVIEW existence is machine-asserted; the multi-line rendered
-    detail depends on the SDK error and is review-only.
+    The error view being the current view is machine-asserted; the multi-line
+    rendered detail depends on the SDK error and is review-only.
 
 settings:
   sitemap_0: garmin_localisation
@@ -77,4 +77,5 @@ steps:
     name: error-multiline
 
   - action: assert
+    description: The full-screen error view is the current view.
     no_error_view: false

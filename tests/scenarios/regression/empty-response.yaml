@@ -70,5 +70,5 @@ steps:
     name: empty-response-toast
 
   - action: assert
-    description: An empty response is temporary, not a full-screen error.
-    no_error_view: true
+    description: An empty response never raises the full-screen error view.
+    never_error_view: true

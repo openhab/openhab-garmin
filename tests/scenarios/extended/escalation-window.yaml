@@ -33,10 +33,6 @@ manual_checks:
     The documented "more than 10 seconds" boundary is not measured; the
     scenario proves only that a persistent failure reaches critical after the
     initial temporary phase.
-  - >-
-    The error view clearing is visual: there is no trace event for dismissing
-    it, so review the `recovered` screenshot. The trace assertions prove that
-    polling continued and a 200 arrived.
 
 shim:
   rules:
@@ -97,3 +93,9 @@ steps:
 
   - action: screenshot
     name: recovered
+
+  - action: assert
+    description: >-
+      The error view was dismissed: the current view is the sitemap view again,
+      without a restart.
+    no_error_view: true
