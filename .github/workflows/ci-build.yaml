@@ -13,6 +13,11 @@ on:
       - '.github/**/*.md'
   workflow_dispatch:
 
+# Least privilege: the jobs only check out the repository, compile the app and
+# diff the checkout, so no write scope is needed.
+permissions:
+  contents: read
+
 jobs:
   build:
     name: CI Build (${{ matrix.device }})

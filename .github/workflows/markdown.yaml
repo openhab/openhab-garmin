@@ -19,6 +19,11 @@ on:
       - '.github/workflows/markdown.yaml'
   workflow_dispatch:
 
+# Least privilege: both jobs only read the repository and check links, so no
+# write scope is needed.
+permissions:
+  contents: read
+
 jobs:
   markdownlint:
     name: markdownlint
