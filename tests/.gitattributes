@@ -1,0 +1,3 @@
+# Keep shell scripts LF in the repository: they run in Linux containers and a
+# CRLF shebang fails with a confusing "no such file or directory".
+*.sh text eol=lf

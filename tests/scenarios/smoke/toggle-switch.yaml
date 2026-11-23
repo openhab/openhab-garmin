@@ -1,0 +1,61 @@
+# Smoke: a Switch element sends a REST command for the same item.
+#
+# Covers the command path end to end: selecting the element issues
+# `POST /rest/items/E2E_Toggle` with body `ON`, and nothing else changes.
+# The post-command hold time is disabled in the fixture so the state update is
+# observable within one poll.
+
+name: toggle-switch
+description: Selecting a toggle switch sends the ON command through the shim.
+tier: ui
+suite: smoke
+device: fenix7
+mode: ble
+fixture: fast-polling
+openhab:
+  profile: stable
+  sitemap: garmin_e2e
+  items:
+    E2E_Toggle: "OFF"
+language: eng
+timeout_s: 90
+
+steps:
+  - action: launch
+
+  - action: wait_for_request
+    method: GET
+    path_prefix: /rest/sitemaps/garmin_e2e
+    min_count: 1
+    timeout_ms: 30000
+
+  - action: reset_shim
+
+  # Widgets frame is the second entry of the homepage; DOWN moves the focus.
+  - action: press
+    button: DOWN
+
+  - action: press
+    button: ENTER
+
+  - action: wait_for_request
+    method: POST
+    path_prefix: /rest/items/E2E_Toggle
+    min_count: 1
+    timeout_ms: 15000
+
+  - action: assert
+    description: Exactly one command is sent, addressed to the selected item.
+    shim_requests:
+      method: POST
+      path_prefix: /rest/items/E2E_Toggle
+      min_count: 1
+      max_count: 1
+      body_equals: "ON"
+      status: 200
+
+  - action: screenshot
+    name: after-toggle
+
+  - action: assert
+    no_error_view: true

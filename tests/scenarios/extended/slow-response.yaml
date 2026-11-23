@@ -1,0 +1,64 @@
+# Extended: a slow server.
+#
+# A poll that takes longer than the app's request timeout is a temporary error
+# first, and becomes critical only if it persists for more than 10 seconds
+# (docs/USAGE.md, "Temporary errors"). The delay is applied by the shim, so
+# openHAB itself stays healthy and the recovery is instant once the rule runs
+# out.
+
+name: slow-response
+description: Slow polls escalate from a toast to the critical error view, then recover.
+tier: protocol
+suite: extended
+device: fenix7
+mode: ble
+fixture: fast-polling
+openhab:
+  profile: stable
+  sitemap: garmin_e2e
+  items:
+    E2E_Temperature: "20.0"
+language: eng
+timeout_s: 180
+
+shim:
+  rules:
+    - name: slow
+      match:
+        method: GET
+        path_prefix: /rest/sitemaps/garmin_e2e
+      times: 3
+      delay_ms: 12000
+      response:
+        status: 200
+        body: '{"homepage":{"id":"slow","widgets":[]}}'
+        content_type: application/json
+
+steps:
+  - action: launch
+
+  - action: wait_for_request
+    method: GET
+    path_prefix: /rest/sitemaps/garmin_e2e
+    min_count: 1
+    timeout_ms: 60000
+
+  - action: assert
+    description: The delayed responses are recorded with their delay.
+    shim_requests:
+      method: GET
+      path_prefix: /rest/sitemaps/garmin_e2e
+      min_count: 1
+
+  - action: screenshot
+    name: slow-response
+
+  # After the three delayed polls the app must recover on its own.
+  - action: wait_for_request
+    method: GET
+    path_prefix: /rest/sitemaps/garmin_e2e
+    min_count: 5
+    timeout_ms: 90000
+
+  - action: assert
+    no_error_view: true

@@ -1,0 +1,78 @@
+# Regression: repeated 503 responses, then recovery.
+#
+# The app treats failed polls as temporary errors (toast) and escalates to the
+# full-screen error view only after 10 seconds of continuous failure
+# (docs/USAGE.md, "How the App Handles Errors"). Three failures with a 1 s poll
+# interval must therefore stay in the toast phase, and the app must return to
+# the sitemap by itself once the shim starts proxying again.
+
+name: http-503-recovery
+description: Three 503 polls produce a toast, then the app recovers without a restart.
+tier: protocol
+suite: regression
+device: fenix7
+mode: ble
+fixture: fast-polling
+openhab:
+  profile: stable
+  sitemap: garmin_e2e
+  items:
+    E2E_Temperature: "20.0"
+language: eng
+timeout_s: 120
+
+shim:
+  rules:
+    - name: unavailable
+      match:
+        method: GET
+        path_prefix: /rest/sitemaps/garmin_e2e
+      times: 3
+      response:
+        status: 503
+        body: Service Unavailable
+
+steps:
+  - action: launch
+
+  - action: wait_for_request
+    method: GET
+    path_prefix: /rest/sitemaps/garmin_e2e
+    min_count: 3
+    timeout_ms: 30000
+
+  - action: assert
+    description: All three scripted failures were served by the shim.
+    shim_requests:
+      method: GET
+      path_prefix: /rest/sitemaps/garmin_e2e
+      min_count: 3
+      status: 503
+
+  - action: wait_for_event
+    description: The app classifies the failed polls as temporary, not critical.
+    event: ERROR
+    fields:
+      kind: temporary
+    timeout_ms: 30000
+
+  - action: screenshot
+    name: toast
+
+  # The rule is exhausted, so the next polls reach openHAB again.
+  - action: wait_for_request
+    method: GET
+    path_prefix: /rest/sitemaps/garmin_e2e
+    min_count: 5
+    timeout_ms: 45000
+
+  - action: assert
+    description: A later poll is served from openHAB with 200.
+    shim_requests:
+      method: GET
+      path_prefix: /rest/sitemaps/garmin_e2e
+      min_count: 1
+      status: 200
+
+  - action: assert
+    no_error_view: true

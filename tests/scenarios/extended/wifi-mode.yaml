@@ -1,0 +1,40 @@
+# Extended: Wi-Fi mode does not poll.
+#
+# In Wi-Fi mode the app fetches the sitemap once (sync) and then renders from
+# the cached copy: no polling, and item states are not refreshed
+# (docs/USAGE.md, "Wi-Fi"). The assertion is deliberately on the request count,
+# because that is what distinguishes Wi-Fi from BLE behaviour.
+#
+# This scenario needs a cached sitemap, so it runs after any scenario that has
+# already populated the device cache (see tests/README.md, "Scenario order").
+
+name: wifi-mode
+description: Wi-Fi mode renders the cached sitemap and does not poll.
+tier: protocol
+suite: extended
+device: fenix7
+mode: wifi
+fixture: fast-polling
+openhab:
+  profile: stable
+  sitemap: garmin_e2e
+  items:
+    E2E_Temperature: "18.5"
+language: eng
+timeout_s: 120
+
+steps:
+  - action: launch
+
+  - action: wait
+    ms: 5000
+
+  - action: screenshot
+    name: wifi-mode
+
+  - action: assert
+    description: No sitemap polls are made while in Wi-Fi mode.
+    shim_requests:
+      method: GET
+      path_prefix: /rest/sitemaps/garmin_e2e
+      max_count: 0

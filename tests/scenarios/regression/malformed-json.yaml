@@ -1,0 +1,75 @@
+# Regression: a malformed sitemap body.
+#
+# Truncated JSON is not a communication error: the app fails while parsing the
+# response, which is a critical (recoverable) error and shows the full-screen
+# error view while polling continues. The recovery half of this scenario
+# asserts that a valid response restores the sitemap without a restart.
+
+name: malformed-json
+description: Truncated JSON shows the critical error view and recovers on a valid response.
+tier: protocol
+suite: regression
+device: fenix7
+mode: ble
+fixture: fast-polling
+openhab:
+  profile: stable
+  sitemap: garmin_e2e
+  items:
+    E2E_Temperature: "20.0"
+language: eng
+timeout_s: 120
+
+shim:
+  rules:
+    - name: truncated
+      match:
+        method: GET
+        path_prefix: /rest/sitemaps/garmin_e2e
+      times: 2
+      response:
+        status: 200
+        body: '{"homepage": ['
+        content_type: application/json
+
+steps:
+  - action: launch
+
+  - action: wait_for_request
+    method: GET
+    path_prefix: /rest/sitemaps/garmin_e2e
+    min_count: 2
+    timeout_ms: 30000
+
+  - action: assert
+    description: The malformed bodies were served from the shim, not openHAB.
+    shim_requests:
+      method: GET
+      path_prefix: /rest/sitemaps/garmin_e2e
+      min_count: 2
+      status: 200
+      body_equals: '{"homepage": ['
+
+  - action: wait_for_event
+    description: Parsing the sitemap fails as a critical (recoverable) error.
+    event: ERROR
+    fields:
+      kind: critical
+    timeout_ms: 30000
+
+  - action: screenshot
+    name: critical-error
+
+  # Polling must continue while the critical error is shown, and a valid
+  # response must bring the sitemap back.
+  - action: wait_for_request
+    method: GET
+    path_prefix: /rest/sitemaps/garmin_e2e
+    min_count: 4
+    timeout_ms: 45000
+
+  - action: screenshot
+    name: recovered
+
+  - action: assert
+    no_error_view: true

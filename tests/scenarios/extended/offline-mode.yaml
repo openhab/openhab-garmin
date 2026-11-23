@@ -1,0 +1,52 @@
+# Extended: offline mode.
+#
+# With neither BLE nor Wi-Fi available the app must start from the cached
+# sitemap, send nothing, and offer commands only as an offline error. The shim
+# trace must stay empty for the whole run.
+
+name: offline-mode
+description: Offline mode uses the cached sitemap and never contacts the server.
+tier: protocol
+suite: extended
+device: fenix7
+mode: offline
+fixture: fast-polling
+openhab:
+  profile: stable
+  sitemap: garmin_e2e
+  items:
+    E2E_Temperature: "18.5"
+language: eng
+timeout_s: 120
+
+steps:
+  - action: launch
+
+  - action: wait
+    ms: 5000
+
+  - action: screenshot
+    name: offline-mode
+
+  - action: assert
+    description: No requests reach the shim while offline.
+    shim_requests:
+      max_count: 0
+
+  # Selecting an element must not produce a command; the app reports the
+  # offline state instead.
+  - action: press
+    button: ENTER
+  - action: press
+    button: DOWN
+  - action: press
+    button: ENTER
+
+  - action: screenshot
+    name: offline-command
+
+  - action: assert
+    description: An offline command attempt sends nothing.
+    shim_requests:
+      method: POST
+      max_count: 0

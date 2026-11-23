@@ -1,0 +1,65 @@
+# Regression: an empty sitemap response.
+#
+# An HTTP 200 with a zero-length body must surface as `S:EMRES` (temporary
+# error). The default fixture keeps "suppress errors for empty sitemap
+# responses" off; `suppress-empty.yaml` covers the suppressed variant, which is
+# a separate scenario rather than a variant here so the toasts stay assertable.
+
+name: empty-response
+description: Empty 200 responses surface as S:EMRES toasts.
+tier: protocol
+suite: regression
+device: fenix7
+mode: ble
+fixture: default
+openhab:
+  profile: stable
+  sitemap: garmin_e2e
+  items:
+    E2E_Temperature: "20.0"
+language: eng
+timeout_s: 120
+
+shim:
+  rules:
+    - name: empty-body
+      match:
+        method: GET
+        path_prefix: /rest/sitemaps/garmin_e2e
+      times: 2
+      response:
+        status: 200
+        body: ""
+        content_type: application/json
+
+steps:
+  - action: launch
+
+  - action: wait_for_request
+    method: GET
+    path_prefix: /rest/sitemaps/garmin_e2e
+    min_count: 2
+    timeout_ms: 30000
+
+  - action: assert
+    description: Both scripted empty responses were served.
+    shim_requests:
+      method: GET
+      path_prefix: /rest/sitemaps/garmin_e2e
+      min_count: 2
+      status: 200
+      body_equals: ""
+
+  - action: wait_for_event
+    description: An empty response is a temporary error, not a critical one.
+    event: ERROR
+    fields:
+      kind: temporary
+    timeout_ms: 30000
+
+  - action: screenshot
+    name: empty-response-toast
+
+  - action: assert
+    description: An empty response is temporary, not a full-screen error.
+    no_error_view: true

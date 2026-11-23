@@ -1,0 +1,10 @@
+# pytest configuration for the harness unit tests.
+#
+# These tests must pass on a workstation with no Docker and no Connect IQ SDK:
+# they cover scenario loading, the shim fault grammar and static Compose
+# validation. Anything that needs a running stack belongs in a scenario, not
+# here.
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+minversion = "7.0"
+addopts = "-ra --strict-markers"

@@ -1,0 +1,545 @@
+"""``e2e`` command-line interface.
+
+Subcommands:
+
+    setup             validate compose, SDK, openHAB and the shim; seed nothing
+    run               run one or more scenarios and write reports
+    reset             clear the shim's script and request trace
+    status            one-shot health summary of every component
+    list-scenarios    list the scenarios that would run
+    contract-test     exercise a simulator driver against the driver contract
+    validate-compose  static validation of the Compose stack (no Docker needed)
+    pin-images        resolve/verify image digests from Docker Hub
+    sdk-check         validate the mounted Connect IQ SDK
+    build             compile the PRG for one or more devices
+
+Exit codes: ``0`` success, ``1`` scenario failures, ``2`` configuration or
+environment error.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import sys
+from pathlib import Path
+from typing import Any, Dict, List, Mapping, Optional, Sequence
+
+from . import compose as compose_module
+from .build import BuildError, build_prg
+from .compose import ComposeError
+from .config import (
+    ConfigError,
+    Device,
+    default_device_id,
+    find_device,
+    read_sdk_version,
+)
+from .contract import format_report as format_contract_report
+from .contract import run_contract
+from .contract import exit_code as contract_exit_code
+from .contract import summary as contract_summary
+from .engine import run_scenario
+from .openhab import OpenHabClient, OpenHabError
+from .paths import tests_root
+from .reporting import Report
+from .scenarios import Scenario, ScenarioError, discover_scenarios, find_scenario
+from .sdk import SdkError, describe_candidates, load_layout
+from .settings import SettingsError
+from .shim import ShimClient, ShimError
+from .sim import DRIVER_NAMES, create_driver
+
+EXIT_OK = 0
+EXIT_FAILURES = 1
+EXIT_CONFIG = 2
+
+DEFAULT_OPENHAB_URL = "http://localhost:8080"
+DEFAULT_SHIM_URL = "http://localhost:8081"
+
+
+# ---------------------------------------------------------------------------
+# helpers
+# ---------------------------------------------------------------------------
+
+
+def _openhab_url(args: argparse.Namespace) -> str:
+    return args.openhab_url or os.environ.get("E2E_OPENHAB_URL") or DEFAULT_OPENHAB_URL
+
+
+def _shim_url(args: argparse.Namespace) -> str:
+    return args.shim_url or os.environ.get("E2E_SHIM_URL") or DEFAULT_SHIM_URL
+
+
+def _artifacts_dir(args: argparse.Namespace) -> Path:
+    value = getattr(args, "artifacts", None) or os.environ.get("E2E_ARTIFACTS")
+    return Path(value) if value else tests_root() / "artifacts"
+
+
+def _goldens_dir(args: argparse.Namespace) -> Path:
+    value = getattr(args, "goldens", None)
+    return Path(value) if value else tests_root() / "goldens"
+
+
+def _emit_json(document: Mapping[str, Any]) -> None:
+    print(json.dumps(document, indent=2))
+
+
+def _fail(message: str) -> int:
+    print(f"error: {message}", file=sys.stderr)
+    return EXIT_CONFIG
+
+
+# ---------------------------------------------------------------------------
+# status / setup / reset
+# ---------------------------------------------------------------------------
+
+
+def _cmd_status(args: argparse.Namespace) -> int:
+    report: Dict[str, Any] = {}
+
+    compose_problems = compose_module.validate_compose()
+    report["compose"] = {"ok": not compose_problems, "problems": compose_problems}
+
+    try:
+        layout = load_layout()
+        report["sdk"] = {
+            "ok": True,
+            "root": str(layout.root),
+            "version": layout.version,
+            "monkeyc": str(layout.monkeyc),
+            "simulator": str(layout.simulator) if layout.simulator else None,
+        }
+    except SdkError as error:
+        report["sdk"] = {"ok": False, "error": str(error)}
+
+    openhab = OpenHabClient(_openhab_url(args))
+    report["openhab"] = {"ok": openhab.ping(), "url": openhab.base_url}
+
+    shim = ShimClient(_shim_url(args))
+    try:
+        report["shim"] = {"ok": True, "url": shim.base_url, "health": dict(shim.health())}
+    except ShimError as error:
+        report["shim"] = {"ok": False, "url": shim.base_url, "error": str(error)}
+
+    report["pins"] = compose_module.check_pins()
+
+    if args.json:
+        _emit_json(report)
+    else:
+        print(f"compose:  {'ok' if report['compose']['ok'] else 'problems'}")
+        for problem in compose_problems:
+            print(f"  - {problem}")
+        print(f"sdk:      {'ok' if report['sdk']['ok'] else 'not usable'}")
+        if not report["sdk"]["ok"]:
+            print(f"  - {report['sdk']['error']}")
+        print(f"openHAB:  {'available' if report['openhab']['ok'] else 'unreachable'} ({openhab.base_url})")
+        print(f"shim:     {'available' if report['shim']['ok'] else 'unreachable'} ({shim.base_url})")
+        if report["shim"]["ok"]:
+            health = report["shim"]["health"]
+            print(
+                f"          upstream={health.get('upstream')} "
+                f"rules={health.get('rules')} requests={health.get('requests')}"
+            )
+        for problem in report["pins"]:
+            print(f"pins:     {problem}")
+
+    return EXIT_OK if report["compose"]["ok"] else EXIT_FAILURES
+
+
+def _cmd_setup(args: argparse.Namespace) -> int:
+    problems = compose_module.validate_compose()
+    if problems:
+        for problem in problems:
+            print(f"compose: {problem}", file=sys.stderr)
+        return _fail("the Compose stack does not validate; fix the problems above")
+
+    layout = load_layout()
+    print(f"sdk:     {layout.root} (version {layout.version})")
+
+    openhab = OpenHabClient(_openhab_url(args))
+    openhab.wait_ready(args.timeout)
+    print(f"openHAB: ready at {openhab.base_url}")
+
+    shim = ShimClient(_shim_url(args))
+    shim.wait_ready(args.timeout)
+    print(f"shim:    ready, {shim.describe()}")
+
+    items = {item.name for item in openhab.items()}
+    print(f"items:   {len(items)} item(s) loaded")
+
+    payload = openhab.sitemap_json(args.sitemap)
+    if not payload:
+        return _fail(f"sitemap {args.sitemap!r} is empty")
+    referenced = openhab.item_names_in_sitemap(args.sitemap)
+    missing = [name for name in referenced if name not in items]
+    if missing:
+        return _fail(
+            f"sitemap {args.sitemap!r} references item(s) that are not defined: "
+            + ", ".join(missing)
+            + ". Fix tests/fixtures/openhab/conf/items/."
+        )
+    print(f"sitemap: {args.sitemap!r} resolves, {len(referenced)} item reference(s) all defined")
+    print("setup:   ok")
+    return EXIT_OK
+
+
+def _cmd_reset(args: argparse.Namespace) -> int:
+    shim = ShimClient(_shim_url(args))
+    shim.reset()
+    print(f"shim:     script and request trace cleared ({shim.base_url})")
+    if args.items:
+        openhab = OpenHabClient(_openhab_url(args))
+        for item in args.items:
+            openhab.set_state(item, "NULL")
+        print(f"openHAB:  {len(args.items)} item state(s) reset to NULL")
+    return EXIT_OK
+
+
+# ---------------------------------------------------------------------------
+# run
+# ---------------------------------------------------------------------------
+
+
+def _select_scenarios(args: argparse.Namespace) -> List[Scenario]:
+    if args.suite:
+        return discover_scenarios(suite=args.suite)
+    if args.all:
+        return discover_scenarios()
+    if args.scenarios:
+        return [find_scenario(identifier) for identifier in args.scenarios]
+    raise ScenarioError(
+        "nothing to run: pass one or more scenario names, --suite or --all"
+    )
+
+
+def _cmd_run(args: argparse.Namespace) -> int:
+    scenarios = _select_scenarios(args)
+    if not scenarios:
+        return _fail("no scenarios matched")
+
+    dry_run = bool(args.dry_run)
+    driver_name = args.driver or ("null" if dry_run else "wine")
+    if driver_name not in DRIVER_NAMES:
+        return _fail(f"unknown driver {driver_name!r}; known: {', '.join(DRIVER_NAMES)}")
+
+    layout = None
+    if not dry_run:
+        layout = load_layout()
+
+    artifacts = _artifacts_dir(args)
+    goldens = _goldens_dir(args)
+    report = Report()
+    built: Dict[str, Path] = {}
+
+    for scenario in scenarios:
+        device = _device_for(scenario, args)
+        prg: Optional[Path] = None
+        if layout is not None:
+            if args.prg:
+                prg = Path(args.prg)
+            else:
+                if device.id not in built:
+                    built_prg = build_prg(layout, device.product, artifacts / "build")
+                    print(f"built {built_prg.prg} in {built_prg.duration_ms:.0f} ms")
+                    built[device.id] = built_prg.prg
+                prg = built[device.id]
+
+        print(f"--- {scenario.scenario_id} ({scenario.tier}) device={device.id}")
+        outcome = run_scenario(
+            scenario,
+            device,
+            openhab_url=_openhab_url(args),
+            shim_url=_shim_url(args),
+            artifacts_dir=artifacts,
+            goldens_dir=goldens,
+            driver_name=driver_name,
+            dry_run=dry_run,
+            update_goldens=args.update_goldens,
+            skip_events=args.skip_events,
+            sdk_layout=layout,
+            prg=prg,
+            log=lambda message: print(f"    {message}"),
+        )
+        report.add(outcome)
+        print(
+            f"--- {scenario.scenario_id}: {outcome.status} "
+            f"({outcome.duration_ms / 1000.0:.1f}s, {outcome.requests} request(s))"
+        )
+        if outcome.failures:
+            for failure in outcome.failures:
+                print(f"    {failure}")
+
+    written = report.write_artifacts(artifacts)
+    for name, path in written.items():
+        print(f"{name}: {path}")
+
+    if args.json:
+        _emit_json(
+            {
+                "counts": report.counts(),
+                "exit_code": report.exit_code,
+                "results": [result.to_document() for result in report.results],
+            }
+        )
+
+    return report.exit_code
+
+
+def _device_for(scenario: Scenario, args: argparse.Namespace) -> Device:
+    if args.device:
+        return find_device(args.device)
+    if scenario.device != "any":
+        return find_device(scenario.device)
+    return find_device(default_device_id())
+
+
+# ---------------------------------------------------------------------------
+# maintenance commands
+# ---------------------------------------------------------------------------
+
+
+def _cmd_list_scenarios(args: argparse.Namespace) -> int:
+    scenarios = discover_scenarios(suite=args.suite)
+    if args.tier:
+        scenarios = [scenario for scenario in scenarios if scenario.tier == args.tier]
+
+    if args.json:
+        _emit_json(
+            [
+                {
+                    "scenario": scenario.scenario_id,
+                    "tier": scenario.tier,
+                    "device": scenario.device,
+                    "mode": scenario.mode,
+                    "fixture": scenario.fixture,
+                    "language": scenario.language,
+                    "timeout_s": scenario.timeout_s,
+                    "requires_trace_events": scenario.requires_trace_events,
+                    "source": str(scenario.source),
+                }
+                for scenario in scenarios
+            ]
+        )
+        return EXIT_OK
+
+    for scenario in scenarios:
+        print(
+            f"{scenario.scenario_id:<40} {scenario.tier:<9} "
+            f"device={scenario.device:<12} mode={scenario.mode:<8} {scenario.description}"
+        )
+    print(f"\n{len(scenarios)} scenario(s)")
+    return EXIT_OK
+
+
+def _cmd_contract_test(args: argparse.Namespace) -> int:
+    layout = None
+    if args.driver == "wine":
+        layout = load_layout()
+    driver = create_driver(args.driver, layout=layout, log=lambda message: print(message))
+    workdir = _artifacts_dir(args) / "contract" / args.driver
+    cases = run_contract(driver, workdir, device_id=args.device)
+    print(format_contract_report(cases))
+    counts = contract_summary(cases)
+    print(f"\n{counts}")
+    if args.json:
+        _emit_json(
+            [{"name": case.name, "status": case.status, "detail": case.detail} for case in cases]
+        )
+    return contract_exit_code(cases)
+
+
+def _cmd_validate_compose(args: argparse.Namespace) -> int:
+    problems = compose_module.validate_compose(
+        path=Path(args.compose) if args.compose else compose_module.COMPOSE_FILE,
+        env_path=Path(args.env) if args.env else None,
+    )
+    if args.check_pins:
+        problems += compose_module.check_pins(
+            env_path=Path(args.env) if args.env else compose_module.ENV_FILE
+        )
+    for problem in problems:
+        print(problem)
+    if problems:
+        return EXIT_FAILURES
+    print("compose: valid")
+    return EXIT_OK
+
+
+def _cmd_pin_images(args: argparse.Namespace) -> int:
+    if args.write:
+        resolved = compose_module.pin_images(write=True, refresh=args.refresh)
+        for key, value in resolved.items():
+            print(f"{key}={value}")
+        print(f"written: {compose_module.ENV_FILE}")
+        return EXIT_OK
+
+    problems = compose_module.check_pins()
+    for problem in problems:
+        print(problem)
+    if problems:
+        return EXIT_FAILURES
+    print("pins: ok")
+    return EXIT_OK
+
+
+def _cmd_sdk_check(args: argparse.Namespace) -> int:
+    try:
+        layout = load_layout()
+    except SdkError as error:
+        if not args.quiet:
+            print(f"error: {error}", file=sys.stderr)
+        return EXIT_CONFIG
+    if not args.quiet:
+        print(f"root:      {layout.root}")
+        print(f"version:   {layout.version} (pinned {read_sdk_version()})")
+        print(f"monkeyc:   {layout.monkeyc}")
+        print(f"monkeydo:  {layout.monkeydo or '<not present>'}")
+        print(f"simulator: {layout.simulator or '<not present>'}")
+        for line in describe_candidates():
+            print(f"  {line}")
+    return EXIT_OK
+
+
+def _cmd_build(args: argparse.Namespace) -> int:
+    layout = load_layout()
+    output = Path(args.output) if args.output else _artifacts_dir(args) / "build"
+    device_ids = args.device or [default_device_id()]
+    for device_id in device_ids:
+        device = find_device(device_id)
+        result = build_prg(
+            layout,
+            device.product,
+            output,
+            release=args.release,
+            developer_key=Path(args.developer_key) if args.developer_key else None,
+        )
+        print(f"{device.id}: {result.prg} ({result.duration_ms:.0f} ms)")
+    return EXIT_OK
+
+
+# ---------------------------------------------------------------------------
+# argument parsing
+# ---------------------------------------------------------------------------
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="e2e",
+        description="E2E harness for the openHAB Garmin app",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "Exit codes: 0 success, 1 scenario failures, 2 configuration error.\n"
+            "Every command that needs openHAB or the shim reads E2E_OPENHAB_URL and\n"
+            "E2E_SHIM_URL first, then falls back to localhost."
+        ),
+    )
+    subparsers = parser.add_subparsers(dest="command")
+
+    def add_common(sub: argparse.ArgumentParser) -> None:
+        sub.add_argument("--openhab-url", help="openHAB base URL (default: E2E_OPENHAB_URL or %s)" % DEFAULT_OPENHAB_URL)
+        sub.add_argument("--shim-url", help="shim base URL (default: E2E_SHIM_URL or %s)" % DEFAULT_SHIM_URL)
+        sub.add_argument("--artifacts", help="artifacts directory (default: E2E_ARTIFACTS or tests/artifacts)")
+        sub.add_argument("--json", action="store_true", help="emit machine-readable JSON")
+
+    status = subparsers.add_parser("status", help="show the health of every component")
+    add_common(status)
+    status.set_defaults(handler=_cmd_status)
+
+    setup = subparsers.add_parser("setup", help="validate compose, SDK, openHAB and the shim")
+    add_common(setup)
+    setup.add_argument("--timeout", type=float, default=180.0, help="readiness timeout in seconds")
+    setup.add_argument("--sitemap", default="garmin_e2e", help="sitemap to resolve as a fixture check")
+    setup.set_defaults(handler=_cmd_setup)
+
+    reset = subparsers.add_parser("reset", help="clear the shim script and request trace")
+    add_common(reset)
+    reset.add_argument("--items", nargs="*", default=[], help="item names to reset to NULL")
+    reset.set_defaults(handler=_cmd_reset)
+
+    run = subparsers.add_parser("run", help="run one or more scenarios")
+    add_common(run)
+    run.add_argument("scenarios", nargs="*", help="scenario names (suite/name, name, or a path)")
+    run.add_argument("--all", action="store_true", help="run every scenario")
+    run.add_argument("--suite", choices=("smoke", "regression", "extended"), help="run one suite")
+    run.add_argument("--device", help="override the device for every scenario")
+    run.add_argument("--driver", choices=DRIVER_NAMES, help="simulator driver (default: wine, or null with --dry-run)")
+    run.add_argument("--dry-run", action="store_true", help="no Docker, no SDK, no simulator: exercise scenario wiring only")
+    run.add_argument("--update-goldens", action="store_true", help="replace golden images with the current screenshots")
+    run.add_argument("--skip-events", action="store_true", help="skip assertions that need the console event stream")
+    run.add_argument("--prg", help="use an existing PRG instead of building one")
+    run.add_argument("--goldens", help="goldens directory (default: tests/goldens)")
+    run.set_defaults(handler=_cmd_run)
+
+    listing = subparsers.add_parser("list-scenarios", help="list scenarios")
+    listing.add_argument("--suite", choices=("smoke", "regression", "extended"))
+    listing.add_argument("--tier", choices=("protocol", "ui"))
+    listing.add_argument("--json", action="store_true")
+    listing.set_defaults(handler=_cmd_list_scenarios)
+
+    contract = subparsers.add_parser("contract-test", help="exercise a simulator driver against its contract")
+    contract.add_argument("--driver", choices=DRIVER_NAMES, default="null")
+    contract.add_argument("--device")
+    contract.add_argument("--artifacts")
+    contract.add_argument("--json", action="store_true")
+    contract.set_defaults(handler=_cmd_contract_test)
+
+    validate = subparsers.add_parser("validate-compose", help="validate the Compose stack without Docker")
+    validate.add_argument("--compose", help="path to compose.yaml")
+    validate.add_argument("--env", help="path to the environment file")
+    validate.add_argument("--check-pins", action="store_true", help="also require pinned image digests")
+    validate.set_defaults(handler=_cmd_validate_compose)
+
+    pin = subparsers.add_parser("pin-images", help="resolve or verify image digests")
+    pin.add_argument("--write", action="store_true", help="write tests/compose/.env from the committed pins")
+    pin.add_argument("--check", action="store_true", help="verify the existing pins (default)")
+    pin.add_argument(
+        "--refresh",
+        action="store_true",
+        help="ask Docker Hub for the current digests instead of using the committed pins",
+    )
+    pin.set_defaults(handler=_cmd_pin_images)
+
+    sdk = subparsers.add_parser("sdk-check", help="validate the mounted Connect IQ SDK")
+    sdk.add_argument("--quiet", action="store_true")
+    sdk.set_defaults(handler=_cmd_sdk_check)
+
+    build = subparsers.add_parser("build", help="compile the PRG")
+    build.add_argument("--device", nargs="*", help="device ids (default: the matrix default)")
+    build.add_argument("--output", help="output directory")
+    build.add_argument("--release", action="store_true", help="strip debug annotations (breaks event assertions)")
+    build.add_argument("--developer-key", help="path to a developer key")
+    build.add_argument("--artifacts")
+    build.set_defaults(handler=_cmd_build)
+
+    return parser
+
+
+def main(argv: Optional[Sequence[str]] = None) -> int:
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    handler = getattr(args, "handler", None)
+    if handler is None:
+        parser.print_help()
+        return EXIT_CONFIG
+
+    try:
+        return handler(args)
+    except (
+        ConfigError,
+        ComposeError,
+        SdkError,
+        BuildError,
+        SettingsError,
+        ShimError,
+        OpenHabError,
+    ) as error:
+        print(f"error: {error}", file=sys.stderr)
+        return EXIT_CONFIG
+    except KeyboardInterrupt:
+        print("interrupted", file=sys.stderr)
+        return EXIT_FAILURES
+
+
+if __name__ == "__main__":  # pragma: no cover
+    raise SystemExit(main())

@@ -1,0 +1,76 @@
+# Extended: dynamic sitemap changes while the app is open.
+#
+# `visibility` is evaluated per poll (docs/USAGE.md, "Dynamic Sitemaps"). The
+# state change is made through the `command` step, which talks to openHAB
+# directly, so the shim trace stays free of items unrelated to the app.
+#
+# The three screenshots form the evidence: marker ON hides one element and
+# reveals the other, marker OFF restores the initial state, and the frame with
+# only a hidden child shows the "This page is empty" toast.
+
+name: dynamic-visibility
+description: visibility reacts to an item state change while the app is open.
+tier: ui
+suite: extended
+device: fenix7
+mode: ble
+fixture: fast-polling
+openhab:
+  profile: stable
+  sitemap: garmin_e2e
+  items:
+    E2E_Visible: "OFF"
+    E2E_Temperature: "20.0"
+language: eng
+timeout_s: 150
+
+steps:
+  - action: launch
+
+  - action: wait_for_request
+    method: GET
+    path_prefix: /rest/sitemaps/garmin_e2e
+    min_count: 1
+    timeout_ms: 30000
+
+  # Dynamic frame is the tenth entry on the homepage.
+  - action: press
+    button: DOWN
+    count: 9
+  - action: press
+    button: ENTER
+
+  - action: screenshot
+    name: visibility-off
+
+  - action: command
+    item: E2E_Visible
+    value: "ON"
+
+  # One poll interval is enough with the fast-polling fixture; two give the
+  # comparison task room to finish.
+  - action: wait
+    ms: 1500
+
+  - action: screenshot
+    name: visibility-on
+
+  - action: assert
+    description: The app kept polling while the visibility changed.
+    shim_requests:
+      method: GET
+      path_prefix: /rest/sitemaps/garmin_e2e
+      min_count: 2
+
+  - action: command
+    item: E2E_Visible
+    value: "OFF"
+
+  - action: wait
+    ms: 1500
+
+  - action: screenshot
+    name: visibility-restored
+
+  - action: assert
+    no_error_view: true

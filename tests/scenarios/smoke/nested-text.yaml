@@ -1,0 +1,65 @@
+# Smoke: nested containers and read-only elements.
+#
+# Walks into the `Text` frame, opens the manually nested page and checks that
+# navigation does not disturb polling: the app keeps requesting the sitemap
+# while a subpage is open.
+
+name: nested-text
+description: Nested Text pages open and polling continues while they are shown.
+tier: ui
+suite: smoke
+device: fenix7
+mode: ble
+fixture: default
+openhab:
+  profile: stable
+  sitemap: garmin_e2e
+  items:
+    E2E_Temperature: "19.0"
+    E2E_LastUpdate: "2026-11-23T10:00:00.000+0100"
+    E2E_Window: CLOSED
+language: eng
+timeout_s: 90
+
+steps:
+  - action: launch
+
+  - action: wait_for_request
+    method: GET
+    path_prefix: /rest/sitemaps/garmin_e2e
+    min_count: 1
+    timeout_ms: 30000
+
+  - action: reset_shim
+
+  # `Text` is the fourth frame on the homepage.
+  - action: press
+    button: DOWN
+    count: 3
+
+  - action: press
+    button: ENTER
+
+  - action: screenshot
+    name: text-frame
+
+  # "Nested page" is the fifth entry in that frame.
+  - action: press
+    button: DOWN
+    count: 4
+
+  - action: press
+    button: ENTER
+
+  - action: screenshot
+    name: nested-page
+
+  - action: assert
+    description: Polling continues while a nested page is open.
+    shim_requests:
+      method: GET
+      path_prefix: /rest/sitemaps/garmin_e2e
+      min_count: 2
+
+  - action: assert
+    no_error_view: true
