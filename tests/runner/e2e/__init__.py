@@ -3,7 +3,7 @@
 Layout (all paths are relative to the repository root)::
 
     tests/runner/e2e/     this package
-    tests/config/         version pins and the device matrix
+    tests/config/         version pins, the device matrix and the network definition
     tests/fixtures/       openHAB conf trees and app settings
     tests/scenarios/      scenario YAML, grouped by suite
     tests/shim/           the proxy/fault injector (also imported from here)

@@ -31,6 +31,7 @@ SDK_VERSION_FILE = CONFIG_DIR / "sdk.version"
 OPENHAB_VERSION_FILE = CONFIG_DIR / "openhab.version"
 DEVICES_FILE = CONFIG_DIR / "devices.yaml"
 SCOPE_FILE = CONFIG_DIR / "scope.yaml"
+NETWORK_FILE = CONFIG_DIR / "network.yaml"
 APP_SETTINGS_DIR = FIXTURE_DIR / "app" / "settings"
 
 

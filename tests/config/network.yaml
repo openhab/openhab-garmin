@@ -1,0 +1,29 @@
+# Single source of truth for the E2E stack's loopback host and ports.
+#
+# Every consumer derives from this file:
+#
+# - `tests/compose/compose.yaml` publishes these ports on `loopback_host` only.
+# - `tests/compose/compose.host.yaml` runs the services with host networking and
+#   addresses them on `loopback_host` at these same ports.
+# - `tests/compose/.env.example` mirrors the values in its generated `network`
+#   block (`python -m e2e network-env --write`).
+# - `tests/fixtures/app/settings/*.yaml` use `${E2E_SHIM_URL}`, which resolves to
+#   `http://<loopback_host>:<shim port>` when no stack environment is present.
+#
+# After changing a port run, from `tests/runner`:
+#
+#   python -m e2e network-env --write
+#   python -m pytest
+#
+# tests/runner/tests/test_network.py fails when the compose overlay, the
+# environment example or the app settings fixtures have drifted from this file.
+
+# Loopback only. The stack never binds a non-loopback address; external access
+# is the operator's reverse proxy, not the harness's concern.
+loopback_host: 127.0.0.1
+
+ports:
+  # The two openHAB profiles are exclusive, so they may share a port.
+  openhab_stable: 8080
+  openhab_dev: 8080
+  shim: 8081

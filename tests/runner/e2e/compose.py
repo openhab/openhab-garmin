@@ -1,10 +1,22 @@
 """Compose stack validation and image pinning.
 
-Docker is not required to validate the stack. ``validate_compose`` reads
-``tests/compose/compose.yaml`` and checks the properties that the issue
-actually depends on: the service set, profiles, the read-only fixture mount,
-the dedicated volumes, the shim's upstream wiring, the runner's SDK mount and
-that no image can be pulled without a digest.
+Docker is not required to validate the stack. ``validate_compose`` reads the
+Compose files and checks the properties the harness depends on: the service
+set, profiles, the read-only fixture mount, the dedicated volumes, the shim's
+upstream wiring, the runner's SDK mount, that no image can be pulled without a
+digest, and that every published port is bound to the loopback address.
+
+There are two deployment profiles:
+
+- the default bridge stack (``compose.yaml``), which publishes loopback-only
+  host ports so it stays usable on a developer machine;
+- the host-network overlay (``compose.host.yaml``, plus
+  ``compose.host.dev.yaml`` for the dev profile), which runs every service in
+  the host network namespace and addresses peers as ``http://127.0.0.1:<port>``.
+
+Ports and URLs are never hardcoded here: they come from
+``tests/config/network.yaml`` through the generated block in
+``tests/compose/.env.example``.
 
 ``pin-images`` is the one command that needs the network: it resolves
 multi-architecture digests from Docker Hub and writes them into
@@ -13,7 +25,9 @@ multi-architecture digests from Docker Hub and writes them into
 
 from __future__ import annotations
 
+import ipaddress
 import json
+import re
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -21,10 +35,19 @@ from typing import Dict, List, Mapping, Optional, Sequence
 
 import yaml
 
-from .config import COMPOSE_DIR, ImagePin, openhab_images
+from .config import COMPOSE_DIR, ConfigError, ImagePin, openhab_images
+from .network import (
+    ENV_LOOPBACK_HOST,
+    ENV_PORTS,
+    Network,
+    check_env_block,
+    load_network,
+)
 
 COMPOSE_FILE = COMPOSE_DIR / "compose.yaml"
 DEV_OVERRIDE_FILE = COMPOSE_DIR / "compose.dev.yaml"
+HOST_OVERRIDE_FILE = COMPOSE_DIR / "compose.host.yaml"
+HOST_DEV_OVERRIDE_FILE = COMPOSE_DIR / "compose.host.dev.yaml"
 ENV_FILE = COMPOSE_DIR / ".env"
 ENV_EXAMPLE = COMPOSE_DIR / ".env.example"
 
@@ -43,6 +66,8 @@ REQUIRED_ENV_KEYS = (
     "RUNNER_BASE_IMAGE",
     "SHIM_BASE_IMAGE",
     "CIQ_SDK_HOST_PATH",
+    ENV_LOOPBACK_HOST,
+    *ENV_PORTS.values(),
 )
 
 IMAGE_ENV_KEYS = {
@@ -54,9 +79,50 @@ IMAGE_ENV_KEYS = {
 
 DOCKER_HUB_TAG_URL = "https://hub.docker.com/v2/repositories/{repository}/tags/{tag}"
 
+#: Compose variable interpolation: ``$$``, ``${VAR}``, ``${VAR:-default}``,
+#: ``${VAR-default}``, ``${VAR:?message}`` and ``${VAR?message}``.
+_INTERPOLATION = re.compile(
+    r"\$\$|\$\{([A-Za-z_][A-Za-z0-9_]*)(?:(:?[-?])([^}]*))?\}"
+)
+
+#: openHAB binds all interfaces by default. The host overlay narrows it.
+LISTENING_ADDRESS_PROPERTY = "org.ops4j.pax.web.listening.address"
+
 
 class ComposeError(RuntimeError):
     """Raised when the Compose stack cannot be read or is misconfigured."""
+
+
+class ComposeLoader(yaml.SafeLoader):
+    """A ``SafeLoader`` that understands Compose's merge tags.
+
+    ``!reset`` removes an inherited value (a list or a mapping) and
+    ``!override`` replaces it instead of merging. Both appear in the host
+    overlay, which must drop the bridge profile's published ports and network
+    attachments. Docker Compose 2.24+ interprets the tags itself; this loader
+    exists so ``python -m e2e validate-compose`` and the unit tests can read
+    the same documents without Docker.
+    """
+
+
+def _construct_reset(loader: ComposeLoader, node: yaml.Node) -> object:
+    if isinstance(node, yaml.SequenceNode):
+        return []
+    if isinstance(node, yaml.MappingNode):
+        return {}
+    return None
+
+
+def _construct_override(loader: ComposeLoader, node: yaml.Node) -> object:
+    if isinstance(node, yaml.SequenceNode):
+        return loader.construct_sequence(node, deep=True)
+    if isinstance(node, yaml.MappingNode):
+        return loader.construct_mapping(node, deep=True)
+    return loader.construct_scalar(node)
+
+
+ComposeLoader.add_constructor("!reset", _construct_reset)
+ComposeLoader.add_constructor("!override", _construct_override)
 
 
 # ---------------------------------------------------------------------------
@@ -67,7 +133,10 @@ class ComposeError(RuntimeError):
 def load_compose(path: Path = COMPOSE_FILE) -> Mapping[str, object]:
     if not path.is_file():
         raise ComposeError(f"compose file not found: {path}")
-    document = yaml.safe_load(path.read_text(encoding="utf-8"))
+    try:
+        document = yaml.load(path.read_text(encoding="utf-8"), Loader=ComposeLoader)
+    except yaml.YAMLError as error:
+        raise ComposeError(f"{path}: invalid YAML: {error}") from None
     if not isinstance(document, Mapping):
         raise ComposeError(f"{path}: expected a mapping at the top level")
     return document
@@ -85,6 +154,33 @@ def read_env_file(path: Path) -> Dict[str, str]:
         key, _, value = stripped.partition("=")
         values[key.strip()] = value.strip().strip('"').strip("'")
     return values
+
+
+def interpolate(text: str, env: Mapping[str, str]) -> str:
+    """Apply Compose-style variable interpolation to ``text``."""
+    def replace(match: "re.Match[str]") -> str:
+        token = match.group(0)
+        if token == "$$":
+            return "$"
+        name = match.group(1)
+        operator = match.group(2)
+        argument = match.group(3) or ""
+        value = env.get(name)
+        if operator == ":-":
+            return value if value else argument
+        if operator == "-":
+            return value if value is not None else argument
+        if operator == ":?":
+            if not value:
+                raise ComposeError(f"{name} is required: {argument or 'set it in tests/compose/.env'}")
+            return value
+        if operator == "?":
+            if value is None:
+                raise ComposeError(f"{name} is required: {argument or 'set it in tests/compose/.env'}")
+            return value
+        return value or ""
+
+    return _INTERPOLATION.sub(replace, text)
 
 
 # ---------------------------------------------------------------------------
@@ -106,6 +202,63 @@ def _mounts(service: Mapping[str, object]) -> List[str]:
 
 def _image(service: Mapping[str, object]) -> str:
     return str(service.get("image", ""))
+
+
+def _is_loopback(host: str) -> bool:
+    text = host.strip()
+    if text.startswith("[") and text.endswith("]"):
+        text = text[1:-1]
+    if text == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(text).is_loopback
+    except ValueError:
+        return False
+
+
+def _port_binding(entry: object, env: Mapping[str, str]) -> "tuple[str, str]":
+    """Return ``(host_ip, published_port)`` for one ``ports`` entry.
+
+    Accepts both the short string form (``[ip:]published:target[/proto]``) and
+    the long mapping form (``host_ip``/``published``). An empty host IP means
+    Docker's default wildcard bind.
+    """
+    if isinstance(entry, Mapping):
+        return str(entry.get("host_ip") or ""), str(entry.get("published") or "")
+    spec = interpolate(str(entry), env).split("/", 1)[0]
+    parts = spec.rsplit(":", 2)
+    if len(parts) == 3:
+        return parts[0], parts[1]
+    if len(parts) == 2:
+        return "", parts[0]
+    return "", parts[0] if parts else ""
+
+
+def published_port_problems(
+    services: Mapping[str, object],
+    env: Mapping[str, str],
+) -> List[str]:
+    """Every published port must bind a loopback address explicitly."""
+    problems: List[str] = []
+    for name, raw in services.items():
+        service = _as_mapping(raw)
+        for entry in _as_list(service.get("ports")):
+            try:
+                host_ip, published = _port_binding(entry, env)
+            except ComposeError as error:
+                problems.append(f"services.{name}: cannot resolve published port {entry!r}: {error}")
+                continue
+            if not host_ip:
+                problems.append(
+                    f"services.{name}: published port {published!r} has no host IP; "
+                    "bind the loopback address from tests/config/network.yaml"
+                )
+            elif not _is_loopback(host_ip):
+                problems.append(
+                    f"services.{name}: published port {published!r} binds {host_ip!r}, "
+                    "not loopback"
+                )
+    return problems
 
 
 def validate_compose_document(
@@ -211,6 +364,8 @@ def validate_compose_document(
             problems.append(f"services.runner must set {key}")
 
     # -- networking and hygiene ------------------------------------------
+    problems.extend(published_port_problems(services, env))
+
     networks = _as_mapping(document.get("networks"))
     if not networks:
         problems.append("a named bridge network is required for the stack")
@@ -271,19 +426,189 @@ def validate_dev_override(path: Path = DEV_OVERRIDE_FILE) -> List[str]:
     return problems
 
 
+def _network_or_problem() -> "Network | List[str]":
+    try:
+        return load_network()
+    except ConfigError as error:
+        return [str(error)]
+
+
+def _host_service_problems(
+    path: Path,
+    services: Mapping[str, object],
+) -> List[str]:
+    """Structural checks shared by the host overlays."""
+    problems: List[str] = []
+    for name in REQUIRED_SERVICES:
+        service = _as_mapping(services.get(name))
+        if not service:
+            problems.append(f"{path}: services.{name} is missing")
+            continue
+        if service.get("network_mode") != "host":
+            problems.append(
+                f"{path}: services.{name} must set network_mode: host; the dedicated "
+                "host addresses every service on loopback"
+            )
+        if _as_list(service.get("ports")):
+            problems.append(
+                f"{path}: services.{name} must not publish ports under host networking; "
+                "reset the inherited bridge publications"
+            )
+        if _as_mapping(service.get("networks")):
+            problems.append(
+                f"{path}: services.{name} must not attach a bridge network under host "
+                "networking; reset the inherited attachments"
+            )
+    return problems
+
+
+def validate_host_override(
+    path: Path = HOST_OVERRIDE_FILE,
+    env: Optional[Mapping[str, str]] = None,
+) -> List[str]:
+    """Validate ``compose.host.yaml``, the host-network overlay.
+
+    The overlay must bind nothing to a non-loopback address and must address
+    every peer through ``127.0.0.1`` at the ports from ``tests/config/network.yaml``.
+    """
+    problems: List[str] = []
+    if not path.is_file():
+        return [f"missing host-network override file: {path}"]
+    document = load_compose(path)
+    services = _as_mapping(document.get("services"))
+    if not services:
+        return [f"{path}: no services defined"]
+    env = dict(env if env is not None else read_env_file(path.parent / ".env.example"))
+
+    network = _network_or_problem()
+    if isinstance(network, list):
+        return problems + network
+
+    problems.extend(_host_service_problems(path, services))
+
+    def resolved(service: str, key: str) -> Optional[str]:
+        value = _as_mapping(_as_mapping(services.get(service)).get("environment")).get(key)
+        if value is None:
+            return None
+        try:
+            return interpolate(str(value), env)
+        except ComposeError as error:
+            problems.append(f"{path}: services.{service}.{key} cannot be resolved: {error}")
+            return None
+
+    for name, port in (
+        ("openhab-stable", network.openhab_stable_port),
+        ("openhab-dev", network.openhab_dev_port),
+    ):
+        environment = _as_mapping(_as_mapping(services.get(name)).get("environment"))
+        extra = str(environment.get("EXTRA_JAVA_OPTS", ""))
+        if LISTENING_ADDRESS_PROPERTY not in extra:
+            problems.append(
+                f"{path}: services.{name} must set -D{LISTENING_ADDRESS_PROPERTY} so openHAB "
+                "does not bind all interfaces"
+            )
+        elif f"${{{ENV_LOOPBACK_HOST}" not in extra:
+            problems.append(
+                f"{path}: services.{name} listening address must come from "
+                f"${{{ENV_LOOPBACK_HOST}}}, not a literal hostname"
+            )
+        http_port = resolved(name, "OPENHAB_HTTP_PORT")
+        if http_port != str(port):
+            problems.append(
+                f"{path}: services.{name}.OPENHAB_HTTP_PORT resolves to {http_port!r}, "
+                f"expected {port} from tests/config/network.yaml"
+            )
+
+    shim_bind = resolved("shim", "SHIM_BIND")
+    if shim_bind != network.loopback_host:
+        problems.append(
+            f"{path}: services.shim.SHIM_BIND resolves to {shim_bind!r}, expected the "
+            f"loopback host {network.loopback_host!r}"
+        )
+    shim_port = resolved("shim", "SHIM_PORT")
+    if shim_port != str(network.shim_port):
+        problems.append(
+            f"{path}: services.shim.SHIM_PORT resolves to {shim_port!r}, expected "
+            f"{network.shim_port} from tests/config/network.yaml"
+        )
+    upstream = resolved("shim", "OPENHAB_UPSTREAM")
+    if upstream != network.openhab_url("stable"):
+        problems.append(
+            f"{path}: services.shim.OPENHAB_UPSTREAM resolves to {upstream!r}, expected "
+            f"{network.openhab_url('stable')!r}"
+        )
+    runner_openhab = resolved("runner", "E2E_OPENHAB_URL")
+    if runner_openhab != network.openhab_url("stable"):
+        problems.append(
+            f"{path}: services.runner.E2E_OPENHAB_URL resolves to {runner_openhab!r}, "
+            f"expected {network.openhab_url('stable')!r}"
+        )
+    runner_shim = resolved("runner", "E2E_SHIM_URL")
+    if runner_shim != network.shim_url:
+        problems.append(
+            f"{path}: services.runner.E2E_SHIM_URL resolves to {runner_shim!r}, expected "
+            f"{network.shim_url!r}"
+        )
+    return problems
+
+
+def validate_host_dev_override(
+    path: Path = HOST_DEV_OVERRIDE_FILE,
+    env: Optional[Mapping[str, str]] = None,
+) -> List[str]:
+    """Validate ``compose.host.dev.yaml``, the host overlay for the dev profile."""
+    problems: List[str] = []
+    if not path.is_file():
+        return [f"missing host-network dev override file: {path}"]
+    document = load_compose(path)
+    services = _as_mapping(document.get("services"))
+    if not services:
+        return [f"{path}: no services defined"]
+    env = dict(env if env is not None else read_env_file(path.parent / ".env.example"))
+
+    network = _network_or_problem()
+    if isinstance(network, list):
+        return problems + network
+
+    expected = network.openhab_url("dev")
+    for service, key in (
+        ("shim", "OPENHAB_UPSTREAM"),
+        ("runner", "E2E_OPENHAB_URL"),
+    ):
+        value = _as_mapping(_as_mapping(services.get(service)).get("environment")).get(key)
+        if value is None:
+            problems.append(f"{path}: services.{service} must set {key}")
+            continue
+        try:
+            actual = interpolate(str(value), env)
+        except ComposeError as error:
+            problems.append(f"{path}: services.{service}.{key} cannot be resolved: {error}")
+            continue
+        if actual != expected:
+            problems.append(
+                f"{path}: services.{service}.{key} resolves to {actual!r}, expected "
+                f"{expected!r} from tests/config/network.yaml"
+            )
+    return problems
+
+
 def validate_compose(
     path: Path = COMPOSE_FILE,
     env_path: Optional[Path] = None,
 ) -> List[str]:
-    """Validate the compose file, its example environment and the dev override."""
+    """Validate every compose file, the environment example and the network wiring."""
     document = load_compose(path)
     if env_path is not None:
         env = read_env_file(env_path)
     else:
         example = path.parent / ".env.example"
         env = read_env_file(example)
-    return validate_compose_document(document, env) + validate_dev_override(
-        path.parent / "compose.dev.yaml"
+    return (
+        validate_compose_document(document, env)
+        + validate_dev_override(path.parent / "compose.dev.yaml")
+        + check_env_block(path.parent / ".env.example")
+        + validate_host_override(path.parent / "compose.host.yaml", env=env)
+        + validate_host_dev_override(path.parent / "compose.host.dev.yaml", env=env)
     )
 
 

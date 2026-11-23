@@ -113,9 +113,12 @@ scenario would be asserting the wrong error path.
 
 ```bash
 docker build -t openhab-garmin-shim -f tests/shim/Dockerfile tests
-docker run --rm -p 8081:8080 \
+docker run --rm -p 127.0.0.1:8081:8080 \
   -e OPENHAB_UPSTREAM=http://host.docker.internal:8080 \
   openhab-garmin-shim
 ```
+
+The port is published on loopback only, matching the Compose stack; expose it
+through a reverse proxy if it must be reachable from another machine.
 
 Environment: `OPENHAB_UPSTREAM`, `SHIM_BIND`, `SHIM_PORT`, `SHIM_VERSION`.

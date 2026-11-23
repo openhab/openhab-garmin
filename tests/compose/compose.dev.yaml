@@ -2,6 +2,9 @@
 #
 #   COMPOSE_PROFILES=dev docker compose -f compose.yaml -f compose.dev.yaml up -d
 #
+# On the dedicated host add compose.host.yaml and compose.host.dev.yaml after
+# this file; compose.host.dev.yaml re-points the loopback URLs at the dev port.
+#
 # Why this file exists: `compose.yaml` defaults the shim's upstream to
 # `openhab-stable`. Under the `dev` profile that service does not run, so a
 # plain `docker compose --profile dev up` would start a shim that proxies to

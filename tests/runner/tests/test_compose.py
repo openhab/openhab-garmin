@@ -15,10 +15,21 @@ import yaml
 
 from e2e import compose as compose_module
 from e2e.config import COMPOSE_DIR
+from e2e.network import load_network
 
 
 def _document() -> dict:
     return copy.deepcopy(compose_module.load_compose())
+
+
+def _host_document() -> dict:
+    return copy.deepcopy(compose_module.load_compose(compose_module.HOST_OVERRIDE_FILE))
+
+
+def _write_host(tmp_path: Path, document: dict) -> Path:
+    path = tmp_path / "compose.host.yaml"
+    path.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
+    return path
 
 
 def _env() -> dict:
@@ -206,6 +217,147 @@ def test_env_example_must_declare_every_image() -> None:
     del env["SHIM_BASE_IMAGE"]
     problems = compose_module.validate_compose_document(_document(), env)
     assert any("SHIM_BASE_IMAGE" in problem for problem in problems)
+
+
+# ---------------------------------------------------------------------------
+# loopback exposure
+# ---------------------------------------------------------------------------
+
+
+def test_default_profile_publishes_loopback_only() -> None:
+    document = _document()
+    assert compose_module.published_port_problems(document["services"], _env()) == []
+    for name in ("openhab-stable", "openhab-dev", "shim"):
+        ports = document["services"][name].get("ports", [])
+        assert ports, f"{name} should publish a loopback port for developer access"
+        for entry in ports:
+            # The host IP must come from the single-source variable, never a
+            # wildcard or a literal address.
+            assert "${E2E_LOOPBACK_HOST" in str(entry), (name, entry)
+
+
+def test_wildcard_published_port_is_rejected() -> None:
+    document = _document()
+    document["services"]["shim"]["ports"] = ["8081:8080"]
+    problems = compose_module.validate_compose_document(document, _env())
+    assert any("has no host IP" in problem for problem in problems)
+
+
+def test_non_loopback_published_port_is_rejected() -> None:
+    document = _document()
+    document["services"]["shim"]["ports"] = ["0.0.0.0:8081:8080"]
+    problems = compose_module.validate_compose_document(document, _env())
+    assert any("not loopback" in problem for problem in problems)
+
+
+def test_long_syntax_published_ports_are_checked() -> None:
+    document = _document()
+    document["services"]["shim"]["ports"] = [
+        {"host_ip": "0.0.0.0", "published": 8081, "target": 8080}
+    ]
+    problems = compose_module.validate_compose_document(document, _env())
+    assert any("not loopback" in problem for problem in problems)
+
+    document["services"]["shim"]["ports"] = [
+        {"host_ip": "127.0.0.1", "published": 8081, "target": 8080}
+    ]
+    assert compose_module.validate_compose_document(document, _env()) == []
+
+
+# ---------------------------------------------------------------------------
+# host-network overlay
+# ---------------------------------------------------------------------------
+
+
+def test_host_override_validates() -> None:
+    assert compose_module.validate_host_override() == []
+
+
+def test_host_override_runs_every_service_on_the_host() -> None:
+    services = _host_document()["services"]
+    for name in compose_module.REQUIRED_SERVICES:
+        assert services[name]["network_mode"] == "host"
+        assert not services[name].get("ports"), f"{name} must not publish ports"
+        assert not services[name].get("networks"), f"{name} must not attach a bridge network"
+
+
+def test_host_override_urls_match_the_network_definition() -> None:
+    network = load_network()
+    document = compose_module.load_compose(compose_module.HOST_OVERRIDE_FILE)
+    env = _env()
+    runner = document["services"]["runner"]["environment"]
+    assert compose_module.interpolate(runner["E2E_SHIM_URL"], env) == network.shim_url
+    assert (
+        compose_module.interpolate(runner["E2E_OPENHAB_URL"], env)
+        == network.openhab_url("stable")
+    )
+    shim = document["services"]["shim"]["environment"]
+    assert compose_module.interpolate(shim["SHIM_BIND"], env) == network.loopback_host
+    assert compose_module.interpolate(shim["SHIM_PORT"], env) == str(network.shim_port)
+
+
+def test_host_override_requires_host_networking(tmp_path: Path) -> None:
+    document = _host_document()
+    document["services"]["runner"]["network_mode"] = "bridge"
+    problems = compose_module.validate_host_override(
+        _write_host(tmp_path, document), env=_env()
+    )
+    assert any("network_mode: host" in problem for problem in problems)
+
+
+def test_host_override_rejects_published_ports(tmp_path: Path) -> None:
+    document = _host_document()
+    document["services"]["shim"]["ports"] = ["127.0.0.1:8081:8080"]
+    problems = compose_module.validate_host_override(
+        _write_host(tmp_path, document), env=_env()
+    )
+    assert any("must not publish ports" in problem for problem in problems)
+
+
+def test_host_override_requires_a_wildcard_free_shim_bind(tmp_path: Path) -> None:
+    document = _host_document()
+    document["services"]["shim"]["environment"]["SHIM_BIND"] = "0.0.0.0"
+    problems = compose_module.validate_host_override(
+        _write_host(tmp_path, document), env=_env()
+    )
+    assert any("loopback host" in problem for problem in problems)
+
+
+def test_host_override_requires_a_loopback_openhab_bind(tmp_path: Path) -> None:
+    document = _host_document()
+    document["services"]["openhab-stable"]["environment"].pop("EXTRA_JAVA_OPTS")
+    problems = compose_module.validate_host_override(
+        _write_host(tmp_path, document), env=_env()
+    )
+    assert any("listening.address" in problem for problem in problems)
+
+
+def test_host_override_rejects_a_hardcoded_hostname(tmp_path: Path) -> None:
+    document = _host_document()
+    document["services"]["runner"]["environment"]["E2E_SHIM_URL"] = "http://shim:8080"
+    problems = compose_module.validate_host_override(
+        _write_host(tmp_path, document), env=_env()
+    )
+    assert any("E2E_SHIM_URL" in problem for problem in problems)
+
+
+def test_host_dev_override_validates() -> None:
+    assert compose_module.validate_host_dev_override() == []
+
+
+def test_host_dev_override_points_at_the_dev_port(tmp_path: Path) -> None:
+    network = load_network()
+    document = compose_module.load_compose(compose_module.HOST_DEV_OVERRIDE_FILE)
+    runner = document["services"]["runner"]["environment"]
+    assert (
+        compose_module.interpolate(runner["E2E_OPENHAB_URL"], _env())
+        == network.openhab_url("dev")
+    )
+    document["services"]["runner"]["environment"]["E2E_OPENHAB_URL"] = "http://openhab-dev:8080"
+    path = tmp_path / "compose.host.dev.yaml"
+    path.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
+    problems = compose_module.validate_host_dev_override(path, env=_env())
+    assert any("E2E_OPENHAB_URL" in problem for problem in problems)
 
 
 # ---------------------------------------------------------------------------

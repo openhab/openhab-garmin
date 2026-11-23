@@ -12,6 +12,12 @@ app (Wine simulator in `runner`)  ->  shim  ->  openHAB
 The shim sits between the app and openHAB so every request the app makes is
 recorded and can be replaced with a scripted fault.
 
+Every published port is bound to the loopback address defined in
+[`config/network.yaml`](config/network.yaml), so the stack is not reachable from
+the network. External access, including TLS termination, is the operator's
+reverse proxy: no certificate, private key or CA material is stored in this
+repository or baked into the environment.
+
 ## Status
 
 This directory is the foundation tracked by
@@ -79,10 +85,11 @@ cd ../runner
 python -m pip install -r requirements.txt
 python -m pip install --editable .    # optional: `python -m e2e` from anywhere
 python -m e2e pin-images --write      # writes @sha256 pins into ../compose/.env
+python -m e2e network-env             # ports in .env.example match config/network.yaml
 python -m e2e validate-compose        # no Docker needed
 
 cd ../compose
-docker compose up -d                  # openhab-stable, shim, runner
+docker compose up -d                  # openhab-stable, shim, runner (ports on 127.0.0.1)
 docker compose ps                     # wait for the healthchecks
 
 cd ../runner
@@ -121,6 +128,7 @@ those steps as **skipped**. It never reports them as passed.
 | `coverage` | map #140 scope entries to scenarios; `--write` regenerates `docs/coverage.md`, `--check` fails on a gap or a stale document |
 | `contract-test` | exercise a simulator driver against the driver contract |
 | `validate-compose` | static Compose validation; `--check-pins` also requires digests |
+| `network-env` | render or verify the generated loopback network block in `compose/.env.example` |
 | `pin-images` | write or verify image digests (`--refresh` re-resolves from Docker Hub) |
 | `sdk-check` | validate the mounted SDK without starting anything |
 | `build` | compile the PRG for one or more devices with the Linux `monkeyc` |
@@ -235,7 +243,7 @@ fixtures/openhab/conf/sitemaps/garmin_e2e.sitemap  every supported element and p
 fixtures/openhab/conf/sitemaps/garmin_unsupported.sitemap  the "no supported widget" path
 fixtures/openhab/conf/sitemaps/garmin_localisation.sitemap  stable localisation menu
 fixtures/openhab/conf/sitemaps/garmin_localisation_long.sitemap  long-dynamic-value error path
-fixtures/app/settings/*.yaml                       Connect IQ property sets
+fixtures/app/settings/*.yaml                       Connect IQ property sets (`${E2E_SHIM_URL}`)
 ```
 
 The baseline sitemap starts from the one posted in
@@ -255,6 +263,69 @@ Fixture files are the source of truth:
 
 The two fixture directories are mounted **read-only** into a writable conf volume,
 so the container can create its own files without ever writing into the checkout.
+
+The app settings fixtures write `url_0: ${E2E_SHIM_URL}/`, not a literal host.
+`E2E_SHIM_URL` is the same variable Compose passes to the runner, so the app
+always addresses the shim the runner resets and inspects: `http://shim:8080` on
+the bridge profile and `http://127.0.0.1:8081` on the host overlay. Outside a
+stack it falls back to the loopback URL from `config/network.yaml`.
+
+## Deployment profiles and networking
+
+The stack has one deployment axis (which openHAB runs) and one networking axis
+(whether the services use a bridge network or the host network). The defaults
+are bridge + stable, which works on a developer machine.
+
+| Combination | Command | Services address each other as |
+| --- | --- | --- |
+| bridge, stable (default) | `docker compose up -d` | Compose service aliases, container port 8080 |
+| bridge, dev | `COMPOSE_PROFILES=dev docker compose -f compose.yaml -f compose.dev.yaml up -d` | `openhab-dev:8080`, `shim:8080` |
+| host, stable (dedicated VM) | `docker compose -f compose.yaml -f compose.host.yaml up -d` | `http://127.0.0.1:<port>` |
+| host, dev (dedicated VM) | `COMPOSE_PROFILES=dev docker compose -f compose.yaml -f compose.dev.yaml -f compose.host.yaml -f compose.host.dev.yaml up -d` | `http://127.0.0.1:<dev port>` |
+
+All four files are statically validated; the host overlays are checked to be
+hostname-free and loopback-only.
+
+### The loopback rule
+
+- `config/network.yaml` is the **only** place that defines the host and ports.
+  It renders the `network` block in `compose/.env.example`
+  (`python -m e2e network-env --write`), which Compose consumes as variables.
+  `python -m pytest` and `validate-compose` fail if the block drifts.
+- The bridge profile publishes `${E2E_LOOPBACK_HOST}:<port>` and never a
+  wildcard address, so a developer can reach the stack at `127.0.0.1:8081` but
+  the machine's LAN cannot.
+- The host overlays set `network_mode: host` on every service, reset the
+  inherited port publications with Compose's `!reset` tag (Docker Compose 2.24+),
+  bind the shim with `SHIM_BIND=${E2E_LOOPBACK_HOST}`, and give openHAB
+  `-Dorg.ops4j.pax.web.listening.address=${E2E_LOOPBACK_HOST}` because its
+  default is `0.0.0.0`.
+
+### External access is not the stack's concern
+
+Nothing here terminates TLS or exposes a public listener. If the host must be
+reachable from outside, the operator puts a reverse proxy (or an SSH tunnel) in
+front of the loopback port. No certificate, private key or CA material is
+referenced by this directory, and none should be added to it.
+
+### Changing a port
+
+```bash
+# edit config/network.yaml
+cd tests/runner
+python -m e2e network-env --write      # refresh compose/.env.example
+python -m pytest                       # fixtures and overlays must still agree
+```
+
+`python -m e2e network-env` (no `--write`) is the check-only form.
+
+### Dev profile override
+
+`dev` is opt-in and needs `compose.dev.yaml`, because the shim's upstream must
+follow the profile. Using `--profile dev` without it starts a shim that points
+at a service that is not running; `validate-compose` rejects that override
+shape. On the host overlay, `compose.host.dev.yaml` is applied last so its
+loopback URLs for `openhab-dev` win over both earlier files.
 
 ## Image pinning
 
@@ -277,18 +348,10 @@ To bump a version: change the tag _and_ digest in `config/openhab.version` (or r
 `pin-images --write --refresh` after editing the tag), record the resolution date
 in the file's header, then run the smoke suite against both profiles.
 
-## Profiles
-
-- `stable` is the default: `docker compose up -d`.
-- `dev` is opt-in and needs the override file, because the shim's upstream must
-  follow the profile:
-
-  ```bash
-  COMPOSE_PROFILES=dev docker compose -f compose.yaml -f compose.dev.yaml up -d
-  ```
-
-  Using `--profile dev` without the override file starts a shim that points at a
-  service that is not running; `validate-compose` rejects that override shape.
+The profile and networking matrix, the loopback rule and the port-change
+procedure are documented in
+[Deployment profiles and networking](#deployment-profiles-and-networking)
+above.
 
 ## What was and was not executed
 
@@ -297,16 +360,17 @@ validation split is:
 
 ### Executed
 
-The coverage change was validated on a workstation with neither Docker nor the
-SDK:
+The loopback-network change was validated on a workstation with neither Docker nor
+the SDK:
 
 ```bash
 cd tests/runner
-python -m pytest -q                     # 353 passed
+python -m pytest -q                     # 395 passed
+python -m e2e network-env               # network: ok
+python -m e2e validate-compose          # compose: valid (bridge, dev, host, host-dev)
 python -m e2e run --all --dry-run       # 81 scenarios, artifacts + JUnit written
 python -m e2e list-scenarios            # 81 scenarios
 python -m e2e coverage --check          # 65 scope entries, 36 covered, 29 waived, 0 empty
-python -m e2e coverage --write          # regenerated docs/coverage.md
 ```
 
 The Compose, image-pin, driver-contract and SDK checks are unchanged by this
@@ -372,6 +436,35 @@ Do this once after the stack is up, and again after touching fixtures or the shi
    `commandConfirmMessage` cancel (sends nothing), and a `Rollershutter`/`Player`
    control (full-screen UP/DOWN/STOP and PLAY/PAUSE/NEXT/PREVIOUS).
 
+### Operator verification: loopback and host overlay
+
+Run these on the dedicated Linux host after starting the stack; they are the
+manual counterpart to `tests/runner/tests/test_compose.py` and
+`tests/runner/tests/test_network.py`.
+
+1. **Rendered configuration binds loopback.** With the stack running,
+   `docker compose config` (same `-f` files as the start command) must show
+   every published port prefixed with `127.0.0.1:`. In the host overlay the
+   `ports` entries are gone and each service has `network_mode: host`.
+1. **No wildcard listener.** `ss -ltnp` on the host: ports 8080/8081 (and 8443
+   when openHAB runs) must be bound to `127.0.0.1`, never `0.0.0.0` or `[::]`.
+   Repeat from another machine with `curl http://<host>:8081/__shim__/health`;
+   the connection must be refused or time out.
+1. **Loopback wiring works.** Inside the runner container,
+   `python -m e2e status` must report `openHAB: available` and
+   `shim: available` with `127.0.0.1` URLs. In the host profile, run
+   `curl http://127.0.0.1:8081/__shim__/health` on the host as well.
+1. **App and runner agree.** `python -m e2e run smoke/launch-and-poll` in the
+   host profile: the app polls `127.0.0.1:8081` and the shim trace records only
+   those requests.
+1. **Port change propagates.** Edit a port in `config/network.yaml`, run
+   `python -m e2e network-env --write`, recreate the stack and confirm both the
+   published port and the app's URL moved together. `python -m pytest` must
+   pass before the change is committed.
+1. **No TLS material is needed.** Nothing in the start commands references a
+   certificate or key. External access is provided by the operator's reverse
+   proxy in front of `127.0.0.1`.
+
 ## Troubleshooting
 
 | Symptom | Cause |
@@ -382,6 +475,10 @@ Do this once after the stack is up, and again after touching fixtures or the shi
 | `setup: sitemap ... references item(s) that are not defined` | fixture `.items` file drifted from the sitemap |
 | openHAB healthy but no sitemap | the `garmin_e2e` fixture failed to parse; check `docker compose logs openhab-stable` |
 | Everything times out on the dev profile | you started it without `-f compose.dev.yaml` |
+| `compose: services.shim.SHIM_BIND resolves to '0.0.0.0'` | the host overlay was edited to hardcode a bind address; use `${E2E_LOOPBACK_HOST}` |
+| `the generated network block has drifted` | run `python -m e2e network-env --write` after editing `config/network.yaml` |
+| `unknown flag: reset` / `!reset` parse error | Docker Compose is older than 2.24; upgrade it or use the bridge profile |
+| Nothing is reachable from another machine | by design: ports are loopback-only, put a reverse proxy in front |
 
 ## Further reading
 
