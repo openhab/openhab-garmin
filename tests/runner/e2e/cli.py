@@ -7,6 +7,7 @@ Subcommands:
     reset             clear the shim's script and request trace
     status            one-shot health summary of every component
     list-scenarios    list the scenarios that would run
+    variants          show build-variant coverage of the device matrix
     contract-test     exercise a simulator driver against the driver contract
     validate-compose  static validation of the Compose stack (no Docker needed)
     pin-images        resolve/verify image digests from Docker Hub
@@ -34,6 +35,7 @@ from .config import (
     Device,
     default_device_id,
     find_device,
+    load_devices,
     read_sdk_version,
 )
 from .contract import format_report as format_contract_report
@@ -49,6 +51,14 @@ from .sdk import SdkError, describe_candidates, load_layout
 from .settings import SettingsError
 from .shim import ShimClient, ShimError
 from .sim import DRIVER_NAMES, create_driver
+from .variants import (
+    check_coverage,
+    combinations,
+    format_matrix_table,
+    load_builds,
+    load_waivers,
+    ui_coverage_problems,
+)
 
 EXIT_OK = 0
 EXIT_FAILURES = 1
@@ -299,6 +309,66 @@ def _device_for(scenario: Scenario, args: argparse.Namespace) -> Device:
 # ---------------------------------------------------------------------------
 
 
+def _cmd_variants(args: argparse.Namespace) -> int:
+    builds = load_builds()
+    devices_path = Path(args.devices) if args.devices else None
+    devices = load_devices(devices_path) if devices_path else load_devices()
+    waivers = load_waivers(devices_path) if devices_path else load_waivers()
+    problems = check_coverage(builds, devices, waivers) + ui_coverage_problems(builds, devices)
+
+    if args.json:
+        _emit_json(
+            {
+                "products": len(builds),
+                "combinations": [
+                    {
+                        "variants": dict(combination.variants),
+                        "products": list(combination.products),
+                        "devices": sorted(
+                            device.id
+                            for device in devices
+                            if all(
+                                tag in device.variants
+                                for tag in combination.variant_tags
+                            )
+                        ),
+                    }
+                    for combination in combinations(builds)
+                ],
+                "devices": [
+                    {"id": device.id, "product": device.product, "tiers": list(device.tiers_run)}
+                    for device in devices
+                ],
+                "waivers": [
+                    {"variants": list(waiver.variants), "reason": waiver.reason}
+                    for waiver in waivers
+                ],
+                "problems": [problem.detail for problem in problems],
+                "ok": not problems,
+            }
+        )
+    else:
+        tier_counts = {
+            tier: sum(1 for device in devices if tier in device.tiers_run)
+            for tier in ("protocol", "ui")
+        }
+        print(f"products:     {len(builds)}")
+        print(f"combinations: {len(combinations(builds))}")
+        print(
+            f"devices:      {len(devices)} "
+            f"(protocol {tier_counts['protocol']}, ui {tier_counts['ui']})"
+        )
+        print(f"waivers:      {len(waivers)}")
+        print()
+        print(format_matrix_table(builds, devices, waivers))
+        if problems:
+            print()
+            for problem in problems:
+                print(f"coverage: {problem}", file=sys.stderr)
+
+    return EXIT_FAILURES if problems else EXIT_OK
+
+
 def _cmd_list_scenarios(args: argparse.Namespace) -> int:
     scenarios = discover_scenarios(suite=args.suite)
     if args.tier:
@@ -476,6 +546,13 @@ def build_parser() -> argparse.ArgumentParser:
     listing.add_argument("--tier", choices=("protocol", "ui"))
     listing.add_argument("--json", action="store_true")
     listing.set_defaults(handler=_cmd_list_scenarios)
+
+    variants = subparsers.add_parser(
+        "variants", help="show build-variant coverage of the device matrix"
+    )
+    variants.add_argument("--devices", help="device matrix (default: tests/config/devices.yaml)")
+    variants.add_argument("--json", action="store_true", help="emit machine-readable JSON")
+    variants.set_defaults(handler=_cmd_variants)
 
     contract = subparsers.add_parser("contract-test", help="exercise a simulator driver against its contract")
     contract.add_argument("--driver", choices=DRIVER_NAMES, default="null")

@@ -23,19 +23,18 @@ This directory is the foundation tracked by
 | Compose stack, fixtures, scenarios, runner, shim | complete and statically validated |
 | `pytest` unit tests for scenario loading, shim grammar, trace parsing, Compose validation, SDK probing, dry-run engine | complete, run without Docker |
 | openHAB 5.2.5 (stable) and 5.3.0 milestone (dev) image digests | pinned in `config/openhab.version` |
+| Device matrix covering all 17 build variants from `monkey.jungle` and `manifest.xml` | approved in [#366](https://github.com/openhab/openhab-garmin/issues/366); enforced by `runner/tests/test_variants.py` |
 | Protocol-tier scenarios (shim trace + `E2E:` trace events) | ready; need the debug trace build from [#364](https://github.com/openhab/openhab-garmin/issues/364) |
 | Wine simulator driver | contract fixed, implementation skeleton only (see [docs/simulator-driver.md](docs/simulator-driver.md)) |
 
 Nothing here provisions a VM, changes infrastructure, or ships the Connect IQ SDK.
 
-> **Device matrix is provisional.** `config/devices.yaml` is a candidate set that
-> gives scenarios stable device ids; it is _not_ the approved build-variant
-> matrix. Variant coverage (button/touch watches, CIQ tiers, button/touch Edge,
-> short/tall Edge resources, round/rectangular, ActionMenu vs full menu,
-> device-specific `Config`/`GlanceConfig` paths, Wi-Fi/glance capabilities) is
-> tracked in [#366](https://github.com/openhab/openhab-garmin/issues/366), which
-> owns the variant-to-device table and the automated coverage check. The
-> `variants:` field in `devices.yaml` is the extension point for that table.
+> **Device matrix.** `config/devices.yaml` is the approved representative
+> subset: one device per build-variant combination, 17 devices in total, all
+> running the cheap `protocol` tier and six of them also running `ui`. The
+> variant table, the waiver rules and the re-evaluation rule are documented in
+> [docs/devices.md](docs/devices.md); `python -m e2e variants` prints the current
+> mapping and exits non-zero when a combination has no device.
 
 ## Prerequisites
 
@@ -114,6 +113,7 @@ those steps as **skipped**. It never reports them as passed.
 | `reset` | clear the shim's script and request trace (optionally reset item states) |
 | `status` | health of every component, plus pin problems |
 | `list-scenarios` | what `run --all` would execute |
+| `variants` | the resolved build-variant table and device coverage; exits non-zero on a gap |
 | `contract-test` | exercise a simulator driver against the driver contract |
 | `validate-compose` | static Compose validation; `--check-pins` also requires digests |
 | `pin-images` | write or verify image digests (`--refresh` re-resolves from Docker Hub) |
@@ -155,10 +155,11 @@ error.
 no screenshots. `ui` scenarios navigate the app and compare screenshots with
 reviewed goldens.
 
-Every scenario currently runs on the matrix default device, so the device dimension
-is not exercised yet. The representative device subset and its variant coverage are
-issue [#366](https://github.com/openhab/openhab-garmin/issues/366); this repository
-does not claim coverage completeness.
+Scenarios declare a device or `any` for the matrix default. The representative
+subset, its variant coverage and the per-device tiers are in
+[docs/devices.md](docs/devices.md). Run `python -m e2e variants` to see which
+device covers each build variant; the coverage test fails when a variant from
+`monkey.jungle` has no device.
 
 Scenario authoring, the full YAML schema and the trace-line format are documented
 in [docs/scenarios.md](docs/scenarios.md).
@@ -237,7 +238,7 @@ This change was reviewed on a workstation, so the validation split is:
 
 ```bash
 cd tests/runner
-python -m pytest -q                     # 191 passed
+python -m pytest -q                     # 211 passed
 python -m e2e validate-compose          # compose: valid
 python -m e2e pin-images --write        # digests written from config/openhab.version
 python -m e2e pin-images --check        # pins: ok
@@ -246,6 +247,7 @@ python -m e2e contract-test --driver null       # 14 passed
 python -m e2e run smoke/launch-and-poll --dry-run
 python -m e2e run --all --dry-run       # 14 scenarios, artifacts + JUnit written
 python -m e2e list-scenarios            # 14 scenarios
+python -m e2e variants                  # 93 products, 17 combinations, 17 devices, no gaps
 python -m e2e sdk-check                 # fails with the documented message (no SDK here)
 ```
 
@@ -322,6 +324,7 @@ Do this once after the stack is up, and again after touching fixtures or the shi
 ## Further reading
 
 - [docs/architecture.md](docs/architecture.md) – components, data flow, assertion layers
+- [docs/devices.md](docs/devices.md) – build-variant dimensions, the device matrix and its coverage check
 - [docs/scenarios.md](docs/scenarios.md) – scenario schema and trace events
 - [docs/sdk.md](docs/sdk.md) – SDK layout, version pinning, licence handling
 - [docs/simulator-driver.md](docs/simulator-driver.md) – driver contract and Wine plan

@@ -1,8 +1,8 @@
 """Device matrix tests.
 
-The matrix is a provisional candidate set (issue #366 owns the approved
-matrix), so these tests only pin the schema, the default entry and the optional
-variant tags -- not which devices are selected.
+The matrix is the approved build-variant subset from issue #366. These tests
+pin the schema, the default entry and the variant/tier annotations; the
+coverage itself is checked in ``test_variants.py``.
 """
 
 from __future__ import annotations
@@ -43,6 +43,14 @@ def test_device_inputs_and_capabilities_are_consistent() -> None:
         assert device.supports_buttons or device.supports_touch
         assert device.screen_width > 0 and device.screen_height > 0
         assert device.input in ("button", "touch", "touch+button")
+
+
+def test_tiers_list_drives_the_primary_tier() -> None:
+    devices = load_devices()
+    assert all(device.tiers_run for device in devices)
+    assert all(device.tier == device.tiers_run[0] for device in devices)
+    assert {tier for device in devices for tier in device.tiers_run} == {"protocol", "ui"}
+    assert any(len(device.tiers_run) == 2 for device in devices)
 
 
 def test_variant_tags_are_optional_and_validated(tmp_path: Path) -> None:
@@ -121,6 +129,39 @@ def test_unknown_tier_is_rejected(tmp_path: Path) -> None:
     )
     with pytest.raises(ConfigError):
         load_devices(path)
+
+
+def test_invalid_tiers_list_is_rejected(tmp_path: Path) -> None:
+    entry = {
+        "id": "one",
+        "product": "fenix7",
+        "input": "button",
+        "tiers": ["protocol", "full"],
+        "screen": {"shape": "round", "width": 260, "height": 260},
+    }
+    path = tmp_path / "devices.yaml"
+    path.write_text(
+        yaml.safe_dump({"version": 1, "devices": [entry]}), encoding="utf-8"
+    )
+    with pytest.raises(ConfigError):
+        load_devices(path)
+
+
+def test_duplicate_variant_dimension_is_rejected(tmp_path: Path) -> None:
+    entry = {
+        "id": "one",
+        "product": "fenix7",
+        "input": "button",
+        "screen": {"shape": "round", "width": 260, "height": 260},
+        "variants": ["screen:round", "screen:rectangular"],
+    }
+    path = tmp_path / "devices.yaml"
+    path.write_text(
+        yaml.safe_dump({"version": 1, "devices": [entry]}), encoding="utf-8"
+    )
+    with pytest.raises(ConfigError) as error:
+        load_devices(path)
+    assert "more than once" in str(error.value)
 
 
 def test_duplicate_device_ids_are_rejected(tmp_path: Path) -> None:
