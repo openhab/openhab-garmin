@@ -1,19 +1,27 @@
 """Parser for the app's debug-only E2E trace lines.
 
-The app emits one line per event (debug builds only)::
+The app emits one line per event from ``(:debug)`` builds only
+(``source/main/infrastructure/logging/E2ETrace.mc``, documented in
+``source/main/infrastructure/README.md``)::
 
-    E2E:<EVENT>;field=<value>;field=<value>
+    E2E:<EVENT>;field=<value>[;field=<value>...]
 
-Known events at the time of writing::
+The prefix, event names and field names are stable, and fields are emitted in
+the documented order::
 
-    E2E:VIEW;category=<...>;view=<...>
-    E2E:CONNECTION;mode=<...>
-    E2E:SITEMAP;result=<...>;code=<...>;bytes=<...>
-    E2E:COMMAND;result=<...>;code=<...>
-    E2E:ERROR;kind=<temporary|critical|fatal>;id=<...>;code=<...>
-    E2E:TOAST;id=<...>
-    E2E:ERRORVIEW;id=<...>;code=<...>
-    E2E:LANGUAGE;code=<...>
+    E2E:VIEW;category=<sitemap|settings|error|sync|glance>;view=<name>;depth=<n>
+    E2E:CONNECTION;mode=<BLE|WIFI_CHECK_PENDING|WIFI|OFFLINE>
+    E2E:SITEMAP;result=<success|unchanged|error>;code=<code|->;bytes=<n|->
+    E2E:COMMAND;result=<success|error>;code=<code|->;item=<item>;value=<command>
+    E2E:ERROR;kind=<temporary|critical|fatal>;id=<id>;code=<code|->;source=<sitemap|command|ui>
+    E2E:TOAST;id=<id>
+    E2E:ERRORVIEW;id=<id>;code=<code|->
+    E2E:LANGUAGE;code=<eng|deu|...|unknown>
+
+``code`` is an HTTP status, an SDK error code (which may be negative, or
+carry a prefix such as ``S:-104`` or ``UI:CONFIG``), or ``-``. ``item`` and
+``value`` in ``COMMAND`` are percent-encoded (space, ``|``, ``%``, CR, LF), so
+the line format cannot be broken by a value.
 
 Rules this parser follows, so the harness does not break when the app adds
 fields or events:
@@ -36,6 +44,7 @@ from __future__ import annotations
 
 import re
 import time
+import urllib.parse
 from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Callable, Dict, Iterable, List, Mapping, Optional, Sequence
@@ -45,18 +54,38 @@ TRACE_PREFIX = "E2E:"
 #: Event names are identifiers: ``ERROR``, ``SITEMAP``, ``ERRORVIEW``.
 _EVENT_NAME = re.compile(r"^[A-Za-z][A-Za-z0-9_]*$")
 
-#: Events the harness knows about. Unknown events are still parsed and exposed;
-#: this tuple exists for validation and documentation, not for filtering.
-KNOWN_EVENTS = (
-    "VIEW",
-    "CONNECTION",
-    "SITEMAP",
-    "COMMAND",
-    "ERROR",
-    "TOAST",
-    "ERRORVIEW",
-    "LANGUAGE",
+#: Field schema of every known event, in emission order. Unknown events are
+#: still parsed and exposed; this mapping exists for scenario validation and
+#: documentation, not for filtering.
+EVENT_FIELDS: Mapping[str, tuple] = MappingProxyType(
+    {
+        "VIEW": ("category", "view", "depth"),
+        "CONNECTION": ("mode",),
+        "SITEMAP": ("result", "code", "bytes"),
+        "COMMAND": ("result", "code", "item", "value"),
+        "ERROR": ("kind", "id", "code", "source"),
+        "TOAST": ("id",),
+        "ERRORVIEW": ("id", "code"),
+        "LANGUAGE": ("code",),
+    }
 )
+
+KNOWN_EVENTS = tuple(EVENT_FIELDS)
+
+
+def validate_match_fields(event: Optional[str], fields: Mapping[str, str]) -> List[str]:
+    """Return field names that a known event never emits.
+
+    Used when a scenario is loaded, so ``fields: {kindd: temporary}`` fails with
+    the list of valid names instead of silently never matching. Events the
+    harness does not know yet accept any field, which keeps forward
+    compatibility.
+    """
+    if event is None or event not in EVENT_FIELDS:
+        return []
+    known = EVENT_FIELDS[event]
+    return [name for name in fields if name not in known]
+
 
 
 @dataclass(frozen=True)
@@ -149,8 +178,17 @@ class EventMatch:
         if self.event is not None and candidate.event != self.event:
             return False
         for key, value in self.fields.items():
-            if candidate.fields.get(key) != value:
+            actual = candidate.fields.get(key)
+            if actual is None:
                 return False
+            if actual == value:
+                continue
+            # ``COMMAND`` percent-encodes item names and command values (and the
+            # app may percent-encode more fields later), so a scenario can write
+            # the human-readable value.
+            if urllib.parse.unquote(actual) == value:
+                continue
+            return False
         if self.contains is not None and self.contains not in candidate.raw:
             return False
         return True

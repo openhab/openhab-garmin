@@ -278,6 +278,52 @@ def test_wait_for_request_needs_a_target(tmp_path: Path) -> None:
     assert "needs 'path' or 'path_prefix'" in str(error.value)
 
 
+def test_wait_for_event_requires_a_target(tmp_path: Path) -> None:
+    document = _with(steps=[{"action": "launch"}, {"action": "wait_for_event"}])
+    with pytest.raises(ScenarioError) as error:
+        load_scenario(_write(tmp_path, document))
+    assert "needs 'event'" in str(error.value)
+
+
+def test_wait_for_event_rejects_fields_a_known_event_never_emits(tmp_path: Path) -> None:
+    document = _with(
+        steps=[
+            {"action": "launch"},
+            {"action": "wait_for_event", "event": "ERROR", "fields": {"kindd": "fatal"}},
+        ]
+    )
+    with pytest.raises(ScenarioError) as error:
+        load_scenario(_write(tmp_path, document))
+    message = str(error.value)
+    assert "kindd" in message and "valid fields" in message
+
+
+def test_wait_for_event_accepts_the_documented_fields(tmp_path: Path) -> None:
+    document = _with(
+        steps=[
+            {"action": "launch"},
+            {
+                "action": "wait_for_event",
+                "event": "ERROR",
+                "fields": {"kind": "critical", "source": "sitemap"},
+            },
+        ]
+    )
+    step = load_scenario(_write(tmp_path, document)).steps[1]
+    assert step.get("event") == "ERROR"
+    assert step.get("fields") == {"kind": "critical", "source": "sitemap"}
+
+
+def test_wait_for_event_allows_unknown_events(tmp_path: Path) -> None:
+    document = _with(
+        steps=[
+            {"action": "launch"},
+            {"action": "wait_for_event", "event": "FUTURE", "fields": {"anything": "goes"}},
+        ]
+    )
+    assert load_scenario(_write(tmp_path, document)).steps[1].get("event") == "FUTURE"
+
+
 def test_wait_for_request_rejects_both_path_forms(tmp_path: Path) -> None:
     document = _with(
         steps=[
