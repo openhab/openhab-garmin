@@ -1,0 +1,69 @@
+name: E2E Harness
+
+# The harness under tests/ checks itself without Docker, the Connect IQ SDK or
+# the simulator. Nothing here compiles the app: the device build matrix lives
+# in ci-build.yaml.
+on:
+  push:
+    branches:
+      - 'main'
+    paths:
+      - 'tests/**'
+      - 'manifest.xml'
+      - 'monkey.jungle'
+      - '.github/workflows/e2e-harness.yaml'
+  pull_request:
+    branches:
+      - 'main'
+    paths:
+      - 'tests/**'
+      - 'manifest.xml'
+      - 'monkey.jungle'
+      - '.github/workflows/e2e-harness.yaml'
+  workflow_dispatch:
+
+jobs:
+  harness:
+    name: harness
+    runs-on: 'ubuntu-latest'
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      # tests/runner/pyproject.toml declares requires-python >= 3.10; 3.12 is
+      # the version used by the runner and shim base images.
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+          cache-dependency-path: 'tests/runner/requirements.txt'
+
+      # The package must be installed editable: e2e/paths.py derives tests/ and
+      # the repository root from its own location, so a copy in site-packages
+      # would look for the fixtures outside the checkout.
+      - name: Install harness
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r tests/runner/requirements.txt
+          python -m pip install --editable tests/runner
+
+      - name: Unit tests
+        working-directory: tests/runner
+        run: python -m pytest
+
+      # --check-pins reads tests/compose/.env, which is git-ignored because it
+      # also carries a machine-specific SDK path. Regenerating it from the
+      # committed tests/config/openhab.version pins is offline by design.
+      - name: Validate Compose and image pins
+        run: |
+          python -m e2e pin-images --write
+          python -m e2e validate-compose --check-pins
+
+      - name: Driver contract test
+        run: python -m e2e contract-test --driver null
+
+      # A schema error in any checked-in scenario fails the pull request here.
+      - name: Run scenarios in dry-run mode
+        run: python -m e2e run --all --dry-run

@@ -43,7 +43,27 @@ Nothing here provisions a VM, changes infrastructure, or ships the Connect IQ SD
   the stack, but the simulator needs Wine and is only supported on Linux).
 - The Connect IQ SDK **mounted, never committed**: `CIQ_SDK_HOST_PATH` points at it.
   Layout and licence rules: [docs/sdk.md](docs/sdk.md).
-- Python 3.10+ on the host for the unit tests and the CLI (`tests/runner`).
+- Python 3.10+ on the host for the unit tests and the CLI (`tests/runner`,
+  declared as `requires-python` in `runner/pyproject.toml`; CI uses 3.12).
+
+## Continuous integration
+
+`.github/workflows/e2e-harness.yaml` runs the checks that need neither Docker nor
+the SDK on every pull request and `main` push that touches `tests/`,
+`manifest.xml`, `monkey.jungle` or the workflow itself:
+
+1. `python -m pytest` in `tests/runner`
+1. `python -m e2e pin-images --write` then `python -m e2e validate-compose --check-pins`
+1. `python -m e2e contract-test --driver null`
+1. `python -m e2e run --all --dry-run`
+
+The job installs the package **editable** (`pip install --editable tests/runner`)
+because `e2e/paths.py` derives `tests/` and the repository root from the package
+location; a copy in `site-packages` would look for the fixtures outside the
+checkout. It also runs `python -m e2e pin-images --write` before
+`validate-compose --check-pins`, because `--check-pins` compares the git-ignored
+`tests/compose/.env` with `tests/config/openhab.version`, and the committed
+digests make that write offline.
 
 ## Quick start
 
@@ -54,6 +74,7 @@ export CIQ_SDK_HOST_PATH=/opt/garmin/connectiq-sdk-9.3.0   # or edit .env
 
 cd ../runner
 python -m pip install -r requirements.txt
+python -m pip install --editable .    # optional: `python -m e2e` from anywhere
 python -m e2e pin-images --write      # writes @sha256 pins into ../compose/.env
 python -m e2e validate-compose        # no Docker needed
 
