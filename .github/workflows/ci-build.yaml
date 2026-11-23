@@ -38,6 +38,14 @@ jobs:
           - fenix847mm  # CIQ 6.0, button-based Fenix (default device)
           - edge540     # CIQ 6.0, Edge cycling computer
     steps:
+      # CodeQL's actions/cache-poisoning/poisonable-step alert (#6) points at
+      # the Build step. It does not model the mutually exclusive checkouts
+      # below: github.head_ref is only set on pull_request events, so push and
+      # workflow_dispatch always check out the default branch. The merge ref is
+      # executed only on pull_request, whose cache scope is the pull request
+      # branch, and nothing here uses the Actions cache (no actions/cache and
+      # no setup-java cache input), so there is no cache entry to poison. This
+      # is a false positive; dismiss it rather than changing the build.
       - name: Checkout
         if: github.head_ref == ''
         uses: actions/checkout@v7
