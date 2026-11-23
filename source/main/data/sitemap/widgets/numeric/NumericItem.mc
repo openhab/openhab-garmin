@@ -1,4 +1,5 @@
 import Toybox.Lang;
+import Toybox.Application;
 import Toybox.WatchUi;
 
 /*
@@ -24,7 +25,7 @@ class NumericItem extends Item {
             if( numericState != null ) {
                 _numericState = numericState;
             } else {
-                throw new JsonParsingException( "state is not numeric" );
+                throw new JsonParsingException( Application.loadResource( Rez.Strings.ErrorStateNotNumeric ) as String );
             }
         }
     }

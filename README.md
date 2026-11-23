@@ -101,13 +101,14 @@ In the Connect IQ SDK, resources define:
 
 - **Settings**: User-facing configurations
 - **Drawables**: Image assets used by the app
-- **Strings**: Text values like app name and version
+- **Strings**: User-facing text values
 
 #### Folder breakdown
 
 - `/resources/base`: Contains resources shared across all device types.
   - `/resources/base/settings.xml`: Specifies the app’s configuration settings, including default values, types, and user-facing descriptions.
-  - `/resources/base/strings.xml`: Contains static string values such as the app name and version number.
+  - `/resources/base/strings.xml`: Contains the user-facing display strings and error messages used by the app. Hardcoded user-facing text in Monkey C code should be avoided; add a string resource instead. Error messages use `scope="background"` so they remain available during Wi-Fi sync, in the background service, and in glance mode.
+  - `/resources/base/version.xml`: Contains the app name and version number.
 - `/resources/edge`: Contains resources specific to Garmin Edge devices. Some `Drawable` elements are overridden here to account for different sizing requirements.
 - `/resources/icons-interface`: Contains the `icons-interface.xml` file defining the icons used in the app’s user interface, primarily for navigation, along with their corresponding SVG files.
 - `/resources/icons-launcher`: Contains one subdirectory per launcher icon size. Each subdirectory includes a `drawables.xml` resource definition for that specific size. The correct icon is selected via the resource path in the `monkey.jungle` build file, depending on the target device.
@@ -158,7 +159,7 @@ Follow these steps to prepare and export your app for upload to the Garmin Conne
 
 1. **Update the Version Number**
 
-   Edit the file `resources/base/strings.xml` and set the correct version number for this release.
+   Edit the file `resources/base/version.xml` and set the correct version number for this release.
 
 1. **Set the Correct App ID**
 

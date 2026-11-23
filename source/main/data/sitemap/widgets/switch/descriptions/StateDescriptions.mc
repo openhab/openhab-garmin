@@ -1,4 +1,5 @@
 import Toybox.Lang;
+import Toybox.Application;
 
 public class StateDescriptions extends BaseDescriptions {
 
@@ -9,8 +10,14 @@ public class StateDescriptions extends BaseDescriptions {
                 var jsonStateDescription = jsonStateDescriptions[i];
                 stateDescriptions.add( 
                     new StateDescription( 
-                        jsonStateDescription.getString( "value", "Switch: value is missing from state description" ),
-                        jsonStateDescription.getString( "label", "Switch: label is missing from state description" )
+                        jsonStateDescription.getString(
+                            "value",
+                            Application.loadResource( Rez.Strings.ErrorSwitchValueMissing ) as String
+                        ),
+                        jsonStateDescription.getString(
+                            "label",
+                            Application.loadResource( Rez.Strings.ErrorSwitchLabelMissing ) as String
+                        )
                 ) );
             }
         }

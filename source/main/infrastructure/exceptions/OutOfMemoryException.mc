@@ -1,10 +1,11 @@
 import Toybox.Lang;
+import Toybox.Application;
 
 /*
  * Exception thrown if there is not enough memory for an operation.
  */
 class OutOfMemoryException extends GeneralException {
     function initialize() {
-        GeneralException.initialize( "Out of memory. Attempting recovery. If the issue persists, try reducing the sitemap size." );
+        GeneralException.initialize( Application.loadResource( Rez.Strings.ErrorOutOfMemory ) as String );
     }
 }

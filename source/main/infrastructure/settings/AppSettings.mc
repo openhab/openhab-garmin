@@ -1,4 +1,5 @@
 import Toybox.Lang;
+import Toybox.Application;
 import Toybox.Application.Properties;
 
 /*
@@ -75,7 +76,10 @@ class AppSettings {
     */
     private function initialize() {
         // Read the server URL
-        url = getString( URL_PREFIX + _index, "Configuration: URL is missing" );
+        url = getString(
+            URL_PREFIX + _index,
+            Application.loadResource( Rez.Strings.ErrorConfigUrlMissing ) as String
+        );
         // Other code assumes the server URL ends with a slash (e.g., https://home.myopenhab.org/).
         // If it’s missing, append one here.
         var lastChar = url.substring( url.length()-1, null );
@@ -84,7 +88,10 @@ class AppSettings {
         }
 
         // Sitemap name
-        sitemap = getString( SITEMAP_PREFIX + _index, "Configuration: sitemap is missing" );
+        sitemap = getString(
+            SITEMAP_PREFIX + _index,
+            Application.loadResource( Rez.Strings.ErrorConfigSitemapMissing ) as String
+        );
         
         // Check if native REST APIs are activated in the settings ...
         vSupportsRESTAPI = Properties.getValue( RESTAPI_PREFIX + _index ) as Boolean;
@@ -101,7 +108,10 @@ class AppSettings {
         user = Properties.getValue( USER_PREFIX + _index ) as String;
         if( ! user.equals( "" ) ) {
             vNeedsBasicAuth = true;
-            password = getString( PASSWORD_PREFIX + _index, "Configuration: password is missing" );
+            password = getString(
+                PASSWORD_PREFIX + _index,
+                Application.loadResource( Rez.Strings.ErrorConfigPasswordMissing ) as String
+            );
         }
         
         // The polling interval defines how often sitemap data is polled

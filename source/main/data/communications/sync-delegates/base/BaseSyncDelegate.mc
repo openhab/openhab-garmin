@@ -1,4 +1,5 @@
 import Toybox.Lang;
+import Toybox.Application;
 import Toybox.Communications;
 import Toybox.WatchUi;
 
@@ -208,7 +209,10 @@ class BaseSyncDelegate extends SyncDelegate {
         // the Garmin sync screens, therefore if we can, we shorten it
         Communications.notifySyncComplete( 
             ex instanceof CommunicationException
-            ? "Comm Error " + ex.getToastMessage()
+            ? Lang.format(
+                Application.loadResource( Rez.Strings.ErrorSyncPrefix ) as String,
+                [ ex.getToastMessage() ]
+            )
             : ex.getErrorMessage() 
         );
 

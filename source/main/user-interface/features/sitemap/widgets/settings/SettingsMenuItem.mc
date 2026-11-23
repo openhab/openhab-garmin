@@ -1,4 +1,5 @@
 import Toybox.Lang;
+import Toybox.Application;
 import Toybox.WatchUi;
 import Toybox.Graphics;
 
@@ -29,7 +30,7 @@ class SettingsMenuItem extends StructuredMenuItem {
         // the font is colored in light grey
         StructuredMenuItem.initialize( { 
             :id => "__settings__",
-            :label => "Settings",
+            :label => Application.loadResource( Rez.Strings.Settings ) as String,
             :actionIcon => ACTION_ICON_PAGE
         } );
     }

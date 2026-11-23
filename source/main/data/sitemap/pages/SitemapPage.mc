@@ -1,4 +1,5 @@
 import Toybox.Lang;
+import Toybox.Application;
 import Toybox.WatchUi;
 
 /*
@@ -24,6 +25,10 @@ class SitemapPage extends SitemapContainer {
         taskQueue as TaskQueue
     ) {
         SitemapContainer.initialize( json, isSitemapFresh, taskQueue );
-        title = parseLabelState( json, "title", "Page title is missing" )[0];
+        title = parseLabelState(
+            json,
+            "title",
+            Application.loadResource( Rez.Strings.ErrorPageTitleMissing ) as String
+        )[0];
     }
 }

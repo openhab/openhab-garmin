@@ -1,4 +1,5 @@
 import Toybox.Lang;
+import Toybox.Application;
 import Toybox.Communications;
 
 /*
@@ -26,20 +27,32 @@ class CommunicationException extends CommunicationBaseException {
         // For some errors we return specific messages,
         // for all others a generic one
         if( isNoPhone() && ConnectionManager.get().isWifiConnected() ) {
-            return "Wi-Fi connection lost";
+            return Application.loadResource( Rez.Strings.ErrorWifiConnectionLost ) as String;
         } else if( isNoPhone() ) {
-            return "No phone\n(" + _responseCode + ")";
+            return Lang.format(
+                Application.loadResource( Rez.Strings.ErrorNoPhoneDetail ) as String,
+                [ _responseCode ]
+            );
         } else if ( _responseCode == Communications.INVALID_HTTP_BODY_IN_NETWORK_RESPONSE ) {
-            errorMsg = "Invalid response\n(" + _responseCode + ")";
+            errorMsg = Lang.format(
+                Application.loadResource( Rez.Strings.ErrorInvalidResponseDetail ) as String,
+                [ _responseCode ]
+            );
 
         } else if ( 
             _responseCode == Communications.NETWORK_RESPONSE_TOO_LARGE
             || _responseCode == Communications.NETWORK_RESPONSE_OUT_OF_MEMORY
         ) {
-            return "Sitemap too large\n(" + _responseCode + ")";
+            return Lang.format(
+                Application.loadResource( Rez.Strings.ErrorSitemapTooLargeDetail ) as String,
+                [ _responseCode ]
+            );
         
         } else {
-            errorMsg = "Request failed\n(" + _responseCode + ")";
+            errorMsg = Lang.format(
+                Application.loadResource( Rez.Strings.ErrorRequestFailedDetail ) as String,
+                [ _responseCode ]
+            );
         }
         
         return getSourceName() + ":\n" + errorMsg;
@@ -51,11 +64,11 @@ class CommunicationException extends CommunicationBaseException {
         // For some errors we return specific toast messages,
         // for all others a generic one
         if( isNoPhone() && ConnectionManager.get().isWifiConnected() ) {
-            return "No Wi-Fi";
+            return Application.loadResource( Rez.Strings.ErrorNoWifiToast ) as String;
         } else if( isNoPhone() ) {
-            return "No phone";
+            return Application.loadResource( Rez.Strings.ErrorNoPhoneToast ) as String;
         } else if ( _responseCode == Communications.INVALID_HTTP_BODY_IN_NETWORK_RESPONSE ) {
-            errorMsg = "INVRES";
+            errorMsg = Application.loadResource( Rez.Strings.ErrorCodeInvalidResponse ) as String;
         } else {
             errorMsg = _responseCode.toString();
         }

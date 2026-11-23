@@ -1,4 +1,5 @@
 import Toybox.Lang;
+import Toybox.Application;
 import Toybox.WatchUi;
 
 /*
@@ -83,7 +84,7 @@ class SwitchItem extends Item {
             var commandOption = commandOptions[i];
             var command = commandOption.getString( 
                 "command", 
-                "Switch: command is missing from mapping/command description" 
+                Application.loadResource( Rez.Strings.ErrorSwitchCommandMissing ) as String
             );
             if( command.equals( ITEM_STATE_ON ) ) {
                 filtered.add( commandOption );

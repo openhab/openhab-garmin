@@ -1,4 +1,5 @@
 import Toybox.Lang;
+import Toybox.Application;
 import Toybox.WatchUi;
 
 /*
@@ -49,7 +50,10 @@ class SitemapSwitch extends SitemapWidget {
         // Obtain the item part of the element
         try {
             _switchItem = new SwitchItem( 
-                json.getObject( "item", "Item not found. Check if the name is correct." ),
+                json.getObject(
+                    "item",
+                    Application.loadResource( Rez.Strings.ErrorItemNotFound ) as String
+                ),
                 isSitemapFresh 
             );
         } catch( ex ) {

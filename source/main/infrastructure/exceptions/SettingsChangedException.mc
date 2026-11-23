@@ -1,4 +1,5 @@
 import Toybox.Lang;
+import Toybox.Application;
 
 /*
  * Exception shown when the app settings have been changed while the app was
@@ -11,6 +12,6 @@ import Toybox.Lang;
  */
 class SettingsChangedException extends GeneralException {
     function initialize() {
-        GeneralException.initialize( "Settings changed. Please close and reopen the app." );
+        GeneralException.initialize( Application.loadResource( Rez.Strings.ErrorSettingsChanged ) as String );
     }
 }

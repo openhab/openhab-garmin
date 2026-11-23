@@ -1,4 +1,5 @@
 import Toybox.Lang;
+import Toybox.Application;
 
 /*
  * This class represents the root element of the sitemap (Homepage).
@@ -34,10 +35,13 @@ class SitemapHomepage extends SitemapPage {
         // Note: an empty widgets array is as useless as a missing one. Without
         // this check, an empty sitemap is accepted and shown as a menu with a
         // blank title and no items.
-        var homepageJson = json.getObject( "homepage", "Homepage: homepage element missing" );
+        var homepageJson = json.getObject(
+            "homepage",
+            Application.loadResource( Rez.Strings.ErrorHomepageElementMissing ) as String
+        );
         var jsonWidgets = homepageJson.getOptionalArray( "widgets" );
         if( jsonWidgets == null || jsonWidgets.size() == 0 ) {
-            throw new JsonParsingException( "Homepage contains no elements" );
+            throw new JsonParsingException( Application.loadResource( Rez.Strings.ErrorHomepageNoElements ) as String );
         }
         SitemapPage.initialize( 
             homepageJson,
@@ -66,17 +70,17 @@ class SitemapHomepage extends SitemapPage {
     ) as Void {
         var homepageJson = json.getObject( 
             "homepage", 
-            "Homepage: homepage element missing" 
+            Application.loadResource( Rez.Strings.ErrorHomepageElementMissing ) as String
         );
         var jsonWidgets = homepageJson.getOptionalArray( "widgets" );
         if( jsonWidgets == null || jsonWidgets.size() == 0 ) {
-            throw new JsonParsingException( "Homepage contains no elements" );
+            throw new JsonParsingException( Application.loadResource( Rez.Strings.ErrorHomepageNoElements ) as String );
         }
 
         title = parseLabelState( 
             homepageJson, 
             "title", 
-            "Page title is missing" 
+            Application.loadResource( Rez.Strings.ErrorPageTitleMissing ) as String
         )[0];
 
         updateWidgets( jsonWidgets, changedIndices, taskQueue );

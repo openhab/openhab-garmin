@@ -1,4 +1,5 @@
 import Toybox.Lang;
+import Toybox.Application;
 import Toybox.WatchUi;
 
 /*
@@ -38,7 +39,10 @@ class SitemapNumeric extends SitemapWidget {
         // Obtain the item part of the element
         try {
             _numericItem = new NumericItem( 
-                json.getObject( "item", "Item not found. Check if the name is correct." ),
+                json.getObject(
+                    "item",
+                    Application.loadResource( Rez.Strings.ErrorItemNotFound ) as String
+                ),
                 isSitemapFresh 
             );
         } catch( ex ) {
@@ -72,18 +76,22 @@ class SitemapNumeric extends SitemapWidget {
         // the picker without any pickable value.
         if( _step <= 0.0 ) {
             throw new JsonParsingException( 
-                getType() + " '" + getLabel() + "': step must be greater than 0" );
+                getType() + " '" + getLabel() + "': "
+                + ( Application.loadResource( Rez.Strings.ErrorNumericStepInvalid ) as String ) );
         }
 
         if( _maxValue < _minValue ) {
             throw new JsonParsingException( 
-                getType() + " '" + getLabel() 
-                + "': maxValue must be greater than or equal to minValue" );
+                getType() + " '" + getLabel() + "': "
+                + ( Application.loadResource( Rez.Strings.ErrorNumericMinMaxInvalid ) as String ) );
         }
 
         // Verify that we do not have more steps than supported
         if( UI_NUMERIC_MAX_STEPS < ( _maxValue - _minValue ) / _step ) {
-            throw new JsonParsingException( getType() + " does not support more than 100 steps." );
+            throw new JsonParsingException( Lang.format(
+                Application.loadResource( Rez.Strings.ErrorNumericTooManySteps ) as String,
+                [ getType() ]
+            ) );
         }
 
         // For display purposes, only as many decimal places

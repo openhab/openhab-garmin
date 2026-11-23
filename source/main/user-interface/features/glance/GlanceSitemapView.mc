@@ -1,4 +1,5 @@
 import Toybox.Graphics;
+import Toybox.Application;
 import Toybox.Lang;
 import Toybox.WatchUi;
 import Toybox.Timer;
@@ -60,14 +61,16 @@ class GlanceSitemapView extends WatchUi.GlanceView {
             if( label != null ) {
                 _textArea.setText( label );
             } else {
-                _textArea.setText( "openHAB" );
+                _textArea.setText( Application.loadResource( Rez.Strings.GlanceDefaultText ) as String );
             }
             _hasError = false;
         } catch( ex ) {
             // Show any errors
             _hasError = true;
             var msg = ex.getErrorMessage();
-            msg = msg != null ? msg : "Unknown error";
+            msg = msg != null
+                ? msg
+                : ( Application.loadResource( Rez.Strings.ErrorUnknownGlance ) as String );
             _textArea.setText( msg );
         }
     }

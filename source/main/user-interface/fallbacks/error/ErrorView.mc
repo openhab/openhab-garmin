@@ -1,4 +1,5 @@
 import Toybox.Graphics;
+import Toybox.Application;
 import Toybox.WatchUi;
 import Toybox.Lang;
 import Toybox.Math;
@@ -118,7 +119,9 @@ import Toybox.System;
     private function drawTextArea( dc as Dc ) as Void {
         // Define the error message
         var text = _exception.getErrorMessage();
-        text = ( text == null || text.equals( "" ) ) ? "Unknown Exception" : text; 
+        text = ( text == null || text.equals( "" ) )
+            ? ( Application.loadResource( Rez.Strings.ErrorUnknownException ) as String )
+            : text;
 
         // Dimensions of the text area
         // Start with the full rectangle Dc ...

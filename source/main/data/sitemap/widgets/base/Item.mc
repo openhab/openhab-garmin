@@ -1,4 +1,5 @@
 import Toybox.Lang;
+import Toybox.Application;
 import Toybox.WatchUi;
 
 /*
@@ -26,10 +27,19 @@ class Item {
     //! Constructor
     //! @param json The JSON object from which this Item should be built.
     public function initialize( json as JsonAdapter, isSitemapFresh as Boolean ) {
-        _name =  json.getString( "name", "Item name is missing" );
+        _name =  json.getString(
+            "name",
+            Application.loadResource( Rez.Strings.ErrorItemNameMissing ) as String
+        );
 
         // If the item is a Group, we apply the groupType
-        _type =  json.getString( "type", "Item '" + _name + "' has no type" );
+        _type =  json.getString(
+            "type",
+            Lang.format(
+                Application.loadResource( Rez.Strings.ErrorItemWithoutType ) as String,
+                [ _name ]
+            )
+        );
         if( _type.equals( "Group" ) ) {
             var groupType = json.getOptionalString( "groupType" );
             if( ! groupType.equals( "" ) ) {

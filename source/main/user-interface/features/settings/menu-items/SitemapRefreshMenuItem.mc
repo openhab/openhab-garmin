@@ -1,4 +1,5 @@
 import Toybox.Lang;
+import Toybox.Application;
 import Toybox.WatchUi;
 import Toybox.Graphics;
 import Toybox.Time;
@@ -15,7 +16,7 @@ class SitemapRefreshMenuItem extends StructuredMenuItem {
     */
     public function initialize() {
         StructuredMenuItem.initialize( { 
-            :label => "Update Sitemap\nover Wi-Fi",
+            :label => Application.loadResource( Rez.Strings.SettingsUpdateSitemap ) as String,
             :allowLabelLineBreaks => true
         } );
     }

@@ -1,4 +1,5 @@
 import Toybox.Lang;
+import Toybox.Application;
 import Toybox.WatchUi;
 
 /*
@@ -39,9 +40,10 @@ class MenuItemFactory {
         } else if( sitemapWidget instanceof SitemapSwitch ) {
             return getSwitchMenuItemType( sitemapWidget );
         } else {
-            throw new JsonParsingException( 
-                "Element '" + sitemapWidget.getLabel() + "' is not supported" 
-            );
+            throw new JsonParsingException( Lang.format(
+                Application.loadResource( Rez.Strings.ErrorElementNotSupported ) as String,
+                [ sitemapWidget.getLabel() ]
+            ) );
         }
     }
 
@@ -85,9 +87,10 @@ class MenuItemFactory {
         } else if( sitemapSwitch.hasMappings() ) {
             return GENERIC_SWITCH;
         } else {
-            throw new JsonParsingException( 
-                "Element '" + sitemapSwitch.getLabel() + "' is not supported" 
-            );
+            throw new JsonParsingException( Lang.format(
+                Application.loadResource( Rez.Strings.ErrorElementNotSupported ) as String,
+                [ sitemapSwitch.getLabel() ]
+            ) );
         }
     }
 

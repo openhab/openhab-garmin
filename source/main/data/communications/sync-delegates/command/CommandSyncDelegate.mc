@@ -1,4 +1,5 @@
 import Toybox.Lang;
+import Toybox.Application;
 import Toybox.Communications;
 import Toybox.WatchUi;
 
@@ -103,7 +104,7 @@ class CommandSyncDelegate extends BaseSyncDelegate {
         if( commandRequest != null ) {
             commandRequest.sendCommand( getCommand()[1] );
         } else {
-            throw new GeneralException( "CommandSyncDelegate: neither REST API nor Webhook are available" );
+            throw new GeneralException( Application.loadResource( Rez.Strings.ErrorNoCommandTransport ) as String );
         }
     }
 
@@ -111,6 +112,6 @@ class CommandSyncDelegate extends BaseSyncDelegate {
     public function sendCommand( cmd as WifiSyncCommand ) as Void {
         // Logger.debug( "CommandSyncDelegate.sendCommand" );
         _cmd = cmd;
-        startSync( "Sending command over Wi-Fi ..." );
+        startSync( Application.loadResource( Rez.Strings.SyncSendingCommand ) as String );
     }
 }

@@ -1,4 +1,5 @@
 import Toybox.Lang;
+import Toybox.Application;
 import Toybox.WatchUi;
 import Toybox.Graphics;
 
@@ -133,7 +134,10 @@ class OnOffSwitchMenuItem extends SwitchMenuItem {
                 }
             }
         }
-        throw new GeneralException( "OnOffSwitchMenuItem: state '" + itemState + "' is not supported" );
+        throw new GeneralException( Lang.format(
+            Application.loadResource( Rez.Strings.ErrorUnsupportedState ) as String,
+            [ itemState ]
+        ) );
     }
 
     // Overrides the base class update method to refresh the displayed

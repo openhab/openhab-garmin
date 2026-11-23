@@ -1,4 +1,5 @@
 import Toybox.Lang;
+import Toybox.Application;
 import Toybox.Communications;
 import Toybox.WatchUi;
 
@@ -43,7 +44,7 @@ class SitemapSyncDelegate extends BaseSyncDelegate {
     // Called by the app to request an update of the sitemap in sync mode
     public function requestSitemapUpdate() as Void {
         // Logger.debug( "SitemapSyncDelegate: requestSitemapUpdate" );
-        startSync( "Updating sitemap over Wi-Fi ..." );
+        startSync( Application.loadResource( Rez.Strings.SyncUpdatingSitemap ) as String );
     }
 
     // Called by the base class to perform the actual sync tasks.

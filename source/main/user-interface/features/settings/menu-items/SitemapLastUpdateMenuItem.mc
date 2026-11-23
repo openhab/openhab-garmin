@@ -1,4 +1,5 @@
 import Toybox.Lang;
+import Toybox.Application;
 import Toybox.WatchUi;
 import Toybox.Graphics;
 import Toybox.Time;
@@ -16,7 +17,7 @@ class SitemapLastUpdatedMenuItem extends LabelMenuItem {
     */
     public function initialize() {
         LabelMenuItem.initialize( 
-            "Last Sitemap Update",
+            Application.loadResource( Rez.Strings.SettingsLastSitemapUpdate ) as String,
             getSitemapTimestamp()
         );
     }
@@ -24,7 +25,7 @@ class SitemapLastUpdatedMenuItem extends LabelMenuItem {
     // Returns a formatted version of the current sitemap age
     private function getSitemapTimestamp() as String {
         if( ConnectionManager.get().isBluetoothConnected() ) {
-            return "Just Now";
+            return Application.loadResource( Rez.Strings.SitemapLastUpdateJustNow ) as String;
         } else {
             var timestamp = SitemapStore.getSitemapTimestamp();
             if( timestamp != null ) {
@@ -42,7 +43,7 @@ class SitemapLastUpdatedMenuItem extends LabelMenuItem {
                     ]
                 );
             } else {
-                return "Unknown";
+                return Application.loadResource( Rez.Strings.SitemapLastUpdateUnknown ) as String;
             }
         }
     }

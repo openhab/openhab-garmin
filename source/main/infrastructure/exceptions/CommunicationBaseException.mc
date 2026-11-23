@@ -1,4 +1,5 @@
 import Toybox.Lang;
+import Toybox.Application;
 
 /*
  * Base class for all communication-related exceptions
@@ -14,8 +15,8 @@ class CommunicationBaseException extends Exception {
         EX_SOURCE_COMMAND
     }
 
-    // Name and short code of each source
-    private const SOURCE_NAMES = [ "Sitemap", "Command" ];
+    // Name of each source
+    private const SOURCE_NAMES = [ Rez.Strings.ErrorSitemapSource, Rez.Strings.ErrorCommandSource ];
     private const SOURCE_SHORTCODE = [ "S", "C" ];
 
     // The source of this instance
@@ -48,7 +49,7 @@ class CommunicationBaseException extends Exception {
 
     // Return the name and short code of the source of this instance
     public function getSourceName() as String {
-        return SOURCE_NAMES[_source];
+        return Application.loadResource( SOURCE_NAMES[_source] ) as String;
     }
     public function getSourceShortCode() as String {
         return SOURCE_SHORTCODE[_source];

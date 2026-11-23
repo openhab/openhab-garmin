@@ -1,4 +1,5 @@
 import Toybox.Lang;
+import Toybox.Application;
 import Toybox.WatchUi;
 
 /*
@@ -31,7 +32,10 @@ class SitemapGroupPage extends SitemapPage {
         // the widget label. Strip it so that the submenu header only shows the
         // group label.
         if( controlLabel != null ) {
-            var rawTitle = json.getString( "title", "Page title is missing" );
+            var rawTitle = json.getString(
+                "title",
+                Application.loadResource( Rez.Strings.ErrorPageTitleMissing ) as String
+            );
             title = parseLabelStateFromString( splitGroupLabel( rawTitle )[0] )[0];
         }
 

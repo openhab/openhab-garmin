@@ -1,4 +1,5 @@
 import Toybox.Lang;
+import Toybox.Application;
 
 /*
  * Exception thrown if the user tries to send a command but
@@ -10,6 +11,6 @@ class OfflineCommandException extends NonFatalUserInterfaceException {
     }
 
     public function getToastMessage() as String {
-        return "OFFLINE";
+        return Application.loadResource( Rez.Strings.ErrorOfflineCommand ) as String;
     }
 }

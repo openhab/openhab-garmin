@@ -1,4 +1,5 @@
 import Toybox.Lang;
+import Toybox.Application;
 import Toybox.WatchUi;
 
 /*
@@ -15,7 +16,10 @@ class SitemapWidgetFactory {
     ) as SitemapWidget {
 
         // Determine the widget type
-        var type = widget.getString( "type", "Widget without type" ); 
+        var type = widget.getString(
+            "type",
+            Application.loadResource( Rez.Strings.ErrorWidgetWithoutType ) as String
+        );
 
         // Based on the groupType of the Group item, the Group sitemap element
         // is either mapped to a type-specific widget (for consistent presentation)
@@ -39,7 +43,10 @@ class SitemapWidgetFactory {
         } else if( type.equals( "Frame" ) ) {
             return new SitemapFrame( widget, isSitemapFresh, taskQueue );
         } else {
-            throw new JsonParsingException( "Unsupported element type '" + type + "'." );
+            throw new JsonParsingException( Lang.format(
+                Application.loadResource( Rez.Strings.ErrorUnsupportedElementType ) as String,
+                [ type ]
+            ) );
         }
     }
 
@@ -74,7 +81,10 @@ class SitemapWidgetFactory {
     // to represent it. Returns null if no type-specific widget is supported.
     private static function getGroupWidgetType( groupElement as JsonAdapter ) as String? {
         var groupType =
-            groupElement.getObject( "item", "Group without item" )
+            groupElement.getObject(
+                "item",
+                Application.loadResource( Rez.Strings.ErrorGroupWithoutItem ) as String
+            )
                 .getOptionalString( "groupType" );
         switch( groupType ) {
             case "Switch": return "Switch";

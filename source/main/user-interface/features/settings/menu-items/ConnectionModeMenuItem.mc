@@ -1,4 +1,5 @@
 import Toybox.Lang;
+import Toybox.Application;
 import Toybox.WatchUi;
 import Toybox.Graphics;
 
@@ -13,8 +14,8 @@ class ConnectionModeMenuItem extends LabelMenuItem {
     */
     public function initialize() {
         LabelMenuItem.initialize( 
-            "Connectivity Mode", 
-            "n/a" 
+            Application.loadResource( Rez.Strings.SettingsConnectivityMode ) as String,
+            Application.loadResource( Rez.Strings.NotAvailable ) as String
         );
     }
 

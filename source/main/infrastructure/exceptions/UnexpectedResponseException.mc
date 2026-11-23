@@ -1,4 +1,5 @@
 import Toybox.Lang;
+import Toybox.Application;
 
 /*
  * Exception thrown when a web request returns HTTP 200 but the response data
@@ -20,13 +21,20 @@ class UnexpectedResponseException extends CommunicationBaseException {
     public function getErrorMessage() as String or Null {
         return getSourceName() + ": " + (
             _data == null ?
-            "Empty response" :
-            "Unexpected response (" + _data + ")"
+            Application.loadResource( Rez.Strings.ErrorEmptyResponseDetail ) as String :
+            Lang.format(
+                Application.loadResource( Rez.Strings.ErrorUnexpectedResponseDetail ) as String,
+                [ _data ]
+            )
             );
     }
 
     public function getToastMessage() as String {
-        return getSourceShortCode() + ":" + ( _data == null ? "EMRES" : "UNRES" );
+        return getSourceShortCode() + ":" + (
+            _data == null ?
+            Application.loadResource( Rez.Strings.ErrorCodeEmptyResponse ) as String :
+            Application.loadResource( Rez.Strings.ErrorCodeUnexpectedResponse ) as String
+            );
     }
 
     // A null result is one way an empty response from myopenhab.org may 

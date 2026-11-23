@@ -1,4 +1,5 @@
 import Toybox.Lang;
+import Toybox.Application;
 import Toybox.WatchUi;
 
 /*
@@ -23,6 +24,10 @@ class SitemapFramePage extends SitemapContainer {
         taskQueue as TaskQueue
     ) {
         SitemapContainer.initialize( json, isSitemapFresh, taskQueue );
-        title = parseLabelState( json, "label", "Frame label is missing" )[0];
+        title = parseLabelState(
+            json,
+            "label",
+            Application.loadResource( Rez.Strings.ErrorFrameLabelMissing ) as String
+        )[0];
     }
 }

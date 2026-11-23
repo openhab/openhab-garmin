@@ -1,4 +1,5 @@
 import Toybox.Lang;
+import Toybox.Application;
 
 /*
  * Exception thrown if the app is started with no sitemap in storage
@@ -6,6 +7,6 @@ import Toybox.Lang;
  */
 class OfflineWithoutSitemapException extends GeneralException {
     function initialize() {
-        GeneralException.initialize( "Offline and no sitemap is cached. Move into phone or Wi-Fi range." );
+        GeneralException.initialize( Application.loadResource( Rez.Strings.ErrorOfflineNoSitemap ) as String );
     }
 }

@@ -1,5 +1,107 @@
 <strings xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="https://developer.garmin.com/downloads/connect-iq/resources.xsd">
-    <string id="AppName">openHAB-beta</string>
-    <string id="AppVersion">v1.3.0-beta11</string>
+    <!-- General -->
+    <string id="Loading">Loading...</string>
     <string id="EmptyPage">This page is empty</string>
+    <string id="NotAvailable">n/a</string>
+
+    <!-- Settings menu -->
+    <string id="Settings">Settings</string>
+    <string id="SettingsAppVersion">App Version</string>
+    <string id="SettingsServer">Server</string>
+    <string id="SettingsSitemap">Sitemap</string>
+    <string id="SettingsConnectIqVersion">Connect IQ Version</string>
+    <string id="SettingsConnectivityMode">Connectivity Mode</string>
+    <string id="SettingsLastSitemapUpdate">Last Sitemap Update</string>
+    <string id="SettingsUpdateSitemap">Update Sitemap&#10;over Wi-Fi</string>
+
+    <!-- Connection state descriptions -->
+    <string id="ConnectionModePhoneBle">Phone (BLE)</string>
+    <string id="ConnectionModeWifiChecking">Checking Wi-Fi availablity ...</string>
+    <string id="ConnectionModeWifi">Wi-Fi</string>
+    <string id="ConnectionModeOffline">Offline</string>
+    <string id="ConnectionModeInvalid">Invalid</string>
+
+    <!-- Sitemap timestamp -->
+    <string id="SitemapLastUpdateJustNow">Just Now</string>
+    <string id="SitemapLastUpdateUnknown">Unknown</string>
+
+    <!-- Player commands -->
+    <string id="PlayerPlay">Play</string>
+    <string id="PlayerPause">Pause</string>
+    <string id="PlayerNext">Next</string>
+    <string id="PlayerPrevious">Previous</string>
+
+    <!-- Sync progress messages -->
+    <string id="SyncSendingCommand">Sending command over Wi-Fi ...</string>
+    <string id="SyncUpdatingSitemap">Updating sitemap over Wi-Fi ...</string>
+
+    <!-- Glance: must be available in glance mode -->
+    <string id="GlanceDefaultText" scope="glance">openHAB</string>
+
+    <!--
+        Error messages.
+        Background scope keeps them available in every mode, including Wi-Fi
+        sync, the background service, and glance mode.
+    -->
+    <string id="ErrorUnknownException" scope="background">Unknown Exception</string>
+    <string id="ErrorUnknownGlance" scope="background">Unknown error</string>
+    <string id="ErrorSyncPrefix" scope="background">Comm Error $1$</string>
+    <string id="ErrorSitemapSource" scope="background">Sitemap</string>
+    <string id="ErrorCommandSource" scope="background">Command</string>
+
+    <!-- Communication errors -->
+    <string id="ErrorWifiConnectionLost" scope="background">Wi-Fi connection lost</string>
+    <string id="ErrorNoPhoneDetail" scope="background">No phone&#10;($1$)</string>
+    <string id="ErrorInvalidResponseDetail" scope="background">Invalid response&#10;($1$)</string>
+    <string id="ErrorSitemapTooLargeDetail" scope="background">Sitemap too large&#10;($1$)</string>
+    <string id="ErrorRequestFailedDetail" scope="background">Request failed&#10;($1$)</string>
+    <string id="ErrorNoWifiToast" scope="background">No Wi-Fi</string>
+    <string id="ErrorNoPhoneToast" scope="background">No phone</string>
+    <string id="ErrorCodeInvalidResponse" scope="background">INVRES</string>
+    <string id="ErrorEmptyResponseDetail" scope="background">Empty response</string>
+    <string id="ErrorUnexpectedResponseDetail" scope="background">Unexpected response ($1$)</string>
+    <string id="ErrorCodeEmptyResponse" scope="background">EMRES</string>
+    <string id="ErrorCodeUnexpectedResponse" scope="background">UNRES</string>
+
+    <!-- Other runtime errors -->
+    <string id="ErrorOfflineNoSitemap" scope="background">Offline and no sitemap is cached. Move into phone or Wi-Fi range.</string>
+    <string id="ErrorOutOfMemory" scope="background">Out of memory. Attempting recovery. If the issue persists, try reducing the sitemap size.</string>
+    <string id="ErrorSettingsChanged" scope="background">Settings changed. Please close and reopen the app.</string>
+    <string id="ErrorFatalUi" scope="background">Fatal UI error: $1$</string>
+    <string id="ErrorOfflineCommand" scope="background">OFFLINE</string>
+    <string id="ErrorNoSitemapLoaded" scope="background">No sitemap found in storage, and loading via Wi-Fi failed. Please try again or connect to your phone.</string>
+    <string id="ErrorConfigUrlMissing" scope="background">Configuration: URL is missing</string>
+    <string id="ErrorConfigSitemapMissing" scope="background">Configuration: sitemap is missing</string>
+    <string id="ErrorConfigPasswordMissing" scope="background">Configuration: password is missing</string>
+
+    <!-- Sitemap data errors -->
+    <string id="ErrorJsonNotBoolean" scope="background">'$1$' is not a Boolean</string>
+    <string id="ErrorJsonNotNumeric" scope="background">'$1$' is not numeric</string>
+    <string id="ErrorJsonNotArray" scope="background">'$1$' is not an Array</string>
+    <string id="ErrorJsonNotDictionary" scope="background">'$1$' is not a Dictionary</string>
+    <string id="ErrorJsonNotString" scope="background">'$1$' is not a String</string>
+    <string id="ErrorStateNotNumeric" scope="background">state is not numeric</string>
+    <string id="ErrorLabelMissingState" scope="background">Label '$1$' does not have label before the [state]</string>
+    <string id="ErrorHomepageNoElements" scope="background">Homepage contains no elements</string>
+    <string id="ErrorHomepageElementMissing" scope="background">Homepage: homepage element missing</string>
+    <string id="ErrorPageTitleMissing" scope="background">Page title is missing</string>
+    <string id="ErrorFrameLabelMissing" scope="background">Frame label is missing</string>
+    <string id="ErrorUnsupportedElementType" scope="background">Unsupported element type '$1$'.</string>
+    <string id="ErrorWidgetWithoutType" scope="background">Widget without type</string>
+    <string id="ErrorWidgetLabelMissing" scope="background">Widget label is missing</string>
+    <string id="ErrorWidgetInvalidLabelColor" scope="background">Widget '$1$': invalid label color</string>
+    <string id="ErrorWidgetInvalidValueColor" scope="background">Widget '$1$': invalid value color</string>
+    <string id="ErrorGroupWithoutItem" scope="background">Group without item</string>
+    <string id="ErrorItemNameMissing" scope="background">Item name is missing</string>
+    <string id="ErrorItemWithoutType" scope="background">Item '$1$' has no type</string>
+    <string id="ErrorItemNotFound" scope="background">Item not found. Check if the name is correct.</string>
+    <string id="ErrorNumericStepInvalid" scope="background">step must be greater than 0</string>
+    <string id="ErrorNumericMinMaxInvalid" scope="background">maxValue must be greater than or equal to minValue</string>
+    <string id="ErrorNumericTooManySteps" scope="background">$1$ does not support more than 100 steps.</string>
+    <string id="ErrorSwitchCommandMissing" scope="background">Switch: command is missing from mapping/command description</string>
+    <string id="ErrorSwitchValueMissing" scope="background">Switch: value is missing from state description</string>
+    <string id="ErrorSwitchLabelMissing" scope="background">Switch: label is missing from state description</string>
+    <string id="ErrorElementNotSupported" scope="background">Element '$1$' is not supported</string>
+    <string id="ErrorUnsupportedState" scope="background">OnOffSwitchMenuItem: state '$1$' is not supported</string>
+    <string id="ErrorNoCommandTransport" scope="background">CommandSyncDelegate: neither REST API nor Webhook are available</string>
 </strings>

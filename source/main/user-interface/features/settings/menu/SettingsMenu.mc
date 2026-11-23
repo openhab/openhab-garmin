@@ -1,4 +1,5 @@
 import Toybox.Lang;
+import Toybox.Application;
 import Toybox.WatchUi;
 import Toybox.System;
 
@@ -12,31 +13,31 @@ class SettingsMenu extends BaseMenu {
     public function initialize() {
         // Initialize the base class
         BaseMenu.initialize( {
-            :title => "Settings",
+            :title => Application.loadResource( Rez.Strings.Settings ) as String,
             :itemHeight => Config.UI_SETTINGS_ITEM_HEIGHT
         } );
 
         // Add entry for app version
         addItem( new LabelMenuItem(
-            "App Version",
+            Application.loadResource( Rez.Strings.SettingsAppVersion ) as String,
             Application.loadResource( Rez.Strings.AppVersion ) as String
         ) );
 
         // Add entry for server URL
         addItem( new LabelMenuItem(
-            "Server",
+            Application.loadResource( Rez.Strings.SettingsServer ) as String,
             AppSettings.getUrl()
         ) );
 
         // Add entry for sitemap name
         addItem( new LabelMenuItem(
-            "Sitemap",
+            Application.loadResource( Rez.Strings.SettingsSitemap ) as String,
             AppSettings.getSitemap()
         ) );
 
         // Add entry for the Connect IQ version
         addItem( new LabelMenuItem(
-            "Connect IQ Version",
+            Application.loadResource( Rez.Strings.SettingsConnectIqVersion ) as String,
             Lang.format( "$1$.$2$.$3$", System.getDeviceSettings().monkeyVersion )
         ) );
 

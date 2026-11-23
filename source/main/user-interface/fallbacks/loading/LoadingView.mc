@@ -1,4 +1,5 @@
 import Toybox.Graphics;
+import Toybox.Application;
 import Toybox.WatchUi;
 import Toybox.Lang;
 
@@ -77,7 +78,7 @@ class LoadingView extends WatchUi.View {
                                 WatchUi.SLIDE_BLINK 
                             );
                         } else {
-                            throw new GeneralException( "No sitemap found in storage, and loading via Wi-Fi failed. Please try again or connect to your phone." );
+                            throw new GeneralException( Application.loadResource( Rez.Strings.ErrorNoSitemapLoaded ) as String );
                         }
                     } else {
                         // If the sync was not successful, throw the exception so it can be handled

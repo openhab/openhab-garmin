@@ -1,4 +1,5 @@
 import Toybox.Lang;
+import Toybox.Application;
 import Toybox.WatchUi;
 import Toybox.Graphics;
 
@@ -58,10 +59,10 @@ class PlayerMenuItem extends SwitchMenuItem {
                 } else {
                     CommandMenuHandler.showCommandSelection( 
                         sitemapSwitch.getLabel(),
-                        [ ["Play", SwitchItem.ITEM_STATE_PLAY],
-                          ["Pause", SwitchItem.ITEM_STATE_PAUSE],
-                          ["Next", SwitchItem.ITEM_COMMAND_NEXT],
-                          ["Previous", SwitchItem.ITEM_COMMAND_PREVIOUS] ],
+                        [ [ Application.loadResource( Rez.Strings.PlayerPlay ) as String, SwitchItem.ITEM_STATE_PLAY ],
+                          [ Application.loadResource( Rez.Strings.PlayerPause ) as String, SwitchItem.ITEM_STATE_PAUSE ],
+                          [ Application.loadResource( Rez.Strings.PlayerNext ) as String, SwitchItem.ITEM_COMMAND_NEXT ],
+                          [ Application.loadResource( Rez.Strings.PlayerPrevious ) as String, SwitchItem.ITEM_COMMAND_PREVIOUS ] ],
                         self 
                     );
                 }

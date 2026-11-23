@@ -1,4 +1,5 @@
 import Toybox.Lang;
+import Toybox.Application;
 import Toybox.WatchUi;
 import Toybox.Graphics;
 
@@ -41,7 +42,10 @@ class JsonAdapter {
     public function getBoolean( id as String ) as Boolean {
         var value = _jsonObject[id];
         if( value != null && ! ( value instanceof Boolean ) ) {
-            throw new JsonParsingException( "'" + id + "' is not a Boolean" );
+            throw new JsonParsingException( Lang.format(
+                Application.loadResource( Rez.Strings.ErrorJsonNotBoolean ) as String,
+                [ id ]
+            ) );
         }
         return value == null ? false : value;
     }
@@ -66,7 +70,10 @@ class JsonAdapter {
                 return value;
             }
         }
-        throw new JsonParsingException( "'" + id + "' is not numeric" );
+        throw new JsonParsingException( Lang.format(
+            Application.loadResource( Rez.Strings.ErrorJsonNotNumeric ) as String,
+            [ id ]
+        ) );
         
     }
 
@@ -113,7 +120,10 @@ class JsonAdapter {
     public function getOptionalArray( id as String ) as JsonAdapterArray? {
         var value = _jsonObject[id];
         if( value != null && ! ( value instanceof Array ) ) {
-            throw new JsonParsingException( "'" + id + "' is not an Array" );
+            throw new JsonParsingException( Lang.format(
+                Application.loadResource( Rez.Strings.ErrorJsonNotArray ) as String,
+                [ id ]
+            ) );
         }
         if( value == null || value.size() == 0 ) {
             return null;
@@ -132,7 +142,10 @@ class JsonAdapter {
         var value = _jsonObject[id];
         if( value != null ) {
             if( ! ( value instanceof Dictionary ) ) {
-                throw new JsonParsingException( "'" + id + "' is not a Dictionary" );
+                throw new JsonParsingException( Lang.format(
+                    Application.loadResource( Rez.Strings.ErrorJsonNotDictionary ) as String,
+                    [ id ]
+                ) );
             }
             return new JsonAdapter( value as JsonObject );
         } else {
@@ -146,7 +159,10 @@ class JsonAdapter {
     public function getOptionalString( id as String ) as String {
         var value = _jsonObject[id];
         if( value != null && ! ( value instanceof String ) ) {
-            throw new JsonParsingException( "'" + id + "' is not a String" );
+            throw new JsonParsingException( Lang.format(
+                Application.loadResource( Rez.Strings.ErrorJsonNotString ) as String,
+                [ id ]
+            ) );
         }
         return value == null ? "" : value;
     }

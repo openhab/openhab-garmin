@@ -1,4 +1,5 @@
 import Toybox.Lang;
+import Toybox.Application;
 import Toybox.WatchUi;
 import Toybox.Graphics;
 
@@ -54,7 +55,10 @@ class SitemapWidget extends SitemapElement {
 
         _item = item;
 
-        _type = json.getString( "type", "Widget without type" );
+        _type = json.getString(
+            "type",
+            Application.loadResource( Rez.Strings.ErrorWidgetWithoutType ) as String
+        );
 
         var jsonLinkedPage = json.getOptionalObject( "linkedPage" );
 
@@ -67,7 +71,10 @@ class SitemapWidget extends SitemapElement {
             && SitemapWidgetFactory.isControllableGroup( json );
 
         var groupControlLabel = null;
-        var rawLabel = json.getString( "label", "Widget label is missing" );
+        var rawLabel = json.getString(
+            "label",
+            Application.loadResource( Rez.Strings.ErrorWidgetLabelMissing ) as String
+        );
         if( isControllableGroup ) {
             var splitLabel = splitGroupLabel( rawLabel );
             rawLabel = splitLabel[0];
@@ -109,8 +116,14 @@ class SitemapWidget extends SitemapElement {
 
         _icon = getCurrentIcon();
 
-        _labelColor = ColorParser.parse( json, "labelcolor", "Widget '" + _label + "': invalid label color" );
-        _valueColor = ColorParser.parse( json, "valuecolor", "Widget '" + _label + "': invalid value color" );
+        _labelColor = ColorParser.parse( json, "labelcolor", Lang.format(
+            Application.loadResource( Rez.Strings.ErrorWidgetInvalidLabelColor ) as String,
+            [ _label ]
+        ) );
+        _valueColor = ColorParser.parse( json, "valuecolor", Lang.format(
+            Application.loadResource( Rez.Strings.ErrorWidgetInvalidValueColor ) as String,
+            [ _label ]
+        ) );
 
         if( linkedPage != null ) {
             _linkedPage = linkedPage;

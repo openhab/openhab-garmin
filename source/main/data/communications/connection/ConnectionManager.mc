@@ -1,4 +1,5 @@
 import Toybox.Lang;
+import Toybox.Application;
 import Toybox.WatchUi;
 import Toybox.Communications;
 import Toybox.Time;
@@ -97,11 +98,11 @@ import Toybox.Time;
     // Returns a textual description of the current state
     public function getStateDescription() as String {
         switch( _state ) {
-            case BLUETOOTH_CONNECTED: return "Phone (BLE)";
-            case WIFI_CHECK_PENDING: return "Checking Wi-Fi availablity ...";
-            case WIFI_CONNECTED: return "Wi-Fi";
-            case OFFLINE: return "Offline";
-            default: return "Invalid";
+            case BLUETOOTH_CONNECTED: return Application.loadResource( Rez.Strings.ConnectionModePhoneBle ) as String;
+            case WIFI_CHECK_PENDING: return Application.loadResource( Rez.Strings.ConnectionModeWifiChecking ) as String;
+            case WIFI_CONNECTED: return Application.loadResource( Rez.Strings.ConnectionModeWifi ) as String;
+            case OFFLINE: return Application.loadResource( Rez.Strings.ConnectionModeOffline ) as String;
+            default: return Application.loadResource( Rez.Strings.ConnectionModeInvalid ) as String;
         }
     }
 

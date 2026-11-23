@@ -1,4 +1,5 @@
 import Toybox.Lang;
+import Toybox.Application;
 import Toybox.WatchUi;
 import Toybox.Graphics;
 
@@ -52,7 +53,10 @@ class SitemapElement {
         if( bracket != null ) {
             label = fullLabel.substring( null, bracket ) as String?;
             if( label == null ) {
-                throw new JsonParsingException( "Label '" + label + "' does not have label before the [state]" );
+                throw new JsonParsingException( Lang.format(
+                    Application.loadResource( Rez.Strings.ErrorLabelMissingState ) as String,
+                    [ fullLabel ]
+                ) );
             }
             remoteDisplayState = fullLabel.substring( bracket+2, fullLabel.length()-1 ) as String?;
         }

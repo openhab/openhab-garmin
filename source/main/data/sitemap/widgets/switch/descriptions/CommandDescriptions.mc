@@ -1,4 +1,5 @@
 import Toybox.Lang;
+import Toybox.Application;
 
 public class CommandDescriptions extends BaseDescriptions {
 
@@ -9,7 +10,10 @@ public class CommandDescriptions extends BaseDescriptions {
                 var jsonCommandDescription = jsonCommandDescriptions[i];
                 commandDescriptions.add( 
                     new CommandDescription( 
-                        jsonCommandDescription.getString( "command", "Switch: command is missing from mapping/command description" ),
+                        jsonCommandDescription.getString(
+                            "command",
+                            Application.loadResource( Rez.Strings.ErrorSwitchCommandMissing ) as String
+                        ),
                         jsonCommandDescription.getOptionalString( "label" )
                     )
                 );
