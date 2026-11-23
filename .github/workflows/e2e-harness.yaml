@@ -66,6 +66,12 @@ jobs:
           python -m e2e pin-images --write
           python -m e2e validate-compose --check-pins
 
+      # CI has no Docker daemon and no Connect IQ SDK, and cannot assume the
+      # stack's loopback ports are free. The static groups still run, so the
+      # Compose parse, pins, checkout layout and resource reporting cannot rot.
+      - name: Host preflight (static groups)
+        run: python -m e2e preflight --skip docker,sdk,ports
+
       - name: Driver contract test
         run: python -m e2e contract-test --driver null
 

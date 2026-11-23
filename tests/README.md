@@ -35,6 +35,7 @@ This directory is the foundation tracked by
 | Wine feasibility spike | ready to run on an approved Linux host with Docker and the SDK (see [spike/README.md](spike/README.md), issue [#370](https://github.com/openhab/openhab-garmin/issues/370)) |
 | #140 scope coverage map | checked in as `config/scope.yaml` and `docs/coverage.md`; enforced by `python -m e2e coverage --check` |
 | Stack health in every run | complete: restart counts, working set and OOM evidence are classified as `valid`/`invalid`/`unknown`; see [docs/diagnostics.md](docs/diagnostics.md) |
+| Host preflight (`python -m e2e preflight`) | complete: Docker, Compose, SDK, ports, pins, layout and resources; the static groups run in CI |
 
 Nothing here provisions a VM, changes infrastructure, or ships the Connect IQ SDK.
 
@@ -54,6 +55,75 @@ Nothing here provisions a VM, changes infrastructure, or ships the Connect IQ SD
 - Python 3.10+ on the host for the unit tests and the CLI (`tests/runner`,
   declared as `requires-python` in `runner/pyproject.toml`; CI uses 3.12).
 
+## Host preflight
+
+Run this on the host, from `tests/runner`, before the first `docker compose up`:
+
+```bash
+python -m e2e preflight
+```
+
+It is read-only: it starts nothing, stops nothing and writes nothing, and each
+check reports one `PASS`/`FAIL`/`WARN`/`SKIP` line with a short reason. The exit
+code is non-zero when a hard check fails, so provisioning can stop before the
+confusing failure that would otherwise appear in the middle of a run.
+
+| Group | What it checks |
+| --- | --- |
+| `docker` | `docker` is on `PATH`, the daemon answers with its server version, Docker Compose v2 is at least 2.24 (`compose.host.yaml` uses `!reset`), and the base plus host overlay parse with `docker compose config`. |
+| `compose` | The base, dev and host overlays parse through the static loader and the loopback wiring matches `config/network.yaml`. No Docker needed. |
+| `sdk` | `CIQ_SDK_HOST_PATH` (or `CIQ_SDK_ROOT` / `CIQ_SDK_PATH`) points at the SDK, `linux/bin/monkeyc` and `linux/bin/monkeydo` exist for the Linux side, `windows/bin/simulator.exe` exists for the Wine side, and `version.txt` matches `config/sdk.version`. |
+| `pins` | `compose/.env` pins the images in `config/openhab.version`; this reuses the `validate-compose --check-pins` validation rather than duplicating it. |
+| `ports` | The loopback ports in `config/network.yaml` can be bound on `127.0.0.1`. A listener is named with its process when `ss` can determine it. |
+| `layout` | The fixtures, scenarios, config, Compose files and `monkey.jungle` the runner mounts are present, and the artifacts directory is writable. |
+| `resources` | RAM, CPU count and free disk are reported against the documented minimums. |
+
+Resource minimums, documented here because the preflight check enforces them:
+
+| Resource | Minimum (hard failure) | Recommended (warning only) |
+| --- | --- | --- |
+| RAM | 2 GiB | 4 GiB |
+| CPU | 1 | 2 |
+| Free disk | 5 GiB | 20 GiB |
+
+Skip the groups a workstation cannot satisfy:
+
+```bash
+# no Docker, no SDK, no free loopback ports: static checks only
+python -m e2e preflight --skip docker,sdk,ports
+
+# machine-readable, including the skipped checks
+python -m e2e preflight --json
+```
+
+`--skip` accepts repeated flags and comma-separated groups. A skipped group is
+reported as `SKIP`, never as a pass. `--json` emits `ok`, `exit_code`,
+`skipped_groups`, `summary` and one `checks` entry per check (`id`, `group`,
+`status`, `reason`, and `details` where available), so the schema is stable for
+automation.
+
+CI runs `python -m e2e preflight --skip docker,sdk,ports` after
+`pin-images --write`, so the static groups (`compose`, `pins`, `layout` and
+`resources`) cannot rot.
+
+### What a failure means
+
+- `docker.*`: fix the host or the Compose installation before `compose up`.
+- `sdk.layout`: the variable is unset, the layout is incomplete, or the version
+  differs from the pin; set `CIQ_SDK_HOST_PATH` as described in
+  [docs/sdk.md](docs/sdk.md).
+- `pins.images`: `compose/.env` is missing or has drifted; run
+  `python -m e2e pin-images --write`.
+- `ports.loopback`: something already owns a stack port; the reason names the
+  process when `ss` can see it.
+- `layout.*`: the checkout is incomplete or the artifacts path is not writable.
+- `resources.host`: a `FAIL` is below the documented minimum, a `WARN` is below
+  the recommendation.
+
+Preflight cannot prove that the stack runs. It never launches openHAB, the
+shim, the runner or Wine, so the simulator-under-Wine feasibility check stays in
+[spike/README.md](spike/README.md) and is not duplicated here.
+
 ## Continuous integration
 
 `.github/workflows/e2e-harness.yaml` runs the checks that need neither Docker nor
@@ -62,6 +132,7 @@ the SDK on every pull request and `main` push that touches `tests/`,
 
 1. `python -m pytest` in `tests/runner`
 1. `python -m e2e pin-images --write` then `python -m e2e validate-compose --check-pins`
+1. `python -m e2e preflight --skip docker,sdk,ports` (static groups only)
 1. `python -m e2e contract-test --driver null`
 1. `python -m e2e run --all --dry-run`
 1. `python -m e2e coverage --check` (every #140 scope id has a scenario or a
@@ -128,6 +199,7 @@ those steps as **skipped**. It never reports them as passed.
 | `variants` | the resolved build-variant table and device coverage; exits non-zero on a gap |
 | `coverage` | map #140 scope entries to scenarios; `--write` regenerates `docs/coverage.md`, `--check` fails on a gap or a stale document |
 | `contract-test` | exercise a simulator driver against the driver contract |
+| `preflight` | read-only host check before the stack starts; `--skip` a group and `--json` for automation |
 | `validate-compose` | static Compose validation; `--check-pins` also requires digests |
 | `network-env` | render or verify the generated loopback network block in `compose/.env.example` |
 | `pin-images` | write or verify image digests (`--refresh` re-resolves from Docker Hub) |

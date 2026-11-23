@@ -10,6 +10,7 @@ Subcommands:
     variants          show build-variant coverage of the device matrix
     coverage          map #140 scope entries to scenarios and check for gaps
     contract-test     exercise a simulator driver against the driver contract
+    preflight         check the host before the stack is started (read-only)
     validate-compose  static validation of the Compose stack (no Docker needed)
     network-env       render/verify the generated loopback network block in .env.example
     pin-images        resolve/verify image digests from Docker Hub
@@ -60,7 +61,8 @@ from .coverage import (
 from .engine import run_scenario
 from .health import EXIT_INVALID_ENVIRONMENT, HealthError
 from .openhab import OpenHabClient, OpenHabError
-from .paths import tests_root
+from .paths import repo_root, tests_root
+from .preflight import parse_skip, run_preflight
 from .reporting import Report
 from .scenarios import Scenario, ScenarioError, discover_scenarios, find_scenarios
 from .sdk import SdkError, describe_candidates, load_layout
@@ -549,6 +551,20 @@ def _cmd_contract_test(args: argparse.Namespace) -> int:
     return contract_exit_code(cases)
 
 
+def _cmd_preflight(args: argparse.Namespace) -> int:
+    report = run_preflight(
+        skip=parse_skip(args.skip),
+        artifacts=_artifacts_dir(args),
+        repo=repo_root(),
+    )
+    if args.json:
+        _emit_json(report.to_document())
+    else:
+        for line in report.render_lines():
+            print(line)
+    return report.exit_code
+
+
 def _cmd_validate_compose(args: argparse.Namespace) -> int:
     problems = compose_module.validate_compose(
         path=Path(args.compose) if args.compose else compose_module.COMPOSE_FILE,
@@ -735,6 +751,29 @@ def build_parser() -> argparse.ArgumentParser:
     contract.add_argument("--artifacts")
     contract.add_argument("--json", action="store_true")
     contract.set_defaults(handler=_cmd_contract_test)
+
+    preflight = subparsers.add_parser(
+        "preflight",
+        help="check the host before the stack is started (read-only)",
+        description=(
+            "Check Docker, Docker Compose, the Connect IQ SDK, the loopback ports, "
+            "the Compose stack, the image pins, the checkout layout and the host "
+            "resources. One pass/fail per check; exit 1 when a hard check fails."
+        ),
+    )
+    preflight.add_argument("--json", action="store_true", help="emit machine-readable JSON")
+    preflight.add_argument("--artifacts", help="artifacts directory (default: E2E_ARTIFACTS or tests/artifacts)")
+    preflight.add_argument(
+        "--skip",
+        action="append",
+        default=[],
+        metavar="GROUP[,GROUP]",
+        help=(
+            "skip a check group; may be repeated: "
+            "docker, compose, sdk, pins, ports, layout, resources"
+        ),
+    )
+    preflight.set_defaults(handler=_cmd_preflight)
 
     validate = subparsers.add_parser("validate-compose", help="validate the Compose stack without Docker")
     validate.add_argument("--compose", help="path to compose.yaml")
