@@ -108,7 +108,8 @@ public class ExceptionHandler {
                 // Logger.debug( "ExceptionHandler: storing deferred toast exception" );
                 _deferredException = [ex, false];
             } else {
-                WarningToastHandler.showWarning( ex.getToastMessage() );
+                traceTemporary( ex );
+                WarningToastHandler.showWarningWithId( toastId( ex ), ex.getToastMessage() );
             }
         } else {
             // Logger.debug( "ExceptionHandler: error requires full-screen view" );
@@ -157,7 +158,8 @@ public class ExceptionHandler {
             // NonFatalUserInterfaceException is used for non-fatal UI exceptions, for which
             // we will show a toast notification
             if( ex instanceof NonFatalUserInterfaceException ) {
-                WarningToastHandler.showWarning( ex.getToastMessage() );
+                traceTemporary( ex );
+                WarningToastHandler.showWarningWithId( toastId( ex ), ex.getToastMessage() );
             } else {
                 // A fatal UI error ends the app: polling is latched off, in-flight
                 // requests are cancelled and the menu is dropped, so nothing from
@@ -225,6 +227,8 @@ public class ExceptionHandler {
     * presented by consumeStartupException() or showPendingException().
     */
     public static function showOrDefer( ex as Exception ) as Void {
+        traceShownError( ex );
+
         if( ViewStack.getCurrentView()[0] == null || ! AppLifecycle.isActive() ) {
             // Logger.debug( "ExceptionHandler: deferring exception" );
             _deferredException = [ex, true];
@@ -252,8 +256,14 @@ public class ExceptionHandler {
             * communication error and the calling view has enabled toast notifications.
             */
             if( useToast && !deferredException[1] && ex instanceof CommunicationBaseException ) {
-                WarningToastHandler.showWarning( ex.getToastMessage() );
+                traceTemporary( ex );
+                WarningToastHandler.showWarningWithId( toastId( ex ), ex.getToastMessage() );
             } else {
+                // A deferred toast-classified error is escalated to a
+                // full-screen error here; trace the classification it now gets.
+                if( ! deferredException[1] ) {
+                    traceShownError( ex );
+                }
                 return ErrorView.createOrUpdate( ex );
             }
         }
@@ -290,9 +300,58 @@ public class ExceptionHandler {
             && WarningToastHandler.useToasts()
             && ex instanceof CommunicationBaseException
         ) {
-            WarningToastHandler.showWarning( ex.getToastMessage() );
+            traceTemporary( ex );
+            WarningToastHandler.showWarningWithId( toastId( ex ), ex.getToastMessage() );
         } else {
+            // A deferred toast-classified error is escalated to a full-screen
+            // error here; trace the classification it now gets.
+            if( ! deferredException[1] ) {
+                traceShownError( ex );
+            }
             ErrorView.showOrUpdate( ex );
         }
+    }
+
+    /*
+     * Debug-only E2E traces for the error handling classification. The release
+     * implementations are empty, so no classification or string building is
+     * present in release builds.
+     */
+    (:debug)
+    private static function traceTemporary( ex as Exception ) as Void {
+        E2ETrace.errorTemporary(
+            E2ETraceExceptions.identifier( ex ),
+            E2ETraceExceptions.code( ex ),
+            E2ETraceExceptions.source( ex )
+        );
+    }
+    (:release)
+    private static function traceTemporary( ex as Exception ) as Void {}
+
+    // A full-screen error is fatal if it requires an app restart, otherwise
+    // critical: the app keeps running and keeps polling.
+    (:debug)
+    private static function traceShownError( ex as Exception ) as Void {
+        var id = E2ETraceExceptions.identifier( ex );
+        var code = E2ETraceExceptions.code( ex );
+        var source = E2ETraceExceptions.source( ex );
+        if( ex instanceof FatalUserInterfaceException || ex instanceof SettingsChangedException ) {
+            E2ETrace.errorFatal( id, code, source );
+        } else {
+            E2ETrace.errorCritical( id, code, source );
+        }
+    }
+    (:release)
+    private static function traceShownError( ex as Exception ) as Void {}
+
+    // Stable, language-independent id for the toast event. Empty in release
+    // builds, where it is not used.
+    (:debug)
+    private static function toastId( ex as Exception ) as String {
+        return E2ETraceExceptions.errorId( ex );
+    }
+    (:release)
+    private static function toastId( ex as Exception ) as String {
+        return "";
     }
 }

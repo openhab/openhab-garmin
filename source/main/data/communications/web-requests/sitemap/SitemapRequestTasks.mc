@@ -68,6 +68,24 @@ class BaseSitemapProcessorTask {
         // passes the exception on to the sync delegate
         SitemapRequest.get().handleException( ex );
     }
+
+    // Debug-only E2E traces for the accepted sitemap responses. They are
+    // emitted exactly once per response, at the point where the processing
+    // path decides to apply or drop it. The release implementations are
+    // empty, so nothing is computed or printed in release builds.
+    (:debug)
+    protected function traceSitemapSucceeded( json as SitemapJsonIncoming ) as Void {
+        E2ETrace.sitemapSucceeded( json.estimatedSize );
+    }
+    (:release)
+    protected function traceSitemapSucceeded( json as SitemapJsonIncoming ) as Void {}
+
+    (:debug)
+    protected function traceSitemapUnchanged( json as SitemapJsonIncoming ) as Void {
+        E2ETrace.sitemapUnchanged( json.estimatedSize );
+    }
+    (:release)
+    protected function traceSitemapUnchanged( json as SitemapJsonIncoming ) as Void {}
 }
 
 // 1)
@@ -110,6 +128,7 @@ class ProcessIncomingJsonTask extends BaseSitemapProcessorTask {
         }
 
         SitemapApplier.apply( _json );
+        traceSitemapSucceeded( _json );
     }
 }
 
@@ -134,6 +153,7 @@ class CompareSitemapTask extends BaseSitemapProcessorTask {
         // nothing left to compare
         if( comparison == null || ( comparison as SitemapComparison ).compareRoot() ) {
             SitemapApplier.apply( _json );
+            traceSitemapSucceeded( _json );
             return;
         }
 
@@ -194,6 +214,7 @@ class FinishSitemapComparisonTask extends BaseSitemapProcessorTask {
                 _comparison.getElementCount()
             )
         ) {
+            traceSitemapSucceeded( _json );
             return;
         }
 
@@ -209,12 +230,14 @@ class FinishSitemapComparisonTask extends BaseSitemapProcessorTask {
                  && ! SitemapStore.isPostCommandHoldActive() )
         ) {
             SitemapApplier.apply( _json );
+            traceSitemapSucceeded( _json );
             return;
         }
 
         // The JSON is unchanged, but its age must be refreshed so that
         // the data does not expire while no update is applied.
         SitemapStore.refreshStored( _json );
+        traceSitemapUnchanged( _json );
         Logger.debug( "FinishSitemapComparisonTask: update dropped, sitemap unchanged" );
         AsyncTaskQueue.get().add( new TriggerNextRequestTask() );
     }

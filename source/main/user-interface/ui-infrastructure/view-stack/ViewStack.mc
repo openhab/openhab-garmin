@@ -55,6 +55,11 @@ import Toybox.WatchUi;
         return getCurrentView()[2];
     }
 
+    // Returns the number of views on the tracked stack.
+    public static function getDepth() as Number {
+        return _viewStack.size();
+    }
+
     // Returns true if the given view is currently part of the tracked stack.
     // Used to detect pages that became empty while they are still part of the
     // current navigation path.
@@ -84,6 +89,7 @@ import Toybox.WatchUi;
         WatchUi.popView( transition );
         _viewStack = _viewStack.slice( 0, _viewStack.size() - 1 );
         // Logger.debug( "ViewStack.popView: new stack size=" + _viewStack.size() );
+        traceCurrentView();
     }
 
     // Removes the top view from the tracked stack without popping the system
@@ -93,6 +99,7 @@ import Toybox.WatchUi;
         if( _viewStack.size() > 0 ) {
             _viewStack = _viewStack.slice( 0, _viewStack.size() - 1 );
             // Logger.debug( "ViewStack.discardTopView: new stack size=" + _viewStack.size() );
+            traceCurrentView();
         }
     }
 
@@ -113,6 +120,7 @@ import Toybox.WatchUi;
         WatchUi.pushView( view, delegate, transition );
         _viewStack.add( [ view, delegate, scope ] );
         // Logger.debug( "ViewStack.pushView: new stack size=" + _viewStack.size() );
+        traceCurrentView();
     }
 
     // This function must be called in OHApp.getInitialView() to store the initial view.
@@ -128,6 +136,7 @@ import Toybox.WatchUi;
         }
         _viewStack.add( [ view, delegate, MAIN ] );
         // Logger.debug( "ViewStack.registerInitialView: new stack size=" + _viewStack.size() );
+        traceCurrentView();
     }
 
     // Removes all views from the stack except the base view
@@ -165,6 +174,49 @@ import Toybox.WatchUi;
         } else {
             _viewStack.add( entry );
         }
+        traceCurrentView();
+    }
+
+    /*
+    * Emits an E2E view event for the view on top of the tracked stack.
+    *
+    * Debug-only: the release implementation is empty, so neither the view
+    * classification nor any event text is present in release builds.
+    */
+    (:debug)
+    private static function traceCurrentView() as Void {
+        var current = getCurrentView();
+        var view = current[0];
+        if( view == null ) {
+            return;
+        }
+        var typedView = view as WatchUi.Views;
+        var category = current[2] == SETTINGS
+            ? "settings"
+            : ( typedView instanceof ErrorView ? "error" : "sitemap" );
+        E2ETrace.viewShown( category, viewName( typedView ), _viewStack.size() );
+    }
+    (:release)
+    private static function traceCurrentView() as Void {}
+
+    // Stable view names for E2E assertions.
+    (:debug)
+    private static function viewName( view as WatchUi.Views ) as String {
+        if( view instanceof ErrorView ) { return "ErrorView"; }
+        if( view instanceof LoadingView ) { return "LoadingView"; }
+        if( view instanceof HomepageMenu ) { return "HomepageMenu"; }
+        if( view instanceof PageMenu ) { return "PageMenu"; }
+        if( view instanceof SettingsMenu ) { return "SettingsMenu"; }
+        // The remaining BaseMenu implementation is CommandMenu. It is excluded
+        // on devices that show a WatchUi.ActionMenu instead, so it is matched
+        // through the base class rather than by name.
+        if( view instanceof BaseMenu ) { return "CommandMenu"; }
+        if( view instanceof DynamicPicker ) { return "DynamicPicker"; }
+        if( view instanceof PlayerView ) { return "PlayerView"; }
+        if( view instanceof RollershutterView ) { return "RollershutterView"; }
+        if( view instanceof ControlView ) { return "ControlView"; }
+        if( view instanceof WatchUi.Confirmation ) { return "Confirmation"; }
+        return "View";
     }
 
 }

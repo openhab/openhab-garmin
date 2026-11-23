@@ -73,6 +73,13 @@ class BaseCommandRequest extends BaseRequest {
     // True if the command request should operate in sync mode
     private var _syncMode as Boolean;
 
+    // Item name and command value of the most recent request, used only by the
+    // debug-only E2E trace. Both members are compiled only in debug builds.
+    (:debug)
+    private var _traceItem as String = "-";
+    (:debug)
+    private var _traceValue as String = "";
+
     // Constructor
     protected function initialize( 
         item as CommandRequestDelegate, 
@@ -101,6 +108,7 @@ class BaseCommandRequest extends BaseRequest {
         if( ! ( cmd instanceof String ) ) {
             cmd = cmd.toString();
         }
+        traceCommandRequest( cmd as String );
         
         // Note that isWifiConnected()=true indicates only that Wi-Fi is available,
         // but the app still needs to switch into sync mode to connect to it. If _syncMode
@@ -227,9 +235,11 @@ class BaseCommandRequest extends BaseRequest {
             try {
                 if( checkResponseCode( responseCode, CommunicationException.EX_SOURCE_COMMAND ) ) {
                     item.onCommandComplete();
+                    traceCommandSuccess( responseCode );
                 }
             } catch( ex ) {
                 item.onCommandException( ex );
+                traceCommandError( ex );
                 // If we are in Wifi sync mode, we only report the exception to the
                 // item (i.e. the CommandSyncDelegate)
                 if( ! _syncMode ) {
@@ -238,4 +248,32 @@ class BaseCommandRequest extends BaseRequest {
             }
         }
     }
+
+    /*
+     * Debug-only E2E traces for command request outcomes. The release
+     * implementations are empty, so nothing is computed or printed in release
+     * builds.
+     */
+    (:debug)
+    private function traceCommandRequest( cmd as String ) as Void {
+        var item = _weakItem.get() as CommandRequestDelegate?;
+        _traceItem = item != null ? item.getItemName() : "-";
+        _traceValue = cmd;
+    }
+    (:release)
+    private function traceCommandRequest( cmd as String ) as Void {}
+
+    (:debug)
+    private function traceCommandSuccess( responseCode as Number ) as Void {
+        E2ETrace.commandSucceeded( responseCode, _traceItem, _traceValue );
+    }
+    (:release)
+    private function traceCommandSuccess( responseCode as Number ) as Void {}
+
+    (:debug)
+    private function traceCommandError( ex as Exception ) as Void {
+        E2ETrace.commandFailed( E2ETraceExceptions.code( ex ), _traceItem, _traceValue );
+    }
+    (:release)
+    private function traceCommandError( ex as Exception ) as Void {}
 }

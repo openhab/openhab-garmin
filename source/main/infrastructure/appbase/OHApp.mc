@@ -26,6 +26,10 @@ class OHApp extends Application.AppBase {
 
     // onStart() is called on application start up
     public function onStart(state as Dictionary?) as Void {
+        // Debug-only E2E trace: report the active system language once per
+        // process start, before any view is shown.
+        E2ETrace.systemLanguage();
+
         // this could be used for startup logic that is common to
         // glance and widget. Currently there is none.
         //
@@ -187,6 +191,8 @@ class OHApp extends Application.AppBase {
     function getGlanceView() as [ GlanceView ] or [ GlanceView, GlanceViewDelegate ] or Null {
         // Logger.debug( "OHApp.getGlanceView" );
         AppLifecycle.setGlance();
+        // Debug-only E2E trace: the glance view is shown in a separate process.
+        E2ETrace.glanceViewShown();
         return [ new GlanceSitemapView() ];
     }
 

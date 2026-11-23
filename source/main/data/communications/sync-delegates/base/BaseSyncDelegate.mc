@@ -324,6 +324,9 @@ class BaseSyncDelegate extends SyncDelegate {
             } else {
                 Communications.startSync();
             }
+
+            // Debug-only E2E trace: the system sync screen is now shown.
+            traceSyncView();
             
             // Flags are set at the end so that if the code above throws an
             // exception, they remain at their previous values.
@@ -338,4 +341,13 @@ class BaseSyncDelegate extends SyncDelegate {
             throw ex;
         }
     }
+
+    // Debug-only E2E trace for the system sync screen. The screen overlays the
+    // current app view stack, so it reports that stack's depth.
+    (:debug)
+    private function traceSyncView() as Void {
+        E2ETrace.syncViewShown( ViewStack.getDepth() );
+    }
+    (:release)
+    private function traceSyncView() as Void {}
 }

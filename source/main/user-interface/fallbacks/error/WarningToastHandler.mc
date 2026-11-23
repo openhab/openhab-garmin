@@ -44,6 +44,20 @@ public class WarningToastHandler {
             { :icon => Rez.Drawables.iconWarning } );
     }
 
+    /*
+     * Shows a warning toast and traces it with a stable, language-independent
+     * id (a resource id or code such as S:-104 or UI:03). The rendered warning
+     * text is never traced.
+     */
+    public static function showWarningWithId( id as String, warning as String ) as Void {
+        if( ! AppLifecycle.isActive() ) {
+            return;
+        }
+
+        E2ETrace.toastShown( id );
+        showWarning( warning );
+    }
+
     // Show an informational toast. Unlike warnings, this is not an error
     // notification and is not gated by useToasts(), because it is a direct
     // response to a user action.
@@ -51,6 +65,8 @@ public class WarningToastHandler {
         if( ! AppLifecycle.isActive() ) {
             return;
         }
+
+        E2ETrace.infoToastShown( info );
 
         WatchUi.showToast( info, null );
     }
