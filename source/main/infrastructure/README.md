@@ -37,6 +37,8 @@ Defines all custom exception types used by the app. Most exception classes exten
 
 Contains the `Logger` class, which provides utility methods to output debug statements and exceptions to the system log.
 
+It also contains `E2ETrace`, which provides debug-only, machine-readable trace events for end-to-end tests. Events are printed as single lines of the form `E2E:<event>;<field>=<value>[;<field>=<value>...]` and cover view changes, connection mode changes, sitemap and command outcomes, error handling classification, toasts, full-screen errors, and the active system language at startup. The event schema is documented in the class header. All `(:release)` implementations are empty and contain no event text, so release builds neither print nor retain any E2E data. `E2ETraceExceptions` maps exceptions to the stable identifiers and codes used by these events and is only referenced from debug-only helpers.
+
 ### Subfolder `memory/`
 
 Contains the `MemoryManager` class.

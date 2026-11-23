@@ -80,7 +80,11 @@ import Toybox.Time;
     
     // Only needed to be declared private to prevent other classes
     // from instantiating this singleton
-    private function initialize() {}
+    private function initialize() {
+        // Debug-only E2E trace: report the initial mode so tests can assert
+        // the complete transition sequence.
+        traceConnectionState( _state );
+    }
 
     // This is called by `SitemapRequest` and `ErrorHandler` to indicate that a phone
     // connection is currently available
@@ -240,6 +244,7 @@ import Toybox.Time;
         var oldState = _state;
         if( oldState != newState ) {
             _state = newState;
+            traceConnectionState( newState );
 
             // When returning to phone mode, the states had been hidden before,
             // so the next response must be applied even if its JSON is
@@ -290,6 +295,28 @@ import Toybox.Time;
                 // to refresh the connection mode indicators
                 WatchUi.requestUpdate();
             }
+        }
+    }
+
+    /*
+     * Debug-only E2E trace for connection mode changes. The release
+     * implementation is empty, so no mode string is built in release builds.
+     */
+    (:debug)
+    private function traceConnectionState( state as State ) as Void {
+        E2ETrace.connectionModeChanged( connectionModeName( state ) );
+    }
+    (:release)
+    private function traceConnectionState( state as State ) as Void {}
+
+    (:debug)
+    private function connectionModeName( state as State ) as String {
+        switch( state ) {
+            case BLUETOOTH_CONNECTED: return "BLE";
+            case WIFI_CHECK_PENDING: return "WIFI_CHECK_PENDING";
+            case WIFI_CONNECTED: return "WIFI";
+            case OFFLINE: return "OFFLINE";
+            default: return "UNKNOWN";
         }
     }
 }

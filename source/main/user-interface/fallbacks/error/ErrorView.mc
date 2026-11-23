@@ -33,6 +33,7 @@ import Toybox.System;
             errorView.update( ex );
             // Logger.debug( "ErrorView.createOrUpdate: updating error view" );
         }
+        traceErrorView( ex );
         return errorView;
     }
 
@@ -152,5 +153,20 @@ import Toybox.System;
             :height => height
         } ).draw( dc );
     }
+
+    /*
+     * Debug-only E2E trace: records which error the full-screen error view is
+     * displaying. The release implementation is empty, so nothing is
+     * computed or printed in release builds.
+     */
+    (:debug)
+    private static function traceErrorView( ex as Exception ) as Void {
+        E2ETrace.errorViewShown(
+            E2ETraceExceptions.errorId( ex ),
+            E2ETraceExceptions.code( ex )
+        );
+    }
+    (:release)
+    private static function traceErrorView( ex as Exception ) as Void {}
 
 }

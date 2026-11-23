@@ -38,7 +38,17 @@ class CommandMenuHandler {
             ) );
         }
         WatchUi.showActionMenu( actionMenu, new CommandActionMenuDelegate( delegate ) );
+        traceActionMenu();
     }
+
+    // Debug-only E2E trace for the command ActionMenu, which is shown outside
+    // the ViewStack and therefore sits one level above the current app view.
+    (:debug)
+    private static function traceActionMenu() as Void {
+        E2ETrace.actionMenuShown( ViewStack.getDepth() + 1 );
+    }
+    (:release)
+    private static function traceActionMenu() as Void {}
 
     // CustomMenu implementation
     (:exclForActionMenu)

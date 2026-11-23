@@ -132,6 +132,7 @@ class SitemapRequest extends BaseRequest {
     public function handleException( ex as Exception ) as Void {
         // Logger.debug( "SitemapRequest.handleException" );
         // Logger.debugMemory( null );
+        traceSitemapError( ex );
 
         // If an out-of-memory error occurs, it might be due to a sitemap change
         // where parts of the old and new menu structures coexist in memory.
@@ -347,6 +348,18 @@ class SitemapRequest extends BaseRequest {
                && ! _isShutdown
                && _commandsInFlight == 0;
     }
+
+    /*
+     * Debug-only E2E trace for a failed sitemap request. The release
+     * implementation is empty, so no error code is computed or printed in
+     * release builds.
+     */
+    (:debug)
+    private function traceSitemapError( ex as Exception ) as Void {
+        E2ETrace.sitemapFailed( E2ETraceExceptions.code( ex ) );
+    }
+    (:release)
+    private function traceSitemapError( ex as Exception ) as Void {}
 
     // Discards all queued menu processing tasks.
     //
