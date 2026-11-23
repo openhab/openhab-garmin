@@ -67,7 +67,7 @@ the screenshot tells you _how it looked_. Screenshots alone are advisory.
   step is recorded as `skipped` and counted in the report. A skipped step is never
   a success.
 - **Scenario budget** (`timeout_s`) – checked before each step, so a hung simulator
-  or a scripted 12 s delay cannot stall a suite indefinitely.
+  or a scripted multi-second delay cannot stall a suite indefinitely.
 
 ## Portability boundary
 
