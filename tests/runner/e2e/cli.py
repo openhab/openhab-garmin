@@ -11,6 +11,7 @@ Subcommands:
     coverage          map #140 scope entries to scenarios and check for gaps
     contract-test     exercise a simulator driver against the driver contract
     validate-compose  static validation of the Compose stack (no Docker needed)
+    network-env       render/verify the generated loopback network block in .env.example
     pin-images        resolve/verify image digests from Docker Hub
     sdk-check         validate the mounted Connect IQ SDK
     build             compile the PRG for one or more devices
@@ -29,6 +30,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional, Sequence
 
 from . import compose as compose_module
+from . import network as network_module
 from .build import BuildError, build_prg
 from .compose import ComposeError
 from .config import (
@@ -504,6 +506,32 @@ def _cmd_pin_images(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+def _cmd_network_env(args: argparse.Namespace) -> int:
+    path = Path(args.env) if args.env else compose_module.ENV_EXAMPLE
+    try:
+        network = network_module.load_network()
+    except ConfigError as error:
+        print(f"error: {error}", file=sys.stderr)
+        return EXIT_CONFIG
+    if args.write:
+        try:
+            written = network_module.write_env_block(path, network)
+        except ConfigError as error:
+            print(f"error: {error}", file=sys.stderr)
+            return EXIT_CONFIG
+        for key, value in network.compose_values().items():
+            print(f"{key}={value}")
+        print(f"written: {written}")
+        return EXIT_OK
+    problems = network_module.check_env_block(path, network)
+    for problem in problems:
+        print(problem)
+    if problems:
+        return EXIT_FAILURES
+    print("network: ok")
+    return EXIT_OK
+
+
 def _cmd_sdk_check(args: argparse.Namespace) -> int:
     try:
         layout = load_layout()
@@ -634,6 +662,19 @@ def build_parser() -> argparse.ArgumentParser:
     validate.add_argument("--env", help="path to the environment file")
     validate.add_argument("--check-pins", action="store_true", help="also require pinned image digests")
     validate.set_defaults(handler=_cmd_validate_compose)
+
+    network = subparsers.add_parser(
+        "network-env",
+        help="render or verify the generated loopback network block in .env.example",
+    )
+    network.add_argument(
+        "--write",
+        action="store_true",
+        help="rewrite tests/compose/.env.example from tests/config/network.yaml",
+    )
+    network.add_argument("--check", action="store_true", help="verify the block (default)")
+    network.add_argument("--env", help="path to the environment example")
+    network.set_defaults(handler=_cmd_network_env)
 
     pin = subparsers.add_parser("pin-images", help="resolve or verify image digests")
     pin.add_argument("--write", action="store_true", help="write tests/compose/.env from the committed pins")

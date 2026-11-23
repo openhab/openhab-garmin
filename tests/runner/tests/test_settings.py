@@ -8,27 +8,51 @@ import pytest
 import yaml
 
 from e2e.config import APP_SETTINGS_DIR
+from e2e.network import load_network
 from e2e.settings import (
     AppSettings,
     SettingsError,
     load_settings,
+    resolve_tokens,
     validate_properties,
 )
 
 
-def test_repository_fixtures_load() -> None:
+def test_repository_fixtures_load(monkeypatch) -> None:
+    monkeypatch.delenv("E2E_SHIM_URL", raising=False)
+    network = load_network()
     fixtures = sorted(APP_SETTINGS_DIR.glob("*.yaml"))
     assert fixtures, "no settings fixtures found"
     for path in fixtures:
+        raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+        # The fixture must derive from the stack's endpoint, not hardcode one.
+        assert raw["properties"]["url_0"] == "${E2E_SHIM_URL}/", path
         settings = load_settings(path.stem)
-        assert settings.properties["url_0"].startswith("http://shim:")
+        assert settings.properties["url_0"] == network.shim_url + "/"
         assert settings.sitemap
 
 
-def test_fixtures_point_at_the_shim() -> None:
+def test_fixtures_point_at_the_shim(monkeypatch) -> None:
+    monkeypatch.delenv("E2E_SHIM_URL", raising=False)
     settings = load_settings("default")
-    assert settings.url == "http://shim:8080/"
+    assert settings.url == load_network().shim_url + "/"
     assert settings.sitemap == "garmin_e2e"
+
+
+def test_shim_url_token_follows_the_stack_environment() -> None:
+    # The bridge profile passes the service alias to the runner; the fixture
+    # resolves to exactly the same value, so the app cannot drift from the
+    # stack the runner inspects.
+    assert resolve_tokens("${E2E_SHIM_URL}/", {"E2E_SHIM_URL": "http://shim:8080"}) == (
+        "http://shim:8080/"
+    )
+    assert resolve_tokens("${E2E_SHIM_URL}/", {}) == load_network().shim_url + "/"
+
+
+def test_unknown_settings_token_fails_closed() -> None:
+    with pytest.raises(SettingsError) as error:
+        resolve_tokens("${NO_SUCH_STACK_URL}/", {})
+    assert "unresolved settings token" in str(error.value)
 
 
 def test_unknown_fixture_lists_available_names() -> None:

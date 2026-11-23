@@ -1,0 +1,20 @@
+# Host-network overlay for the dev profile on the dedicated Linux E2E VM.
+#
+#   COMPOSE_PROFILES=dev docker compose \
+#     -f compose.yaml -f compose.dev.yaml -f compose.host.yaml -f compose.host.dev.yaml up -d
+#
+# Apply this last: compose.dev.yaml points the shim and the runner at the
+# `openhab-dev` service alias, which does not exist in host networking. This
+# file re-points both at the loopback address and the dev port from
+# tests/config/network.yaml. Always combine it with compose.host.yaml; on its
+# own it would leave the services on the bridge network while addressing the
+# host, which cannot work.
+
+services:
+  shim:
+    environment:
+      OPENHAB_UPSTREAM: http://${E2E_LOOPBACK_HOST:?set E2E_LOOPBACK_HOST in tests/compose/.env}:${OPENHAB_DEV_PORT:?set OPENHAB_DEV_PORT in tests/compose/.env}
+
+  runner:
+    environment:
+      E2E_OPENHAB_URL: http://${E2E_LOOPBACK_HOST:?set E2E_LOOPBACK_HOST in tests/compose/.env}:${OPENHAB_DEV_PORT:?set OPENHAB_DEV_PORT in tests/compose/.env}

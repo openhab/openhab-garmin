@@ -1,0 +1,70 @@
+# Host-network overlay for the dedicated Linux E2E VM (stable profile).
+#
+#   docker compose -f compose.yaml -f compose.host.yaml up -d
+#
+# Why: the VM is a dedicated host, so the stack does not need container DNS or
+# published ports at all. Every service joins the host network namespace and
+# addresses its peers as http://127.0.0.1:<port>. Nothing is hostname-based, so
+# the same files work on any host without editing a name.
+#
+# Exposure: every listener is pinned to the loopback address from
+# tests/config/network.yaml. openHAB gets
+# `-Dorg.ops4j.pax.web.listening.address` because its default is 0.0.0.0. There
+# is no TLS in the stack: external access is the operator's reverse proxy, and
+# no certificate, key or CA material is stored in the repository or the
+# environment.
+#
+# Requires Docker Compose 2.24 or newer for the `!reset` tags, which remove the
+# bridge-profile port publications and network attachments inherited from
+# compose.yaml. Keeping this in a separate file means the default profile
+# stays runnable on a developer machine, including macOS and Windows.
+#
+# The dev profile on the same VM needs compose.host.dev.yaml as well, applied
+# last so its loopback URLs for openhab-dev win:
+#
+#   COMPOSE_PROFILES=dev docker compose \
+#     -f compose.yaml -f compose.dev.yaml -f compose.host.yaml -f compose.host.dev.yaml up -d
+
+services:
+  openhab-stable:
+    network_mode: host
+    ports: !reset []
+    networks: !reset {}
+    environment:
+      # In host networking the container port *is* the host port.
+      OPENHAB_HTTP_PORT: "${OPENHAB_STABLE_PORT:?set OPENHAB_STABLE_PORT in tests/compose/.env}"
+      # openHAB binds all interfaces by default; this is the only place that
+      # narrows it to loopback.
+      EXTRA_JAVA_OPTS: ${OPENHAB_JAVA_OPTS:--Duser.timezone=UTC} -Dorg.ops4j.pax.web.listening.address=${E2E_LOOPBACK_HOST:?set E2E_LOOPBACK_HOST in tests/compose/.env}
+
+  openhab-dev:
+    network_mode: host
+    ports: !reset []
+    networks: !reset {}
+    environment:
+      OPENHAB_HTTP_PORT: "${OPENHAB_DEV_PORT:?set OPENHAB_DEV_PORT in tests/compose/.env}"
+      EXTRA_JAVA_OPTS: ${OPENHAB_JAVA_OPTS:--Duser.timezone=UTC} -Dorg.ops4j.pax.web.listening.address=${E2E_LOOPBACK_HOST:?set E2E_LOOPBACK_HOST in tests/compose/.env}
+
+  shim:
+    network_mode: host
+    ports: !reset []
+    networks: !reset {}
+    environment:
+      OPENHAB_UPSTREAM: http://${E2E_LOOPBACK_HOST:?set E2E_LOOPBACK_HOST in tests/compose/.env}:${OPENHAB_STABLE_PORT:?set OPENHAB_STABLE_PORT in tests/compose/.env}
+      SHIM_BIND: ${E2E_LOOPBACK_HOST:?set E2E_LOOPBACK_HOST in tests/compose/.env}
+      SHIM_PORT: "${SHIM_PORT:?set SHIM_PORT in tests/compose/.env}"
+
+  runner:
+    network_mode: host
+    ports: !reset []
+    networks: !reset {}
+    environment:
+      E2E_OPENHAB_URL: http://${E2E_LOOPBACK_HOST:?set E2E_LOOPBACK_HOST in tests/compose/.env}:${OPENHAB_STABLE_PORT:?set OPENHAB_STABLE_PORT in tests/compose/.env}
+      E2E_SHIM_URL: http://${E2E_LOOPBACK_HOST:?set E2E_LOOPBACK_HOST in tests/compose/.env}:${SHIM_PORT:?set SHIM_PORT in tests/compose/.env}
+
+# No service uses the bridge network under this overlay. It stays declared so
+# the file is a pure overlay; `docker compose down` removes it if it was never
+# created.
+networks:
+  e2e:
+    driver: bridge

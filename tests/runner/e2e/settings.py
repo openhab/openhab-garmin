@@ -8,18 +8,28 @@ schema.
 
 Only the properties that exist in ``resources/base/settings.xml`` are accepted,
 so a typo fails when the scenario loads rather than when a run behaves oddly.
+
+``url_0`` is written as ``${E2E_SHIM_URL}/``. That is the same variable the
+Compose stack passes to the runner, so the app cannot point somewhere other
+than the shim the runner resets and inspects: in the bridge profile it resolves
+to ``http://shim:8080`` and in the host profile to
+``http://127.0.0.1:8081``. Outside a stack (dry runs, unit tests) it falls back
+to the loopback URL derived from ``tests/config/network.yaml``.
 """
 
 from __future__ import annotations
 
+import os
+import re
 from dataclasses import dataclass, replace
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any, Dict, Mapping, Tuple
+from typing import Any, Dict, Mapping, Optional, Tuple
 
 import yaml
 
 from .config import APP_SETTINGS_DIR, ConfigError
+from .network import NetworkError, load_network
 
 #: Property id -> expected Python type, mirrored from
 #: ``resources/base/settings.xml``. Update both together.
@@ -49,6 +59,55 @@ class SettingsError(ConfigError):
     """Raised when an app settings fixture is invalid."""
 
 
+#: ``${VAR}`` placeholders resolved from the stack environment or network.yaml.
+_URL_TOKEN = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
+
+
+def _network_defaults() -> Mapping[str, str]:
+    """Loopback URLs to use when the stack environment is not present."""
+    try:
+        network = load_network()
+    except NetworkError:
+        return {}
+    return {
+        "E2E_SHIM_URL": network.shim_url,
+        "E2E_OPENHAB_URL": network.openhab_url("stable"),
+    }
+
+
+def resolve_tokens(value: Any, environ: Optional[Mapping[str, str]] = None) -> Any:
+    """Replace ``${VAR}`` placeholders with the stack environment's values.
+
+    The environment wins because that is what Compose passes to the runner in
+    the active profile. Without it, the loopback defaults from
+    ``tests/config/network.yaml`` apply. An unknown placeholder fails closed
+    instead of reaching the simulator as a literal.
+    """
+    if not isinstance(value, str) or "${" not in value:
+        return value
+    env = os.environ if environ is None else environ
+    defaults = _network_defaults()
+
+    def replace(match: "re.Match[str]") -> str:
+        name = match.group(1)
+        resolved = env.get(name) or defaults.get(name)
+        if not resolved:
+            raise SettingsError(
+                f"unresolved settings token ${{{name}}}; set it in the environment "
+                "or define it in tests/config/network.yaml"
+            )
+        return resolved
+
+    return _URL_TOKEN.sub(replace, value)
+
+
+def resolve_properties(
+    properties: Mapping[str, Any],
+    environ: Optional[Mapping[str, str]] = None,
+) -> Dict[str, Any]:
+    return {key: resolve_tokens(value, environ) for key, value in properties.items()}
+
+
 @dataclass(frozen=True)
 class AppSettings:
     """A validated settings fixture."""
@@ -61,6 +120,7 @@ class AppSettings:
     def with_overrides(self, overrides: Mapping[str, Any]) -> "AppSettings":
         merged: Dict[str, Any] = dict(self.properties)
         merged.update(overrides)
+        merged = resolve_properties(merged)
         validate_properties(merged, where=f"{self.name} + scenario overrides")
         return replace(self, properties=MappingProxyType(merged))
 
@@ -124,6 +184,7 @@ def load_settings(name: str, directory: Path = APP_SETTINGS_DIR) -> AppSettings:
     properties = document.get("properties")
     if not isinstance(properties, Mapping):
         raise SettingsError(f"{path}: 'properties' must be a mapping")
+    properties = resolve_properties(properties)
     validate_properties(properties, where=str(path))
     return AppSettings(
         name=str(document.get("name", name)),

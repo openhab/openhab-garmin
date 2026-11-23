@@ -7,7 +7,7 @@
 name: fast-polling
 description: 250 ms poll interval, post-command hold disabled.
 properties:
-  url_0: http://shim:8080/
+  url_0: ${E2E_SHIM_URL}/
   sitemap_0: garmin_e2e
   restapi_0: true
   webhook_0: ""

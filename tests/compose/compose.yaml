@@ -11,13 +11,25 @@ name: openhab-garmin-e2e
 #   default (stable):  docker compose up -d
 #   dev milestone:     COMPOSE_PROFILES=dev docker compose -f compose.yaml -f compose.dev.yaml up -d
 #
-# The dev profile needs the override file: without it the shim would keep
+# Every published port is bound to the loopback address from
+# tests/config/network.yaml, never to a wildcard address. The stack is not
+# reachable from the network; terminate TLS externally with a reverse proxy if
+# that is wanted. No certificate, key or CA material belongs here.
+#
+# On the dedicated Linux host, add the host-network overlay on top; the
+# services then address each other as http://127.0.0.1:<port>:
+#
+#   docker compose -f compose.yaml -f compose.host.yaml up -d
+#
+# The dev profile needs its own override file: without it the shim would keep
 # pointing at `openhab-stable`, which is not running under `dev`. The override
 # is a separate file so that failure mode cannot happen silently.
 #
 # Start from `tests/compose/.env.example` and run
 # `python -m e2e pin-images --write` first; every image reference below fails
-# closed when its variable is missing or unpinned.
+# closed when its variable is missing or unpinned. Ports and the loopback host
+# come from `tests/config/network.yaml` via the generated block in `.env`;
+# change them there, not here.
 
 services:
   openhab-stable:
@@ -25,7 +37,7 @@ services:
     image: ${OPENHAB_STABLE_IMAGE:?run `python -m e2e pin-images --write` in tests/runner and set CIQ_SDK_HOST_PATH in tests/compose/.env}
     restart: "no"
     ports:
-      - "${OPENHAB_STABLE_PORT:-8080}:8080"
+      - "${E2E_LOOPBACK_HOST:?set E2E_LOOPBACK_HOST in tests/compose/.env}:${OPENHAB_STABLE_PORT:?set OPENHAB_STABLE_PORT in tests/compose/.env}:8080"
     volumes:
       # The image ships a conf skeleton (items/, sitemaps/, rules/, ...) that
       # openHAB expects to be able to write to, so conf itself is a writable
@@ -45,7 +57,9 @@ services:
     healthcheck:
       # curl is part of the openHAB image (it is also what the image's own
       # HEALTHCHECK uses), so this never depends on a missing binary.
-      test: ["CMD-SHELL", "curl -fsS -o /dev/null http://127.0.0.1:8080/rest/ || exit 1"]
+      # $$ escapes Compose interpolation; the container shell expands the port
+      # the container actually listens on, which differs under host networking.
+      test: ["CMD-SHELL", "curl -fsS -o /dev/null http://127.0.0.1:$${OPENHAB_HTTP_PORT}/rest/ || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 30
@@ -57,7 +71,7 @@ services:
     image: ${OPENHAB_DEV_IMAGE:?run `python -m e2e pin-images --write` in tests/runner and set CIQ_SDK_HOST_PATH in tests/compose/.env}
     restart: "no"
     ports:
-      - "${OPENHAB_DEV_PORT:-8080}:8080"
+      - "${E2E_LOOPBACK_HOST:?set E2E_LOOPBACK_HOST in tests/compose/.env}:${OPENHAB_DEV_PORT:?set OPENHAB_DEV_PORT in tests/compose/.env}:8080"
     volumes:
       - openhab-dev-conf:/openhab/conf
       - ../fixtures/openhab/conf/items:/openhab/conf/items:ro
@@ -69,7 +83,7 @@ services:
       CRYPTO_POLICY: unlimited
       EXTRA_JAVA_OPTS: ${OPENHAB_JAVA_OPTS:--Duser.timezone=UTC}
     healthcheck:
-      test: ["CMD-SHELL", "curl -fsS -o /dev/null http://127.0.0.1:8080/rest/ || exit 1"]
+      test: ["CMD-SHELL", "curl -fsS -o /dev/null http://127.0.0.1:$${OPENHAB_HTTP_PORT}/rest/ || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 30
@@ -85,18 +99,20 @@ services:
     image: openhab-garmin-e2e-shim:${SHIM_VERSION:-dev}
     restart: "no"
     ports:
-      - "${SHIM_PORT:-8081}:8080"
+      - "${E2E_LOOPBACK_HOST:?set E2E_LOOPBACK_HOST in tests/compose/.env}:${SHIM_PORT:?set SHIM_PORT in tests/compose/.env}:8080"
     environment:
       OPENHAB_UPSTREAM: ${OPENHAB_UPSTREAM:-http://openhab-stable:8080}
       SHIM_VERSION: ${SHIM_VERSION:-dev}
       SHIM_BIND: 0.0.0.0
       SHIM_PORT: "8080"
     healthcheck:
+      # SHIM_PORT is the port this process actually listens on: 8080 on the
+      # bridge profile, the published host port under host networking.
       test:
         - CMD
         - python
         - -c
-        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/__shim__/health', timeout=3)"
+        - "import os, urllib.request; urllib.request.urlopen('http://127.0.0.1:' + os.environ.get('SHIM_PORT', '8080') + '/__shim__/health', timeout=3)"
       interval: 5s
       timeout: 5s
       retries: 12
@@ -120,6 +136,9 @@ services:
       # CIQ_SDK_ROOT is the path *inside* the container. The host path is
       # CIQ_SDK_HOST_PATH, used only for the bind mount below.
       CIQ_SDK_ROOT: /opt/ciq-sdk
+      # These two are also what the app settings fixtures resolve their
+      # `${E2E_SHIM_URL}` token from, so the app and the runner always talk to
+      # the same endpoint. The host overlay replaces them with loopback URLs.
       E2E_OPENHAB_URL: ${E2E_OPENHAB_URL:-http://openhab-stable:8080}
       E2E_SHIM_URL: ${E2E_SHIM_URL:-http://shim:8080}
       E2E_ARTIFACTS: /work/artifacts

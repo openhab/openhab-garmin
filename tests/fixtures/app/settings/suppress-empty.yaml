@@ -8,7 +8,7 @@
 name: suppress-empty
 description: Empty and invalid sitemap responses are not toasted.
 properties:
-  url_0: http://shim:8080/
+  url_0: ${E2E_SHIM_URL}/
   sitemap_0: garmin_e2e
   restapi_0: true
   webhook_0: ""

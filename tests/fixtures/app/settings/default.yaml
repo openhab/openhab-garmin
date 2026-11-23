@@ -9,13 +9,18 @@
 # `url` points at the shim, which proxies to openHAB. Scenarios must never talk
 # to openHAB directly: the request trace is the primary assertion surface.
 #
+# `${E2E_SHIM_URL}` is resolved from the stack environment, so the app always
+# uses the endpoint the runner uses: `http://shim:8080` on the bridge profile
+# and `http://127.0.0.1:8081` on the host overlay. Outside a stack the fallback
+# is the loopback URL from tests/config/network.yaml.
+#
 # The app appends the trailing slash itself if it is missing; it is written
 # explicitly here to match what a user would configure.
 
 name: default
 description: Default settings, 1 s poll interval, shim as server.
 properties:
-  url_0: http://shim:8080/
+  url_0: ${E2E_SHIM_URL}/
   sitemap_0: garmin_e2e
   restapi_0: true
   webhook_0: ""
