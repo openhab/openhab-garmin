@@ -1,0 +1,74 @@
+# Extended: the memory-class full-screen error in every shipped language.
+#
+# `ErrorOutOfMemory` (124 chars in German, 122 in French, 108 in Polish) is the
+# second-longest shipped string, but the app only raises it when the device has
+# less than 10 KiB of free memory. That is not deterministically scriptable
+# through the shim, so this scenario triggers the memory-class path that IS
+# deterministic: a response above the SDK limit, which the app maps to the
+# same critical, full-screen error handling (`S:-402`) and renders in the
+# shared `ErrorView` code path.
+#
+# The literal `ErrorOutOfMemory` text is therefore review-only; see
+# tests/docs/localisation.md for the manual procedure and the limitation.
+
+name: localisation-error-memory-class
+description: The memory-class critical error renders in the language and is not truncated.
+tier: ui
+suite: extended
+device: edge540
+mode: ble
+fixture: fast-polling
+openhab:
+  profile: stable
+  sitemap: garmin_localisation
+languages: [eng, deu, fre, ita, spa, pol]
+timeout_s: 150
+
+settings:
+  sitemap_0: garmin_localisation
+
+shim:
+  rules:
+    - name: oversized
+      match:
+        method: GET
+        path_prefix: /rest/sitemaps/garmin_localisation
+      times: 2
+      response:
+        status: 200
+        body_size: 2097152
+
+steps:
+  - action: launch
+
+  - action: wait_for_event
+    event: LANGUAGE
+    fields:
+      code: "${language}"
+    timeout_ms: 30000
+
+  - action: wait_for_request
+    method: GET
+    path_prefix: /rest/sitemaps/garmin_localisation
+    min_count: 2
+    timeout_ms: 30000
+
+  - action: wait_for_event
+    description: The response is classified as a critical error.
+    event: ERROR
+    fields:
+      kind: critical
+    timeout_ms: 45000
+
+  - action: wait_for_event
+    description: The oversized response reaches the full-screen error view.
+    event: ERRORVIEW
+    fields:
+      id: "S:-402"
+    timeout_ms: 30000
+
+  - action: screenshot
+    name: error-memory-class
+
+  - action: assert
+    no_error_view: false

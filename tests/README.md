@@ -150,6 +150,21 @@ error.
 | extended | `dynamic-visibility` | ui | `visibility` reacts to a state change while the app is open |
 | extended | `wifi-mode` | protocol | Wi-Fi mode renders the cached sitemap and does not poll |
 | extended | `offline-mode` | protocol | offline mode sends nothing |
+| extended | `localisation-sitemap` | ui | homepage, control labels and connection indicator in all six languages |
+| extended | `localisation-settings-menu` | ui | every settings entry, including the two-line Wi-Fi item, in all six languages |
+| extended | `localisation-glyphs` | ui | accented strings on normal screens, captured for glyph review |
+| extended | `localisation-toast-empty-page` | ui | translated empty-page toast in all six languages |
+| extended | `localisation-toast-offline-command` | ui | offline-command toast, with no command sent |
+| extended | `localisation-error-config-url` | ui | longest error string, missing URL, on the narrowest device |
+| extended | `localisation-error-config-url-round` | ui | the same error on a round screen |
+| extended | `localisation-error-memory-class` | ui | oversized-response critical error view |
+| extended | `localisation-error-multiline` | ui | multi-line error detail in the full-screen error view |
+| extended | `localisation-error-long-value` | ui | long dynamic value wraps in an error message |
+
+The `localisation-*` scenarios are one file each but run once per shipped
+language (`eng`, `deu`, `fre`, `ita`, `spa`, `pol`), so the table above is 60
+simulator runs. Coverage, the device rationale and the machine-asserted versus
+review-only split are documented in [docs/localisation.md](docs/localisation.md).
 
 `protocol` scenarios assert on the shim trace and on `E2E:` trace events and need
 no screenshots. `ui` scenarios navigate the app and compare screenshots with
@@ -160,6 +175,11 @@ subset, its variant coverage and the per-device tiers are in
 [docs/devices.md](docs/devices.md). Run `python -m e2e variants` to see which
 device covers each build variant; the coverage test fails when a variant from
 `monkey.jungle` has no device.
+
+Most scenarios run on the matrix default device. The localisation scenarios
+select the narrowest `ui` device (`edge540`) and, for the round-screen error
+view, `fenix7` explicitly; the rationale is in
+[docs/localisation.md](docs/localisation.md).
 
 Scenario authoring, the full YAML schema and the trace-line format are documented
 in [docs/scenarios.md](docs/scenarios.md).
@@ -175,6 +195,8 @@ BLE scenario has populated the device cache. Any `smoke/` scenario does that.
 fixtures/openhab/conf/items/garmin_e2e.items       every supported item type + one unsupported
 fixtures/openhab/conf/sitemaps/garmin_e2e.sitemap  every supported element and parameter
 fixtures/openhab/conf/sitemaps/garmin_unsupported.sitemap  the "no supported widget" path
+fixtures/openhab/conf/sitemaps/garmin_localisation.sitemap  stable localisation menu
+fixtures/openhab/conf/sitemaps/garmin_localisation_long.sitemap  long-dynamic-value error path
 fixtures/app/settings/*.yaml                       Connect IQ property sets
 ```
 
@@ -325,7 +347,8 @@ Do this once after the stack is up, and again after touching fixtures or the shi
 
 - [docs/architecture.md](docs/architecture.md) – components, data flow, assertion layers
 - [docs/devices.md](docs/devices.md) – build-variant dimensions, the device matrix and its coverage check
-- [docs/scenarios.md](docs/scenarios.md) – scenario schema and trace events
+- [docs/scenarios.md](docs/scenarios.md) – scenario schema, language matrix and trace events
+- [docs/localisation.md](docs/localisation.md) – language coverage, device choice and review-only assertions
 - [docs/sdk.md](docs/sdk.md) – SDK layout, version pinning, licence handling
 - [docs/simulator-driver.md](docs/simulator-driver.md) – driver contract and Wine plan
 - [shim/README.md](shim/README.md) – shim control API and fault-script format

@@ -1,0 +1,77 @@
+# Extended: the settings menu in every shipped language.
+#
+# Covers every entry, including the two-line "Update Sitemap over Wi-Fi" item
+# (`SettingsUpdateSitemap`, with a line break in all six translations) and the
+# longest settings labels. The menu is opened as the last homepage entry, the
+# way button-based Edge devices expose it.
+#
+# The top and bottom screenshots together show all seven entries; the value
+# column also exercises the server URL and sitemap name. Text is review-only:
+# the harness has no OCR or region assertion (see tests/docs/localisation.md).
+
+name: localisation-settings-menu
+description: Every settings entry, including the two-line Wi-Fi entry, renders in the language.
+tier: ui
+suite: extended
+device: edge540
+mode: ble
+fixture: fast-polling
+openhab:
+  profile: stable
+  sitemap: garmin_localisation
+  items:
+    E2E_Toggle: "OFF"
+    E2E_MediaControl: "PLAY"
+    E2E_Temperature: "21.5"
+languages: [eng, deu, fre, ita, spa, pol]
+timeout_s: 150
+
+settings:
+  sitemap_0: garmin_localisation
+
+steps:
+  - action: launch
+
+  - action: wait_for_event
+    event: LANGUAGE
+    fields:
+      code: "${language}"
+    timeout_ms: 30000
+
+  - action: wait_for_event
+    event: VIEW
+    fields:
+      category: sitemap
+      view: HomepageMenu
+    timeout_ms: 60000
+
+  # The localisation sitemap has four homepage frames, then Settings.
+  - action: press
+    button: DOWN
+    count: 4
+
+  - action: press
+    button: ENTER
+
+  - action: wait_for_event
+    description: The settings menu is shown.
+    event: VIEW
+    fields:
+      category: settings
+      view: SettingsMenu
+    timeout_ms: 30000
+
+  - action: screenshot
+    name: localisation-settings-top
+
+  # Seven entries; six DOWNs reach the last one (the Wi-Fi refresh item).
+  - action: press
+    button: DOWN
+    count: 6
+
+  - action: screenshot
+    name: localisation-settings-bottom
+
+  - action: assert
+    description: The settings menu itself must not raise an error.
+    no_error_view: true

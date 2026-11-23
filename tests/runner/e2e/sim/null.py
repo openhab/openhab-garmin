@@ -65,10 +65,18 @@ class NullDriver(SimulatorDriver):
         self._prg = Path(prg)
         self._record(f"prepare {self._prg}")
 
-    def start(self, device: Device, settings: AppSettings, mode: str = "ble") -> None:
+    def start(
+        self,
+        device: Device,
+        settings: AppSettings,
+        mode: str = "ble",
+        language: str = "eng",
+    ) -> None:
         self._device = device
         self._settings = settings
-        self._record(f"start device={device.id} mode={mode} settings={settings.name}")
+        self._record(
+            f"start device={device.id} mode={mode} language={language} settings={settings.name}"
+        )
 
     def wait_ready(self, timeout_s: float) -> None:
         self._record(f"wait_ready timeout_s={timeout_s}")

@@ -1,0 +1,61 @@
+# Extended: the localised empty-page toast.
+#
+# Selecting the empty frame shows `EmptyPage` through the info-toast path. This
+# is one of the few toasts whose text is a translated app string, so it checks
+# both the toast overlay and the translation. The TOAST trace event is the
+# machine assertion; the rendered text is review-only.
+
+name: localisation-toast-empty-page
+description: The empty-page info toast is shown with the translated text.
+tier: ui
+suite: extended
+device: edge540
+mode: ble
+fixture: fast-polling
+openhab:
+  profile: stable
+  sitemap: garmin_localisation
+  items:
+    E2E_Toggle: "OFF"
+    E2E_MediaControl: "PLAY"
+    E2E_Temperature: "21.5"
+languages: [eng, deu, fre, ita, spa, pol]
+timeout_s: 120
+
+settings:
+  sitemap_0: garmin_localisation
+
+steps:
+  - action: launch
+
+  - action: wait_for_event
+    event: LANGUAGE
+    fields:
+      code: "${language}"
+    timeout_ms: 30000
+
+  - action: wait_for_event
+    event: VIEW
+    fields:
+      category: sitemap
+      view: HomepageMenu
+    timeout_ms: 60000
+
+  # Empty is the fourth frame (index 3).
+  - action: press
+    button: DOWN
+    count: 3
+
+  - action: press
+    button: ENTER
+
+  - action: wait_for_event
+    description: The empty page reports a toast instead of opening a broken page.
+    event: TOAST
+    timeout_ms: 15000
+
+  - action: screenshot
+    name: empty-page-toast
+
+  - action: assert
+    no_error_view: true

@@ -7,7 +7,7 @@
 | Method | Meaning |
 | --- | --- |
 | `prepare(prg)` | make the compiled PRG available to the simulator |
-| `start(device, settings, mode)` | start the simulator into `mode` (`ble`/`wifi`/`offline`) and launch the app |
+| `start(device, settings, mode, language)` | start the simulator into `mode` (`ble`/`wifi`/`offline`) and system `language` (`eng`/`deu`/...), then launch the app |
 | `wait_ready(timeout_s)` | block until the app rendered its first view |
 | `press(button, count)` | press a semantic device button |
 | `tap(x, y, count)` | tap a screen coordinate |
@@ -33,8 +33,8 @@ The investigation recorded in
 - `monkeydo <prg> <device>` launches the app and streams `System.println` output
   (which is where `E2E:` trace lines come from);
 - startup conditions (`BleState`, `WifiState`, `nightMode`, `SleepMode`,
-  `TouchScreenEnabled`, `LastUsedDevice`, `UseHttpsRequirements`) are scriptable
-  through `simulator.ini`;
+  `TouchScreenEnabled`, `LastUsedDevice`, `UseHttpsRequirements`, and the
+  simulator language) are scriptable through `simulator.ini`;
 - runtime controls are native Win32 menus, and device input must be injected as
   keyboard/mouse events into the simulator window;
 - one simulator instance serves one run, so suites are serial.
@@ -47,9 +47,10 @@ follow-up, not part of the foundation.
 
 1. **prepare** – create a throwaway `WINEPREFIX` per run; seed
    `%TEMP%\com.garmin.connectiq` so no run inherits the previous device state.
-1. **start** – write `simulator.ini` for the requested device and mode, start the
-   simulator under Xvfb, launch with `monkeydo`, and pipe its stdout into the event
-   buffer.
+1. **start** – write `simulator.ini` for the requested device, mode and language,
+   start the simulator under Xvfb, launch with `monkeydo`, and pipe its stdout into
+   the event buffer. Verify the language from the `E2E:LANGUAGE` event, not from
+   the configuration that was written.
 1. **wait_ready** – wait for the first `E2E:VIEW` trace event rather than a fixed
    delay.
 1. **press / tap** – drive the simulator menus and device buttons with `xdotool`

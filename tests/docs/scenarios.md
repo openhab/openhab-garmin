@@ -21,6 +21,7 @@ openhab:
   items:                       # item states seeded over REST before launch
     E2E_Light: "ON"            # quote ON/OFF: YAML 1.1 parses bare ON as a boolean
 language: eng                  # eng | deu | fre | ita | spa | pol
+                               # or: languages: [eng, deu, fre, ita, spa, pol]
 timeout_s: 90                  # whole-scenario budget, 1..1800
 steps: [...]                   # non-empty; the first step must be `launch`
 
@@ -35,6 +36,39 @@ notes: Free-form operator note.
 Unknown devices, tiers, modes, languages, suites, actions, step keys, settings
 property ids and shim rule keys are all rejected at load time with the file, the
 key and the reason.
+
+## Language matrix
+
+A scenario declares either one `language` or a `languages` list, never both:
+
+```yaml
+languages: [eng, deu, fre, ita, spa, pol]
+```
+
+The matrix form expands at load time into one scenario per language, with
+`-<language>` appended to the name. `extended/localisation-sitemap.yaml` with
+that list becomes `extended/localisation-sitemap-eng` through
+`extended/localisation-sitemap-pol`, so artifacts and reports do not collide.
+The file's `name` is the _base name_: `find_scenarios("localisation-sitemap")`
+returns the whole matrix, while `find_scenario` requires one expanded id.
+
+Step parameters may use the `${language}` placeholder. It is replaced with the
+expanded language before the run, which keeps a single file assertable against
+the app's own locale:
+
+```yaml
+- action: wait_for_event
+  event: LANGUAGE
+  fields:
+    code: "${language}"
+```
+
+The `LANGUAGE` trace event is emitted by `OHApp.onStart` from
+`System.getDeviceSettings().systemLanguage`, so asserting it proves the
+simulator really started in the requested language instead of silently falling
+back to the default. The engine passes the scenario language to
+`SimulatorDriver.start(device, settings, mode, language)`; a driver that cannot
+select it must raise rather than run in a different language.
 
 ## Steps
 
@@ -101,7 +135,7 @@ E2E:<EVENT>;field=<value>;field=<value>
 | `ERROR` | `kind` (`temporary`/`critical`/`fatal`), `id`, `code`, `source` (`sitemap`/`command`/`ui`) |
 | `TOAST` | `id` |
 | `ERRORVIEW` | `id`, `code` |
-| `LANGUAGE` | `code` |
+| `LANGUAGE` | `code` (`eng`/`deu`/... or `unknown`) |
 
 `code` is an HTTP status, an SDK error code (possibly negative, or prefixed such
 as `S:-104` or `UI:CONFIG`), or `-` when unavailable. `COMMAND.item` and
@@ -142,6 +176,10 @@ diagnostics.
    that once broke), `extended` (long-running or fault-heavy).
 1. Choose the tier: `protocol` if the shim trace and trace events can prove it;
    `ui` if rendering is the point.
+1. Use `languages` instead of `language` when the behaviour must hold in every
+   shipped language, and assert `LANGUAGE;code=${language}`. A language matrix
+   of a `ui` scenario costs one simulator run per language; keep the rest of the
+   scenario deterministic so the only variable is the locale.
 1. Reuse an existing fixture. Add items only if the sitemap needs them, and keep
    `fixtures/openhab/conf/items` and `fixtures/openhab/conf/sitemaps` in sync —
    `python -m e2e setup` fails when a sitemap refers to an undefined item.
