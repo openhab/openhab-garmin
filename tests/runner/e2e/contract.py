@@ -107,10 +107,14 @@ def run_contract(
         signature = inspect.signature(type(driver).start)
         if "mode" not in signature.parameters:
             raise AssertionError("start() lost its 'mode' parameter")
+        if "language" not in signature.parameters:
+            raise AssertionError("start() lost its 'language' parameter")
 
     cases.append(_run_case("interface", interface))
     cases.append(_run_case("prepare", lambda: driver.prepare(prg)))
-    cases.append(_run_case("start", lambda: driver.start(device, settings, "ble")))
+    cases.append(
+        _run_case("start", lambda: driver.start(device, settings, "ble", language="deu"))
+    )
     cases.append(_run_case("wait_ready", lambda: driver.wait_ready(1.0)))
 
     for button in Button:

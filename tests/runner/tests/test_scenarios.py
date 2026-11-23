@@ -18,7 +18,9 @@ from e2e.scenarios import (
     ScenarioError,
     discover_scenarios,
     find_scenario,
+    find_scenarios,
     load_scenario,
+    load_scenarios,
 )
 
 BASE = {
@@ -92,6 +94,29 @@ def test_find_scenario_reports_unknown_names() -> None:
     with pytest.raises(ScenarioError) as error:
         find_scenario("does-not-exist")
     assert "unknown scenario" in str(error.value)
+
+
+def test_localisation_scenarios_expand_to_every_shipped_language() -> None:
+    scenarios = discover_scenarios(suite="extended")
+    localisation = [scenario for scenario in scenarios
+                    if scenario.source.name.startswith("localisation-")]
+    assert localisation, "the localisation scenarios must exist"
+    languages = {language for language in ("eng", "deu", "fre", "ita", "spa", "pol")}
+    for source in {scenario.source for scenario in localisation}:
+        expanded = [scenario for scenario in localisation if scenario.source == source]
+        assert {scenario.language for scenario in expanded} == languages
+        assert len(expanded) == len(languages)
+    assert all(scenario.tier == "ui" for scenario in localisation)
+
+
+def test_find_scenarios_resolves_a_language_matrix_by_base_name() -> None:
+    scenarios = find_scenarios("localisation-sitemap")
+    assert [scenario.language for scenario in scenarios] == [
+        "eng", "deu", "fre", "ita", "spa", "pol",
+    ]
+    with pytest.raises(ScenarioError) as error:
+        find_scenario("localisation-sitemap")
+    assert "expands into 6 scenarios" in str(error.value)
 
 
 # ---------------------------------------------------------------------------
@@ -182,6 +207,62 @@ def test_timeout_bounds(tmp_path: Path, value: int) -> None:
 def test_unknown_language_is_rejected(tmp_path: Path) -> None:
     with pytest.raises(ScenarioError):
         load_scenario(_write(tmp_path, _with(language="jpn")))
+
+
+def _matrix(**overrides):
+    document = _with(**overrides)
+    del document["language"]
+    document.setdefault("languages", ["eng", "deu"])
+    return document
+
+
+def test_language_matrix_expands_one_scenario_per_language(tmp_path: Path) -> None:
+    scenarios = load_scenarios(_write(tmp_path, _matrix()))
+    assert [scenario.name for scenario in scenarios] == [
+        "sample-scenario-eng",
+        "sample-scenario-deu",
+    ]
+    assert [scenario.language for scenario in scenarios] == ["eng", "deu"]
+    assert {scenario.base_name for scenario in scenarios} == {"sample-scenario"}
+    assert {scenario.source for scenario in scenarios} == {tmp_path / "scenario.yaml"}
+
+
+def test_language_matrix_substitutes_the_language_placeholder(tmp_path: Path) -> None:
+    document = _matrix(
+        steps=[
+            {"action": "launch"},
+            {"action": "wait_for_event", "event": "LANGUAGE", "fields": {"code": "${language}"}},
+        ]
+    )
+    scenarios = load_scenarios(_write(tmp_path, document))
+    codes = [scenario.steps[1].get("fields")["code"] for scenario in scenarios]
+    assert codes == ["eng", "deu"]
+
+
+def test_language_and_languages_are_mutually_exclusive(tmp_path: Path) -> None:
+    document = _with(languages=["eng"])
+    with pytest.raises(ScenarioError) as error:
+        load_scenario(_write(tmp_path, document))
+    assert "not both" in str(error.value)
+
+
+@pytest.mark.parametrize(
+    "languages,message",
+    [(["eng", "eng"], "repeats"), (["eng", "jpn"], "languages[1]")],
+)
+def test_language_matrix_rejects_bad_lists(
+    tmp_path: Path, languages: list, message: str
+) -> None:
+    document = _matrix(languages=languages)
+    with pytest.raises(ScenarioError) as error:
+        load_scenarios(_write(tmp_path, document))
+    assert message in str(error.value)
+
+
+def test_load_scenario_refuses_to_pick_a_matrix_language(tmp_path: Path) -> None:
+    with pytest.raises(ScenarioError) as error:
+        load_scenario(_write(tmp_path, _matrix()))
+    assert "defines 2 language(s)" in str(error.value)
 
 
 def test_fixture_must_be_a_name_not_a_path(tmp_path: Path) -> None:

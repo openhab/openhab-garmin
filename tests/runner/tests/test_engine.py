@@ -12,6 +12,7 @@ import json
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
+from e2e import engine
 from e2e.config import default_device_id, find_device
 from e2e.contract import FAIL, PASS, run_contract, summary
 from e2e.engine import run_scenario
@@ -93,6 +94,30 @@ def test_report_bundle_contains_the_result(tmp_path: Path) -> None:
 
     with zipfile.ZipFile(bundle) as archive:
         assert "result.json" in archive.namelist()
+
+
+def test_dry_run_passes_the_scenario_language_to_the_driver(
+    tmp_path: Path, monkeypatch
+) -> None:
+    seen = {}
+
+    class RecordingDriver(NullDriver):
+        def start(self, device, settings, mode="ble", language="eng") -> None:
+            seen["language"] = language
+            super().start(device, settings, mode=mode, language=language)
+
+    monkeypatch.setattr(engine, "create_driver", lambda *args, **kwargs: RecordingDriver())
+    scenario = find_scenario("extended/localisation-sitemap-deu")
+    result = run_scenario(
+        scenario,
+        find_device(default_device_id()),
+        openhab_url="http://openhab.invalid:8080",
+        shim_url="http://shim.invalid:8080",
+        artifacts_dir=tmp_path / "artifacts",
+        dry_run=True,
+    )
+    assert result.status == "passed", result.failures
+    assert seen["language"] == "deu"
 
 
 def test_null_driver_contract_passes(tmp_path: Path) -> None:

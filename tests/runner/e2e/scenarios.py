@@ -16,6 +16,7 @@ Top level (all required unless noted)::
     fixture         app settings fixture in tests/fixtures/app/settings/
     openhab         {profile: stable|dev, sitemap: <name>, items: {item: state}}
     language        eng | deu | fre | ita | spa | pol
+                    (or `languages: [...]` for a matrix, see below)
     timeout_s       whole-scenario budget, 1..1800
     steps           non-empty list, see ACTIONS below
 
@@ -25,6 +26,12 @@ Optional::
     shim            {rules: [...]} fault script, see tests/shim/faults.py
     notes           free-form operator note
 
+A scenario declares either one `language` or a `languages` list. The matrix
+form expands into one scenario per language, with ``-<language>`` appended to
+the scenario name, so artifacts and reports stay separate. Step parameters may
+use the ``${language}`` placeholder; it is replaced with the expanded language.
+That keeps a single file assertable against ``E2E:LANGUAGE;code=<language>``.
+
 Steps are validated by the per-action functions below. Each returns canonical
 parameters, so the engine never re-parses YAML shapes.
 """
@@ -32,7 +39,7 @@ parameters, so the engine never re-parses YAML shapes.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
@@ -120,6 +127,51 @@ def _match_text(value: Any, where: str) -> str:
     if not text:
         raise ScenarioError(f"{where}: must not be empty")
     return text
+
+
+LANGUAGE_PLACEHOLDER = "${language}"
+
+
+def _languages(mapping: Mapping[str, Any], where: str) -> Tuple[Tuple[str, ...], bool]:
+    """Return ``(languages, from_matrix)`` for the scenario document.
+
+    Exactly one of ``language`` (one run) and ``languages`` (a matrix) is
+    allowed. A matrix always appends the language to the scenario name, so a
+    one-element matrix is still distinct from a plain ``language``.
+    """
+    if "language" in mapping and "languages" in mapping:
+        raise ScenarioError(f"{where}: set either 'language' or 'languages', not both")
+    if "languages" not in mapping:
+        return (
+            (_enum(mapping["language"], f"{where}: language", LANGUAGES),),
+            False,
+        )
+    raw = mapping["languages"]
+    if isinstance(raw, (str, bytes)) or not isinstance(raw, list) or not raw:
+        raise ScenarioError(f"{where}: 'languages' must be a non-empty list")
+    languages: List[str] = []
+    for index, value in enumerate(raw):
+        language = _enum(value, f"{where}: languages[{index}]", LANGUAGES)
+        if language in languages:
+            raise ScenarioError(f"{where}: languages[{index}] repeats {language!r}")
+        languages.append(language)
+    return tuple(languages), True
+
+
+def _substitute_language(value: Any, language: str) -> Any:
+    """Replace ``${language}`` in canonical step parameters."""
+    if isinstance(value, str):
+        return value.replace(LANGUAGE_PLACEHOLDER, language)
+    if isinstance(value, Mapping):
+        return {
+            _substitute_language(key, language): _substitute_language(item, language)
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [_substitute_language(item, language) for item in value]
+    if isinstance(value, tuple):
+        return tuple(_substitute_language(item, language) for item in value)
+    return value
 
 
 # ---------------------------------------------------------------------------
@@ -427,6 +479,7 @@ class Scenario:
     """A validated scenario."""
 
     name: str
+    base_name: str
     description: str
     tier: str
     suite: str
@@ -503,8 +556,8 @@ def _parse_settings(raw: Any, where: str) -> Dict[str, Any]:
     return dict(mapping)
 
 
-def load_scenario(path: Path, known_devices: Optional[Sequence[str]] = None) -> Scenario:
-    """Load and validate a single scenario file."""
+def load_scenarios(path: Path, known_devices: Optional[Sequence[str]] = None) -> List[Scenario]:
+    """Load and validate one scenario file into one scenario per language."""
     if not path.is_file():
         raise ScenarioError(f"scenario not found: {path}")
     try:
@@ -516,14 +569,19 @@ def load_scenario(path: Path, known_devices: Optional[Sequence[str]] = None) -> 
     _reject_unknown(
         mapping,
         {"name", "description", "tier", "suite", "device", "mode", "fixture",
-         "openhab", "language", "timeout_s", "steps", "settings", "shim", "notes"},
+         "openhab", "language", "languages", "timeout_s", "steps", "settings",
+         "shim", "notes"},
         str(path),
     )
 
     for key in ("name", "description", "tier", "suite", "device", "mode", "fixture",
-                "openhab", "language", "timeout_s", "steps"):
+                "openhab", "timeout_s", "steps"):
         if key not in mapping:
             raise ScenarioError(f"{path}: missing required key {key!r}")
+    if "language" not in mapping and "languages" not in mapping:
+        raise ScenarioError(f"{path}: missing required key 'language' (or 'languages')")
+
+    languages, from_matrix = _languages(mapping, str(path))
 
     name = _match_text(mapping["name"], f"{path}: name")
     if not _SLUG.match(name):
@@ -562,8 +620,9 @@ def load_scenario(path: Path, known_devices: Optional[Sequence[str]] = None) -> 
             raise ScenarioError(f"{path}: shim.rules: {error}") from None
         rules = tuple(raw_rules)
 
-    scenario = Scenario(
+    base = Scenario(
         name=name,
+        base_name=name,
         description=_string(mapping["description"], f"{path}: description"),
         tier=_enum(mapping["tier"], f"{path}: tier", TIERS),
         suite=suite,
@@ -571,7 +630,7 @@ def load_scenario(path: Path, known_devices: Optional[Sequence[str]] = None) -> 
         mode=_enum(mapping["mode"], f"{path}: mode", MODES),
         fixture=fixture,
         openhab=_parse_openhab(mapping["openhab"], f"{path}: openhab"),
-        language=_enum(mapping["language"], f"{path}: language", LANGUAGES),
+        language=languages[0],
         timeout_s=_int(mapping["timeout_s"], f"{path}: timeout_s", 1, 1800),
         steps=parse_steps(mapping["steps"], f"{path}: steps"),
         source=path,
@@ -581,7 +640,36 @@ def load_scenario(path: Path, known_devices: Optional[Sequence[str]] = None) -> 
         notes=("" if "notes" not in mapping
                else _string(mapping["notes"], f"{path}: notes")),
     )
-    return scenario
+
+    if not from_matrix:
+        return [base]
+
+    scenarios: List[Scenario] = []
+    for language in languages:
+        steps = tuple(
+            replace(step, params=_substitute_language(step.params, language))
+            for step in base.steps
+        )
+        scenarios.append(
+            replace(base, name=f"{name}-{language}", language=language, steps=steps)
+        )
+    return scenarios
+
+
+def load_scenario(path: Path, known_devices: Optional[Sequence[str]] = None) -> Scenario:
+    """Load one language of a scenario file.
+
+    A language matrix expands into several scenarios; use
+    :func:`load_scenarios` for those, or resolve one expanded id with
+    :func:`find_scenario`.
+    """
+    scenarios = load_scenarios(path, known_devices=known_devices)
+    if len(scenarios) != 1:
+        ids = ", ".join(scenario.scenario_id for scenario in scenarios)
+        raise ScenarioError(
+            f"{path}: defines {len(scenarios)} language(s); use find_scenario with one of: {ids}"
+        )
+    return scenarios[0]
 
 
 def discover_scenarios(
@@ -601,7 +689,7 @@ def discover_scenarios(
         if not suite_dir.is_dir():
             continue
         for path in sorted(suite_dir.glob("*.yaml")):
-            scenarios.append(load_scenario(path))
+            scenarios.extend(load_scenarios(path))
 
     seen: Dict[str, Path] = {}
     for scenario in scenarios:
@@ -614,20 +702,36 @@ def discover_scenarios(
     return scenarios
 
 
-def find_scenario(identifier: str, directory: Path = SCENARIO_DIR) -> Scenario:
-    """Resolve ``suite/name``, ``name`` or a path to a scenario."""
+def find_scenarios(identifier: str, directory: Path = SCENARIO_DIR) -> List[Scenario]:
+    """Resolve a scenario id, base name or path to every expanded language."""
     candidate = Path(identifier)
     if candidate.suffix == ".yaml" and candidate.is_file():
-        return load_scenario(candidate)
-    if "/" in identifier:
-        suite_name, _, name = identifier.partition("/")
-        path = directory / suite_name / f"{name}.yaml"
-        if path.is_file():
-            return load_scenario(path)
-    else:
-        for suite_name in SUITES:
-            path = directory / suite_name / f"{identifier}.yaml"
-            if path.is_file():
-                return load_scenario(path)
-    known = ", ".join(scenario.scenario_id for scenario in discover_scenarios(directory=directory))
+        return load_scenarios(candidate)
+
+    scenarios = discover_scenarios(directory=directory)
+    matches = [
+        scenario for scenario in scenarios
+        if identifier in (scenario.scenario_id, scenario.name)
+    ]
+    if not matches:
+        # A base name selects the whole matrix, e.g. `localisation-sitemap`.
+        matches = [
+            scenario for scenario in scenarios
+            if identifier in (scenario.base_name, f"{scenario.suite}/{scenario.base_name}")
+        ]
+    if matches:
+        return matches
+
+    known = ", ".join(scenario.scenario_id for scenario in scenarios)
     raise ScenarioError(f"unknown scenario {identifier!r}; known: {known}")
+
+
+def find_scenario(identifier: str, directory: Path = SCENARIO_DIR) -> Scenario:
+    """Resolve ``suite/name``, ``name`` or a path to exactly one scenario."""
+    scenarios = find_scenarios(identifier, directory=directory)
+    if len(scenarios) != 1:
+        ids = ", ".join(scenario.scenario_id for scenario in scenarios)
+        raise ScenarioError(
+            f"{identifier!r} expands into {len(scenarios)} scenarios; choose one of: {ids}"
+        )
+    return scenarios[0]

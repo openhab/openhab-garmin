@@ -1,0 +1,60 @@
+# Extended: an error message with a long dynamic value.
+#
+# The two longest shipped strings do not interpolate a long server value:
+# `ErrorConfigUrlMissing` is static and `ErrorOutOfMemory` only inserts two
+# memory figures. To exercise wrapping with a long dynamic value, this
+# The app builds the children of every top-level frame asynchronously after
+# launch, so a sitemap whose only element is an unsupported `Default` on a
+# `Color` item reliably reaches the full-screen error without any navigation.
+# The element's long label is formatted into `ErrorElementNotSupported`; it also
+# contains German umlauts and ß, so the dynamic value itself is a glyph check in
+# every language run.
+#
+# This uses a dedicated sitemap so the always-failing element cannot break the
+# normal localisation scenarios. ERRORVIEW existence is machine-asserted; the
+# expected id is `S:JSON` (the debug mapping for JsonParsingException); the text
+# is review-only.
+
+name: localisation-error-long-value
+description: A long dynamic value wraps correctly in the full-screen error view.
+tier: ui
+suite: extended
+device: edge540
+mode: ble
+fixture: fast-polling
+openhab:
+  profile: stable
+  sitemap: garmin_localisation_long
+  items:
+    E2E_ColorLight: "0,0,100"
+languages: [eng, deu, fre, ita, spa, pol]
+timeout_s: 150
+
+settings:
+  sitemap_0: garmin_localisation_long
+
+steps:
+  - action: launch
+
+  - action: wait_for_event
+    event: LANGUAGE
+    fields:
+      code: "${language}"
+    timeout_ms: 30000
+
+  - action: wait_for_request
+    method: GET
+    path_prefix: /rest/sitemaps/garmin_localisation_long
+    min_count: 1
+    timeout_ms: 30000
+
+  - action: wait_for_event
+    description: The unsupported element shows a full-screen error with the long label.
+    event: ERRORVIEW
+    timeout_ms: 30000
+
+  - action: screenshot
+    name: error-long-value
+
+  - action: assert
+    no_error_view: false

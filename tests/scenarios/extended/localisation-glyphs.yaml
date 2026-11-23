@@ -1,0 +1,97 @@
+# Extended: glyph coverage for the accented characters shipped in the app.
+#
+# The translated runtime strings use these non-ASCII characters:
+#
+#   deu  Ö ß ä ö ü        fre  À É à è é ê        ita  à è
+#   spa  Ú á é í ñ ó      pol  Ł ą ć ę ł ń ó ś ź ż
+#
+# This scenario visits the screens that contain them without an error path:
+# the homepage connection indicator (`ConnectionModePhoneBle`), the empty-page
+# toast (`EmptyPage`), and the Player view (`PlayerPlay`/`PlayerPause`/
+# `PlayerNext`/`PlayerPrevious`). The settings and error glyph surfaces are
+# captured by the settings and error scenarios.
+#
+# IMPORTANT: screenshot text is NOT machine-asserted. The harness has no OCR or
+# region-hash assertion, so the PNGs are declared as review artifacts. See
+# tests/docs/localisation.md for the review procedure and the exact characters
+# to look for.
+
+name: localisation-glyphs
+description: Screens with accented translated strings are captured for glyph review.
+tier: ui
+suite: extended
+device: edge540
+mode: ble
+fixture: fast-polling
+openhab:
+  profile: stable
+  sitemap: garmin_localisation
+  items:
+    E2E_Toggle: "OFF"
+    E2E_MediaControl: "PLAY"
+    E2E_Temperature: "21.5"
+languages: [eng, deu, fre, ita, spa, pol]
+timeout_s: 150
+
+settings:
+  sitemap_0: garmin_localisation
+
+steps:
+  - action: launch
+
+  - action: wait_for_event
+    event: LANGUAGE
+    fields:
+      code: "${language}"
+    timeout_ms: 30000
+
+  - action: wait_for_event
+    event: VIEW
+    fields:
+      category: sitemap
+      view: HomepageMenu
+    timeout_ms: 60000
+
+  # Connection indicator: Téléphone / Teléfono / Telefon, plus the localised
+  # Settings entry, on one screen.
+  - action: screenshot
+    name: glyphs-homepage
+
+  # Empty is the fourth frame (index 3). Selecting it shows the localised
+  # EmptyPage toast and keeps the homepage visible.
+  - action: press
+    button: DOWN
+    count: 3
+
+  - action: press
+    button: ENTER
+
+  - action: wait_for_event
+    description: The empty-page info toast is shown.
+    event: TOAST
+    timeout_ms: 15000
+
+  - action: screenshot
+    name: glyphs-empty-page
+
+  # Player is index 1; two UP presses from Empty reach it.
+  - action: press
+    button: UP
+    count: 2
+
+  - action: press
+    button: ENTER
+
+  - action: wait_for_event
+    description: The Player view renders the localised input hints.
+    event: VIEW
+    fields:
+      category: sitemap
+      view: PlayerView
+    timeout_ms: 30000
+
+  - action: screenshot
+    name: glyphs-player
+
+  - action: assert
+    no_error_view: true

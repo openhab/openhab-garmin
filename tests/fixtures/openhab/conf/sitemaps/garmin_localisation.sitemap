@@ -1,0 +1,39 @@
+// Localisation fixture for the E2E harness.
+//
+// The localisation scenarios need a small, stable menu so the number of DOWN
+// presses does not depend on the full `garmin_e2e` sitemap. The homepage is:
+//
+//   0 Switches     1 Player     2 Nested     3 Empty
+//
+// plus the Settings entry that the app appends itself.
+//
+// This sitemap deliberately contains no element that can fail: the app builds
+// the children of every top-level frame asynchronously after startup, so an
+// unsupported element here would put all normal localisation scenarios into the
+// error view. The long-dynamic-value error lives in
+// `garmin_localisation_long.sitemap` instead.
+//
+// Every item referenced here is defined in `garmin_e2e.items`; the localisation
+// scenarios seed their states over REST like any other scenario.
+
+sitemap garmin_localisation label="Localisation" {
+
+	Frame label="Switches" {
+		Switch item=E2E_Toggle label="Toggle Switch"
+		Switch item=E2E_Light label="Switch 1"
+		Switch item=E2E_GarageDoor label="Garage Door" mappings=[ON="OPEN"]
+	}
+
+	Frame label="Player" {
+		Switch item=E2E_MediaControl label="Audio"
+	}
+
+	Frame label="Nested" {
+		Text item=E2E_Temperature label="Nested page" {
+			Text item=E2E_Temperature label="Nested text"
+		}
+	}
+
+	Frame label="Empty" {
+	}
+}

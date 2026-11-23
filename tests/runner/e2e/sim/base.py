@@ -64,13 +64,21 @@ class SimulatorDriver(abc.ABC):
         """Make the compiled PRG available to the simulator."""
 
     @abc.abstractmethod
-    def start(self, device: Device, settings: AppSettings, mode: str = "ble") -> None:
+    def start(
+        self,
+        device: Device,
+        settings: AppSettings,
+        mode: str = "ble",
+        language: str = "eng",
+    ) -> None:
         """Start the simulator, push the PRG and launch the app.
 
         ``mode`` is the communication mode to initialise the simulator with
         (``ble``, ``wifi`` or ``offline``); where a simulator cannot be
         scripted into that state, the driver must raise rather than silently
-        running in a different mode.
+        running in a different mode. ``language`` is the Connect IQ system
+        language (``eng``, ``deu``, ...); the driver must select it before
+        launch and must not silently fall back to the simulator's default.
         """
 
     @abc.abstractmethod

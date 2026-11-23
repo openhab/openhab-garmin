@@ -276,7 +276,12 @@ class ScenarioRunner:
 
     # -- actions ----------------------------------------------------------
     def _do_launch(self, step: Step, context: _Context) -> Tuple[str, str, List[str]]:
-        context.driver.start(context.device, context.settings, mode=self.scenario.mode)
+        context.driver.start(
+            context.device,
+            context.settings,
+            mode=self.scenario.mode,
+            language=self.scenario.language,
+        )
         if step.get("wait_ready", True):
             context.driver.wait_ready(min(60.0, context.remaining()))
         return PASSED, f"device={context.device.id} mode={self.scenario.mode}", []

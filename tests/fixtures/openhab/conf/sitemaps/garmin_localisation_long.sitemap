@@ -1,0 +1,17 @@
+// Long-dynamic-value error fixture for the E2E harness.
+//
+// `Default` on a `Color` item has no supported widget. The app formats the
+// element's label into `ErrorElementNotSupported` and shows the full-screen
+// error view; the label is deliberately long, and contains German umlauts and
+// ß, so the dynamic value itself exercises wrapping and glyph rendering.
+//
+// Kept apart from `garmin_localisation.sitemap` because the app builds the
+// children of every top-level frame asynchronously after startup: an element
+// that always errors would put every normal localisation scenario into the
+// error view.
+
+sitemap garmin_localisation_long label="Long value" {
+	Frame label="Long value" {
+		Default item=E2E_ColorLight label="Ein außergewöhnlich langer Elementname, der die Fehlermeldung über mehrere Zeilen umbrechen muss, damit die Darstellung geprüft werden kann"
+	}
+}

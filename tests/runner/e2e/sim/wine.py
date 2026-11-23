@@ -97,9 +97,18 @@ class WineSimulatorDriver(SimulatorDriver):
             self._todo("prepare", "create a throwaway WINEPREFIX and stage the PRG")
         )
 
-    def start(self, device: Device, settings: AppSettings, mode: str = "ble") -> None:
+    def start(
+        self,
+        device: Device,
+        settings: AppSettings,
+        mode: str = "ble",
+        language: str = "eng",
+    ) -> None:
         raise NotImplementedError(
-            self._todo("start", "write simulator.ini and launch into the requested mode")
+            self._todo(
+                "start",
+                "write simulator.ini for the requested device, mode and language, then launch",
+            )
         )
 
     def wait_ready(self, timeout_s: float) -> None:

@@ -46,7 +46,7 @@ from .engine import run_scenario
 from .openhab import OpenHabClient, OpenHabError
 from .paths import tests_root
 from .reporting import Report
-from .scenarios import Scenario, ScenarioError, discover_scenarios, find_scenario
+from .scenarios import Scenario, ScenarioError, discover_scenarios, find_scenarios
 from .sdk import SdkError, describe_candidates, load_layout
 from .settings import SettingsError
 from .shim import ShimClient, ShimError
@@ -217,7 +217,10 @@ def _select_scenarios(args: argparse.Namespace) -> List[Scenario]:
     if args.all:
         return discover_scenarios()
     if args.scenarios:
-        return [find_scenario(identifier) for identifier in args.scenarios]
+        selected: List[Scenario] = []
+        for identifier in args.scenarios:
+            selected.extend(find_scenarios(identifier))
+        return selected
     raise ScenarioError(
         "nothing to run: pass one or more scenario names, --suite or --all"
     )
