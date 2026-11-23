@@ -34,6 +34,7 @@ This directory is the foundation tracked by
 | Wine simulator driver | contract fixed, implementation skeleton only (see [docs/simulator-driver.md](docs/simulator-driver.md)) |
 | Wine feasibility spike | ready to run on an approved Linux host with Docker and the SDK (see [spike/README.md](spike/README.md), issue [#370](https://github.com/openhab/openhab-garmin/issues/370)) |
 | #140 scope coverage map | checked in as `config/scope.yaml` and `docs/coverage.md`; enforced by `python -m e2e coverage --check` |
+| Stack health in every run | complete: restart counts, working set and OOM evidence are classified as `valid`/`invalid`/`unknown`; see [docs/diagnostics.md](docs/diagnostics.md) |
 
 Nothing here provisions a VM, changes infrastructure, or ships the Connect IQ SDK.
 
@@ -120,7 +121,7 @@ those steps as **skipped**. It never reports them as passed.
 | Command | Purpose |
 | --- | --- |
 | `setup` | validate Compose, SDK, openHAB readiness and that the fixture sitemap resolves |
-| `run` | run scenario names, `--suite`, or `--all`; writes JSON, JUnit XML and Markdown |
+| `run` | run scenario names, `--suite`, or `--all`; writes JSON, JUnit XML, Markdown and the stack-health artifact |
 | `reset` | clear the shim's script and request trace (optionally reset item states) |
 | `status` | health of every component, plus pin problems |
 | `list-scenarios` | what `run --all` would execute |
@@ -131,10 +132,12 @@ those steps as **skipped**. It never reports them as passed.
 | `network-env` | render or verify the generated loopback network block in `compose/.env.example` |
 | `pin-images` | write or verify image digests (`--refresh` re-resolves from Docker Hub) |
 | `sdk-check` | validate the mounted SDK without starting anything |
+| `health-snapshot` | record the stack's restart counts and memory before/after a run; `--phase after --artifacts` classifies the finished run |
 | `build` | compile the PRG for one or more devices with the Linux `monkeyc` |
 
 Exit codes: `0` success, `1` scenario failures, `2` configuration or environment
-error.
+error, `3` invalid environment (a container restarted or was killed during the
+run, so the results are not attributable to the app).
 
 `run` flags worth knowing:
 
@@ -144,6 +147,42 @@ error.
   screenshots before committing them.
 - `--skip-events` skips trace-event assertions (for builds without `(:debug)`).
 - `--prg <file>` reuses a build instead of compiling.
+
+## Stack health
+
+Every run classifies the environment alongside the assertions, because a
+scenario that fails on a stack which restarted underneath it says nothing about
+the app. The block is in `report.json`, `health.json`, `junit.xml` (a zero-test
+`environment` testsuite) and the `## Environment health` section of
+`summary.md`, and a failed scenario's bundle carries it as `environment.json`.
+
+| Verdict | Meaning | Exit code |
+| --- | --- | --- |
+| `valid` | no container restarted, was recreated, was killed or stopped during the run window | `0`, `1` on scenario failures |
+| `invalid` | the stack changed during the window; the environment, not the app, is suspect | `3` |
+| `unknown` | the window was not measured (dry run, or the runner has no Docker access) | `0`, `1` on scenario failures |
+
+An invalid run is not converted into a scenario failure, and no heuristic
+promotes a suspicious-looking environment (a pre-existing restart count, an
+unhealthy healthcheck, no memory limit) into a defect. The signals, the exact
+Docker commands, the classification rules and the triage procedure are in
+[docs/diagnostics.md](docs/diagnostics.md).
+
+The runner container has no Docker socket, so a run executed inside the stack
+records `unknown` and the window is captured on the host instead:
+
+```bash
+cd tests/runner
+python -m e2e health-snapshot --phase before --output health-window.json
+docker compose -f ../compose/compose.yaml exec runner python -m e2e run --all
+docker compose -f ../compose/compose.yaml cp runner:/work/artifacts ./artifacts
+python -m e2e health-snapshot --phase after \
+  --output health-window.json --artifacts ./artifacts
+```
+
+The last command re-renders the run's artifacts with the real verdict and exits
+`3` when the run is invalid. Where Docker is reachable (a checkout on a Docker
+host), `python -m e2e run` records the window directly.
 
 ## Wine spike (#370)
 
@@ -388,6 +427,22 @@ CIQ_SDK_ROOT=<synthetic tree> python -m e2e contract-test --driver wine
 # reports what is missing instead of pretending to run
 ```
 
+### Stack health (#383)
+
+The health classification was validated on the same workstation with no Docker
+daemon, which is the constraint it was written for:
+
+```bash
+cd tests/runner
+python -m pytest -q                     # 436 passed, including tests/test_health.py
+python -m e2e run --all --dry-run       # 81 scenarios; every report has an unknown environment block
+python -m e2e coverage --check          # unchanged
+```
+
+`tests/test_health.py` parses recorded `docker inspect` and `docker stats` output
+from `tests/fixtures/health/`, drives the probe's command plan with a scripted
+runner, and asserts each verdict and its rendering. No test starts a container.
+
 ### Not executed (no Docker daemon or SDK on the workstation)
 
 - `docker compose config` and `docker compose build`.
@@ -479,10 +534,13 @@ manual counterpart to `tests/runner/tests/test_compose.py` and
 | `the generated network block has drifted` | run `python -m e2e network-env --write` after editing `config/network.yaml` |
 | `unknown flag: reset` / `!reset` parse error | Docker Compose is older than 2.24; upgrade it or use the bridge profile |
 | Nothing is reachable from another machine | by design: ports are loopback-only, put a reverse proxy in front |
+| `environment: unknown` in a run report | the runner has no Docker socket, or the run was a dry run; capture the window on the host, see [docs/diagnostics.md](docs/diagnostics.md) |
+| Exit code 3 from `run` or `health-snapshot` | the stack changed during the run: the environment is suspect, re-run before filing an app defect |
 
 ## Further reading
 
 - [docs/architecture.md](docs/architecture.md) – components, data flow, assertion layers
+- [docs/diagnostics.md](docs/diagnostics.md) – stack health: restart counts, working set, OOM evidence and run triage
 - [docs/devices.md](docs/devices.md) – build-variant dimensions, the device matrix and its coverage check
 - [docs/scenarios.md](docs/scenarios.md) – scenario schema, language matrix, trace events and `covers`
 - [docs/coverage.md](docs/coverage.md) – generated #140 scope-to-scenario matrix with waivers and manual checks

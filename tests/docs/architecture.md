@@ -103,6 +103,25 @@ the screenshot tells you _how it looked_. Screenshots alone are advisory.
 - **Scenario budget** (`timeout_s`) – checked before each step, so a hung simulator
   or a scripted multi-second delay cannot stall a suite indefinitely.
 
+## Environment health
+
+A failure only means something if the stack did not change underneath it, so
+every run snapshots the containers before and after the scenarios and records
+the restart counts, state, health status, memory limit, current and peak working
+set, cgroup `oom_kill` counter and any kernel OOM lines in `report.json`,
+`health.json`, `junit.xml` and `summary.md`.
+
+| Verdict | Cause | Exit code |
+| --- | --- | --- |
+| `valid` | no container restarted, was recreated, was killed or stopped during the window | `0`, `1` on scenario failures |
+| `invalid` | the stack changed during the window, so the results are not attributable to the app | `3` |
+| `unknown` | the window was not measured (dry run, or the runner has no Docker access) | `0`, `1` on scenario failures |
+
+An `invalid` run is never converted into a scenario failure and no heuristic
+turns a suspicious-looking environment into a defect. The rules, the exact
+Docker commands and the triage procedure are in
+[docs/diagnostics.md](diagnostics.md).
+
 ## Portability boundary
 
 This directory is the complete test unit. Everything environment-specific belongs

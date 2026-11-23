@@ -1,0 +1,6 @@
+[Mon Nov 23 14:41:07 2026] audit: type=1400 audit(1763912467.201:812): apparmor="STATUS" operation="profile_load" profile="unconfined" name="docker-default" pid=721 comm="apparmor_parser"
+[Mon Nov 23 15:02:11 2026] Memory cgroup out of memory: Killed process 8123 (java) total-vm:4821324kB, anon-rss:498112kB, file-rss:20480kB, shmem-rss:0kB, UID:0 pgtables:1024kB oom_score_adj:0
+[Mon Nov 23 15:02:11 2026] oom-kill:constraint=CONSTRAINT_MEMCG,nodemask=(null),cpuset=/,mems_allowed=0,oom_memcg=/system.slice/docker-3f2a9c1d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b.scope,task_memcg=/,task=java,pid=8123,uid=0
+[Mon Nov 23 15:02:12 2026] eth0: renamed from veth1a2b3c4
+[Mon Nov 23 16:02:10 2026] Memory cgroup out of memory: Killed process 9177 (java) total-vm:4912044kB, anon-rss:507336kB, file-rss:20480kB, shmem-rss:0kB, UID:0 pgtables:1024kB oom_score_adj:0
+[Mon Nov 23 16:02:10 2026] oom-kill:constraint=CONSTRAINT_MEMCG,nodemask=(null),cpuset=/,mems_allowed=0,oom_memcg=/system.slice/docker-3f2a9c1d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b.scope,task_memcg=/,task=java,pid=9177,uid=0
