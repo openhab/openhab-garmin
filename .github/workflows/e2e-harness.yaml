@@ -72,3 +72,9 @@ jobs:
       # A schema error in any checked-in scenario fails the pull request here.
       - name: Run scenarios in dry-run mode
         run: python -m e2e run --all --dry-run
+
+      # Reads YAML only: fails when a #140 scope id has neither a scenario nor
+      # a waiver, when a scenario names an unknown scope id, or when the
+      # checked-in tests/docs/coverage.md is stale.
+      - name: Check scope coverage
+        run: python -m e2e coverage --check

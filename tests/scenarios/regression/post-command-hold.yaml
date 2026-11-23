@@ -1,0 +1,91 @@
+# Regression: post-command hold time.
+#
+# `postCommandHoldTime_0` is 2 s in the `default` fixture (docs/USAGE.md,
+# "App Settings"). The stale-response flip-back it prevents is a rendering
+# behaviour: no trace field carries the item state that is shown, so this
+# scenario proves the command is sent once and polling continues, and the
+# visual hold is an explicit manual check.
+#
+# `fast-polling` deliberately sets the hold time to 0 for command scenarios
+# that need the server state immediately; this scenario must not use it.
+
+name: post-command-hold
+description: A command is sent once and the 2 s hold window does not disturb polling.
+tier: ui
+suite: regression
+device: fenix7
+mode: ble
+fixture: default
+openhab:
+  profile: stable
+  sitemap: garmin_e2e
+  items:
+    E2E_Toggle: "OFF"
+language: eng
+timeout_s: 120
+
+covers:
+  - commands.hold-time
+  - commands.types
+  - sitemap.parameters-controls
+manual_checks:
+  - >-
+    The switch must not visibly flip back to OFF during the 2 s hold window.
+    No trace field carries item state, so compare the `after-command` and
+    `after-hold` screenshots (or add a reviewed golden) by hand.
+  - >-
+    The `0` disables it path is covered by the fast-polling command scenarios;
+    this scenario proves only the non-zero hold.
+
+steps:
+  - action: launch
+
+  - action: wait_for_request
+    method: GET
+    path_prefix: /rest/sitemaps/garmin_e2e
+    min_count: 1
+    timeout_ms: 30000
+
+  - action: reset_shim
+
+  # Widgets frame -> Toggle Switch.
+  - action: press
+    button: DOWN
+  - action: press
+    button: ENTER
+
+  - action: wait_for_request
+    method: POST
+    path_prefix: /rest/items/E2E_Toggle
+    min_count: 1
+    timeout_ms: 15000
+
+  - action: assert
+    description: Exactly one command is sent while the item is held.
+    shim_requests:
+      method: POST
+      path_prefix: /rest/items/E2E_Toggle
+      min_count: 1
+      max_count: 1
+      body_equals: "ON"
+      status: 200
+
+  - action: screenshot
+    name: after-command
+
+  # Longer than the 2 s hold and the 1 s poll interval.
+  - action: wait
+    ms: 2500
+
+  - action: screenshot
+    name: after-hold
+
+  - action: assert
+    description: Polling continues during and after the hold window.
+    shim_requests:
+      method: GET
+      path_prefix: /rest/sitemaps/garmin_e2e
+      min_count: 2
+
+  - action: assert
+    no_error_view: true

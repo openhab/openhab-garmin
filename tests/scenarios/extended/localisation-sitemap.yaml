@@ -28,6 +28,18 @@ openhab:
 languages: [eng, deu, fre, ita, spa, pol]
 timeout_s: 150
 
+covers:
+  - localisation.languages
+  - localisation.strings
+  - localisation.system-language
+  - localisation.layout
+  - lifecycle.device-matrix-and-strings
+manual_checks:
+  - >-
+    Rendered text is reviewed in screenshots; the harness has no OCR or text
+    assertion. This covers the screens the scenario visits, not a
+    string-by-string inventory, and glance/widget strings are not visited.
+
 settings:
   sitemap_0: garmin_localisation
 

@@ -19,6 +19,15 @@ openhab:
 language: eng
 timeout_s: 120
 
+covers:
+  - communication.modes-start
+  - communication.command-semantics
+  - limits.caching
+manual_checks:
+  - >-
+    The Wi-Fi toggle-choice and releaseOnly command semantics are not
+    exercised; only the offline no-command path is.
+
 steps:
   - action: launch
 

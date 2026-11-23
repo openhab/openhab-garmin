@@ -22,6 +22,16 @@ openhab:
 languages: [eng, deu, fre, ita, spa, pol]
 timeout_s: 120
 
+covers:
+  - localisation.languages
+  - localisation.strings
+  - localisation.system-language
+  - localisation.layout
+manual_checks:
+  - >-
+    The toast text is reviewed in screenshots; the harness asserts that a toast
+    appeared, not what it says.
+
 settings:
   sitemap_0: garmin_localisation
 

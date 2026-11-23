@@ -1,0 +1,99 @@
+# Extended: temporary-to-critical escalation.
+#
+# A sitemap polling error is temporary first and escalates to the full-screen
+# critical view only when it persists for more than 10 s (docs/USAGE.md,
+# "How the App Handles Errors"). The shim fails 60 polls at the 250 ms
+# fast-polling interval, so the window is long enough to cross the threshold,
+# and then proxies again so the app must recover by itself.
+#
+# The scenario asserts the ordering (temporary, then critical, then recovery);
+# it does not measure the exact 10 s boundary, see manual_checks.
+
+name: escalation-window
+description: A persistent polling failure escalates to critical, then a valid poll arrives.
+tier: ui
+suite: extended
+device: fenix7
+mode: ble
+fixture: fast-polling
+openhab:
+  profile: stable
+  sitemap: garmin_e2e
+  items:
+    E2E_Temperature: "20.0"
+language: eng
+timeout_s: 180
+
+covers:
+  - errors.escalation
+  - errors.critical
+  - errors.recovery
+manual_checks:
+  - >-
+    The documented "more than 10 seconds" boundary is not measured; the
+    scenario proves only that a persistent failure reaches critical after the
+    initial temporary phase.
+  - >-
+    The error view clearing is visual: there is no trace event for dismissing
+    it, so review the `recovered` screenshot. The trace assertions prove that
+    polling continued and a 200 arrived.
+
+shim:
+  rules:
+    - name: outage
+      match:
+        method: GET
+        path_prefix: /rest/sitemaps/garmin_e2e
+      times: 60
+      response:
+        status: 503
+        body: Service Unavailable
+
+steps:
+  - action: launch
+
+  # The first failures are temporary, not critical.
+  - action: wait_for_event
+    description: The first failed polls are temporary.
+    event: ERROR
+    fields:
+      kind: temporary
+    timeout_ms: 30000
+
+  - action: screenshot
+    name: temporary-toast
+
+  - action: wait_for_event
+    description: Continuous failure escalates to the critical error view.
+    event: ERROR
+    fields:
+      kind: critical
+    timeout_ms: 90000
+
+  - action: wait_for_event
+    event: ERRORVIEW
+    timeout_ms: 30000
+
+  - action: screenshot
+    name: critical-view
+
+  # The rule runs out after 60 failures; the app must recover on its own.
+  - action: wait_for_request
+    method: GET
+    path_prefix: /rest/sitemaps/garmin_e2e
+    min_count: 65
+    timeout_ms: 120000
+
+  - action: assert
+    description: A later poll is served from openHAB with 200.
+    shim_requests:
+      method: GET
+      path_prefix: /rest/sitemaps/garmin_e2e
+      min_count: 1
+      status: 200
+
+  - action: wait
+    ms: 1500
+
+  - action: screenshot
+    name: recovered

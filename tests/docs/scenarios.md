@@ -24,6 +24,10 @@ language: eng                  # eng | deu | fre | ita | spa | pol
                                # or: languages: [eng, deu, fre, ita, spa, pol]
 timeout_s: 90                  # whole-scenario budget, 1..1800
 steps: [...]                   # non-empty; the first step must be `launch`
+covers:                        # optional; #140 scope ids, see Scope coverage below
+  - sitemap.element-types
+manual_checks:                 # optional; exercised but not machine-asserted
+  - The rendered text is review-only.
 
 # optional
 settings:                      # merged onto the fixture, validated against settings.xml
@@ -69,6 +73,55 @@ simulator really started in the requested language instead of silently falling
 back to the default. The engine passes the scenario language to
 `SimulatorDriver.start(device, settings, mode, language)`; a driver that cannot
 select it must raise rather than run in a different language.
+
+## Scope coverage
+
+`tests/config/scope.yaml` is the machine-readable form of the issue #140
+regression scope. Each bullet has a stable id; a scenario declares the ids it
+covers:
+
+```yaml
+covers:
+  - errors.critical
+  - errors.recovery
+```
+
+`covers` is optional, but every checked-in scenario declares at least one entry.
+The loader rejects an unknown id, a duplicate and an empty list, so a typo fails
+at load time instead of silently leaving a scope bullet unproven. The id is
+validated against the same file the coverage report uses, not against a copy.
+
+Use `manual_checks` for something the scenario exercises but cannot assert
+today, for example a screenshot-only rendering check:
+
+```yaml
+manual_checks:
+  - The switch must not flip back during the hold window; compare the screenshots.
+```
+
+The coverage report shows those checks next to the scope entry, so a scenario
+cannot quietly claim more than it asserts.
+
+`tests/docs/coverage.md` is generated from the scope file, the `covers` keys and
+`tests/config/devices.yaml`. It lists, per scope id, the scenarios with their
+tier and device, or an explicit waiver with a reason. Regenerate and verify it
+with:
+
+```bash
+cd tests/runner
+python -m e2e coverage --write    # rewrite tests/docs/coverage.md
+python -m e2e coverage --check    # fail on a gap or a stale document
+```
+
+`--check` fails when a scope id has neither a scenario nor a waiver, when a
+scenario references an unknown id, and when the checked-in document is stale.
+It needs neither Docker nor the Connect IQ SDK, so the `harness` CI job runs it.
+A deliberate gap goes in the `waivers` list in `scope.yaml` with a reason; a
+waiver for an entry that a scenario covers is an error.
+
+The report says plainly that every scenario is host-only: it needs Linux, Docker,
+the SDK and the simulator to prove anything. The CI check proves the mapping, not
+a run.
 
 ## Steps
 
@@ -183,6 +236,10 @@ diagnostics.
 1. Reuse an existing fixture. Add items only if the sitemap needs them, and keep
    `fixtures/openhab/conf/items` and `fixtures/openhab/conf/sitemaps` in sync —
    `python -m e2e setup` fails when a sitemap refers to an undefined item.
+1. Add `covers` with the #140 scope ids the scenario proves, and
+   `manual_checks` for anything it exercises but cannot assert. Update
+   `tests/config/scope.yaml` first if the bullet has no id yet.
 1. Run `python -m pytest` in `tests/runner`: the new file is loaded and validated by
-   `test_repository_scenarios_load`.
+   `test_repository_scenarios_load`, and `test_coverage.py` checks the mapping.
+1. Run `python -m e2e coverage --write` to refresh `tests/docs/coverage.md`.
 1. Run it in dry-run to check the wiring, then against the stack.

@@ -1,0 +1,410 @@
+# Regression scope for issue #140.
+#
+# Each entry is one bullet of the issue. `id` is the stable identifier a
+# scenario uses in its `covers:` list; do not rename an existing id, because
+# that silently disconnects the scenarios that reference it. Add a new id when
+# #140 gains a bullet, and remove one only when the issue drops the bullet.
+#
+# `title` is a short, stable paraphrase of the bullet. The issue text is the
+# source of truth; this file exists so the suite can be checked mechanically.
+#
+# `verified_by` on a waiver names another automated check that proves the
+# bullet. It is optional and does not turn a waiver into scenario coverage.
+#
+# Keep this file and #140 in step. The coverage check fails when an entry has
+# no scenario and no waiver, and when a scenario covers an unknown id:
+#
+#   cd tests/runner && python -m e2e coverage --check
+#
+# tests/docs/coverage.md is generated from this file and the scenarios.
+
+version: 1
+issue: 140
+source: https://github.com/openhab/openhab-garmin/issues/140
+
+sections:
+  - id: sitemap
+    title: Sitemap elements and rendering
+    number: "1"
+  - id: communication
+    title: Communication layer - modes and transitions
+    number: "2"
+  - id: commands
+    title: Commands
+    number: "3"
+  - id: settings
+    title: Settings and configuration
+    number: "4"
+  - id: lifecycle
+    title: App lifecycle and device integration
+    number: "5"
+  - id: localisation
+    title: Localization and translated UI
+    number: "6"
+  - id: errors
+    title: Error handling - temporary, critical and fatal
+    number: "7"
+  - id: limits
+    title: Load and limits
+    number: "8"
+  - id: resilience
+    title: Restart, outage and resilience
+    number: "9"
+  - id: devices
+    title: Device coverage
+    number: ""
+
+entries:
+  # 1. Sitemap elements and rendering
+  - id: sitemap.element-types
+    section: sitemap
+    title: All supported element types (Frame, Default, Text, Group, Switch, Selection, Setpoint, Slider)
+  - id: sitemap.nesting
+    section: sitemap
+    title: Nested Frame, Text and Group elements, mixed nesting, empty pages and the empty-page toast
+  - id: sitemap.default-widgets
+    section: sitemap
+    title: Default mapped to each supported widget, plus the unsupported-item error path
+  - id: sitemap.parameters-label-icon
+    section: sitemap
+    title: label, icon (default and custom) and label formats such as [Channel - %s]
+  - id: sitemap.parameters-mappings
+    section: sitemap
+    title: mappings with two, three-plus and empty labels, and Switch as a generic button
+  - id: sitemap.parameters-colors
+    section: sitemap
+    title: labelcolor and valuecolor, including conditional and combined conditions
+  - id: sitemap.parameters-visibility
+    section: sitemap
+    title: visibility, including the all-children-hidden edge case
+  - id: sitemap.parameters-range
+    section: sitemap
+    title: Slider and Setpoint minValue, maxValue, step and releaseOnly
+  - id: sitemap.parameters-controls
+    section: sitemap
+    title: Rollershutter, player and toggle switch controls
+  - id: sitemap.dynamic
+    section: sitemap
+    title: Dynamic item state, transformed labels, colors, icons and visibility while the app is open
+  - id: sitemap.theme
+    section: sitemap
+    title: Theme handling (light, dark, night) and device-specific rendering
+
+  # 2. Communication layer: modes and transitions
+  - id: communication.modes-start
+    section: communication
+    title: Starting the app in BLE, Wi-Fi and Offline
+  - id: communication.transitions
+    section: communication
+    title: Transitions while the app is running, in both directions and every combination
+  - id: communication.transition-indicators
+    section: communication
+    title: Correct status indicators and settings connectivity mode after every transition
+  - id: communication.transition-data
+    section: communication
+    title: Data behaviour after a transition (polling resumes, Wi-Fi does not poll, cached sitemap reused)
+  - id: communication.wifi-sync
+    section: communication
+    title: Wi-Fi sync mode, manual update, last-update timestamp, sync views, failed sync and the lower size limit
+  - id: communication.command-semantics
+    section: communication
+    title: Command semantics per mode (toggle choice, releaseOnly slider, offline toast)
+
+  # 3. Commands
+  - id: commands.paths
+    section: commands
+    title: JSON REST API and webhook fallback paths, including missing or incorrect webhook identifiers
+  - id: commands.types
+    section: commands
+    title: ON/OFF, toggle, mappings, dimmer and setpoint values, rollershutter and player controls
+  - id: commands.hold-time
+    section: commands
+    title: Post-command hold time prevents stale flip-back, 0 disables it, millisecond precision
+  - id: commands.errors
+    section: commands
+    title: Command errors are temporary toasts with no polling or escalation impact
+
+  # 4. Settings and configuration
+  - id: settings.every-setting
+    section: settings
+    title: Every setting (URL, sitemap, JSON API toggle, webhook, auth, suppress-empty, polling, hold time)
+  - id: settings.myopenhab
+    section: settings
+    title: myopenHAB configuration, credentials and empty-response behaviour
+  - id: settings.menu
+    section: settings
+    title: Settings menu content and actions, including the Wi-Fi update action gating
+  - id: settings.change-while-running
+    section: settings
+    title: Settings change while running is fatal, stops polling and requires a restart
+
+  # 5. App lifecycle and device integration
+  - id: lifecycle.cold-start
+    section: lifecycle
+    title: Cold start into the sitemap, loading, cached sitemap and startup error view
+  - id: lifecycle.deferred-errors
+    section: lifecycle
+    title: Error while hidden or before a view exists, presented when the app becomes visible
+  - id: lifecycle.stop-start
+    section: lifecycle
+    title: App stop and start, termination after inactivity and device sleep events
+  - id: lifecycle.glance-widget
+    section: lifecycle
+    title: Glance and widget content and refresh, including states only available in BLE mode
+  - id: lifecycle.connection-return
+    section: lifecycle
+    title: Behaviour after the phone or network returns
+  - id: lifecycle.device-matrix-and-strings
+    section: lifecycle
+    title: Supported-device matrix coverage and localized user-facing strings
+
+  # 6. Localization and translated UI
+  - id: localisation.languages
+    section: localisation
+    title: All shipped languages (eng, deu, fre, ita, spa, pol)
+  - id: localisation.strings
+    section: localisation
+    title: Every user-facing string in each language (menus, settings, toasts, errors, glance and widget)
+  - id: localisation.glyphs
+    section: localisation
+    title: Accented and non-ASCII characters render without missing glyphs or fallback boxes
+  - id: localisation.layout
+    section: localisation
+    title: No truncation, clipping, overlap or meaning-hiding ellipsis on narrow and round screens
+  - id: localisation.errors
+    section: localisation
+    title: Error messages are localized, complete and readable, including dynamic codes and URLs
+  - id: localisation.fallback
+    section: localisation
+    title: A missing translation falls back to the base language and never shows blank or placeholder text
+  - id: localisation.system-language
+    section: localisation
+    title: Language comes from the device system language and is verified per language
+
+  # 7. Error handling: temporary, critical and fatal
+  - id: errors.temporary
+    section: errors
+    title: Temporary errors (command, polling, user input, suppressed empty responses)
+  - id: errors.critical
+    section: errors
+    title: Critical errors (-1001, 404, -402, -403, parse and unexpected data) keep polling and recover
+  - id: errors.fatal
+    section: errors
+    title: Fatal errors show full-screen, latch polling off and cancel in-flight requests
+  - id: errors.escalation
+    section: errors
+    title: A temporary polling error escalates to critical after more than 10 seconds
+  - id: errors.no-escalation
+    section: errors
+    title: No escalation for command errors, suppressed empty responses, and cached versus uncached sitemaps
+  - id: errors.recovery
+    section: errors
+    title: Critical recovers to normal; fatal recovers only through a restart and never self-recovers
+  - id: errors.deferred
+    section: errors
+    title: Deferred errors before a view exists, while hidden, and presentation on resume
+  - id: errors.cache-invalidation
+    section: errors
+    title: No stale sitemap is shown before a critical or fatal error repeats
+  - id: errors.codes-messages
+    section: errors
+    title: "User-facing codes and messages (S:/C: prefixes, NO PHONE, INVRES, EMRES, UNRES and UI: codes)"
+
+  # 8. Load and limits
+  - id: limits.small-sitemaps
+    section: limits
+    title: Small sitemaps
+  - id: limits.caching
+    section: limits
+    title: Sitemaps that remain within the caching limits
+  - id: limits.size-limit
+    section: limits
+    title: Approach, hit and exceed the response size limit (-402), including the simulator's lower JSON limit
+  - id: limits.large-data
+    section: limits
+    title: Large item counts, deep nesting, many icons and many updates per poll
+  - id: limits.slow-and-rapid
+    section: limits
+    title: Slow or latent responses and rapid successive updates
+  - id: limits.storage-memory
+    section: limits
+    title: Stored data near the storage limits and low memory (-403)
+
+  # 9. Restart, outage and resilience
+  - id: resilience.openhab-restart
+    section: resilience
+    title: Restart of openHAB while the app runs, in each mode and state
+  - id: resilience.downtime
+    section: resilience
+    title: Short and long openHAB downtime returning with an unchanged or a changed sitemap
+  - id: resilience.connection-loss
+    section: resilience
+    title: Loss and recovery of the phone (BLE), Wi-Fi and the local network
+  - id: resilience.soak
+    section: resilience
+    title: Repeated restarts, soak testing and polling stability with interval 0
+
+  # Device coverage
+  - id: devices.watches
+    section: devices
+    title: Button-based and touch-based watches, including devices with both input methods
+  - id: devices.ciq-tiers
+    section: devices
+    title: Every CIQ API level tier used by the build configuration
+  - id: devices.edge-input
+    section: devices
+    title: Button-based and touch-based Edge devices
+  - id: devices.edge-resources
+    section: devices
+    title: Short and tall Edge screen resource variants
+  - id: devices.screens
+    section: devices
+    title: Round and rectangular screens
+  - id: devices.menus
+    section: devices
+    title: ActionMenu and full-screen menu implementations
+  - id: devices.source-variants
+    section: devices
+    title: Device-specific Config and GlanceConfig source variants
+  - id: devices.capabilities
+    section: devices
+    title: Capability variants such as Wi-Fi and glance
+
+# A waiver is a deliberate decision not to cover an entry with a scenario.
+# The reason must say why, and `verified_by` may name a separate automated
+# check. A waiver for an entry that a scenario covers is an error.
+waivers:
+  # ---- Sitemap rendering that needs input or goldens the harness cannot drive yet
+  - id: sitemap.parameters-label-icon
+    reason: >-
+      The fixture carries icons and label formats, but no scenario asserts the
+      rendered result; reviewed goldens for those pages have not been captured.
+  - id: sitemap.parameters-colors
+    reason: >-
+      labelcolor/valuecolor are in the fixture, but proving them is a pixel
+      comparison; no reviewed goldens exist yet.
+  - id: sitemap.parameters-range
+    reason: >-
+      Setpoint and Slider need a value-picker interaction the current step
+      vocabulary cannot drive, and the rendered result needs reviewed goldens.
+  - id: sitemap.theme
+    reason: >-
+      Changing the simulator's light/dark/night theme is a device UI action
+      that the harness does not drive; the #370 spike explores it outside the
+      suite.
+
+  # ---- Communication transitions need a mode switch the driver does not offer
+  - id: communication.transitions
+    reason: >-
+      The driver can start in each mode but cannot switch modes mid-run; the
+      simulator Connection menu is not part of the scenario actions.
+  - id: communication.transition-indicators
+    reason: >-
+      Status indicators after a transition need the same mid-run mode switch as
+      communication.transitions.
+  - id: communication.transition-data
+    reason: >-
+      The mode-start behaviour is covered by wifi-mode and offline-mode, but
+      the transition case needs a mid-run mode switch.
+
+  # ---- Settings
+  - id: settings.every-setting
+    reason: >-
+      Individual settings are exercised by fixtures (REST API, webhook,
+      suppress-empty, polling, hold time), but no scenario asserts the
+      openHAB-facing effect of every setting, especially URL, auth and a
+      missing sitemap.
+  - id: settings.myopenhab
+    reason: >-
+      myopenHAB needs a real or mocked home.myopenhab.org endpoint with
+      credentials; the Compose stack deliberately has neither.
+  - id: settings.change-while-running
+    reason: >-
+      The driver has no step that mutates device settings after launch, so the
+      fatal settings-change path cannot be triggered from a scenario.
+
+  # ---- Lifecycle
+  - id: lifecycle.deferred-errors
+    reason: >-
+      Hiding the app and resuming it needs a device sleep or app-switcher
+      action the driver cannot issue; errors.deferred has the same gap.
+  - id: lifecycle.stop-start
+    reason: >-
+      A scenario has exactly one launch step, so stop/start and termination
+      after inactivity cannot be expressed in one scenario.
+  - id: lifecycle.glance-widget
+    reason: >-
+      No scenario opens the glance or widget surface; the driver contract has
+      no glance navigation.
+  - id: lifecycle.connection-return
+    reason: >-
+      Returning to the phone or network is a mid-run mode transition, which the
+      driver cannot drive (see communication.transitions).
+
+  # ---- Localization
+  - id: localisation.fallback
+    reason: >-
+      Proving a missing translation falls back requires a build with a string
+      resource removed; the harness must not alter app resources to test them.
+
+  # ---- Errors
+  - id: errors.fatal
+    reason: >-
+      A fatal UI error cannot be triggered through the shim, and the settings
+      change path needs settings mutation after launch (settings.change-while-running).
+  - id: errors.deferred
+    reason: >-
+      Deferred error presentation needs the app hidden before the error occurs;
+      see lifecycle.deferred-errors for the driver limitation.
+  - id: errors.cache-invalidation
+    reason: >-
+      No trace event distinguishes a cached sitemap from a fresh one, so
+      "no stale sitemap" is only observable in pixels; no golden covers the
+      critical or fatal path yet.
+
+  # ---- Limits
+  - id: limits.large-data
+    reason: >-
+      The repository fixtures are intentionally small; a large, deeply nested
+      sitemap fixture does not exist and adding one is a fixture-design decision
+      for #140, not a scenario-level addition.
+  - id: limits.storage-memory
+    reason: >-
+      Reaching the device storage or memory limits (-403) needs a low-memory
+      device or a way to exhaust storage; neither is scriptable through the
+      shim.
+
+  # ---- Resilience
+  - id: resilience.soak
+    reason: >-
+      Repeated restarts and a soak run do not fit the per-scenario budget and
+      belong to a scheduled campaign, not to the pull-request suite; polling
+      interval 0 is not exercised by a scenario either.
+
+  # ---- Device coverage is proven by the matrix check, not by scenarios
+  - id: devices.watches
+    reason: The approved device matrix represents every watch input capability.
+    verified_by: python -m e2e variants
+  - id: devices.ciq-tiers
+    reason: Every CIQ API tier resolved from monkey.jungle has a matrix device.
+    verified_by: python -m e2e variants
+  - id: devices.edge-input
+    reason: The matrix includes button and touch Edge devices.
+    verified_by: python -m e2e variants
+  - id: devices.edge-resources
+    reason: The matrix includes short and tall Edge resource variants.
+    verified_by: python -m e2e variants
+  - id: devices.screens
+    reason: The matrix includes round and rectangular screens.
+    verified_by: python -m e2e variants
+  - id: devices.menus
+    reason: The matrix includes ActionMenu and full-menu implementations.
+    verified_by: python -m e2e variants
+  - id: devices.source-variants
+    reason: Every source/config variant is assigned to a matrix device.
+    verified_by: python -m e2e variants
+  - id: devices.capabilities
+    reason: >-
+      The matrix has no capability dimension, so Wi-Fi and glance capabilities
+      are not recorded per device. This is a known gap in #366, not something a
+      scenario can assert.

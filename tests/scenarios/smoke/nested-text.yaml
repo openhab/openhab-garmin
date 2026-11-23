@@ -21,6 +21,10 @@ openhab:
 language: eng
 timeout_s: 90
 
+covers:
+  - sitemap.element-types
+  - sitemap.nesting
+
 steps:
   - action: launch
 

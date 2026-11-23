@@ -19,6 +19,10 @@ openhab:
 language: eng
 timeout_s: 90
 
+covers:
+  - sitemap.parameters-mappings
+  - commands.types
+
 steps:
   - action: launch
 

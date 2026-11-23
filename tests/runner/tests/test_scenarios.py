@@ -142,6 +142,55 @@ def test_requires_trace_events_is_derived_from_steps(tmp_path: Path) -> None:
     assert load_scenario(_write(tmp_path, document)).requires_trace_events
 
 
+def test_covers_accepts_known_scope_ids(tmp_path: Path) -> None:
+    document = _with(covers=["errors.temporary", "commands.types"])
+    scenario = load_scenario(_write(tmp_path, document))
+    assert scenario.covers == ("errors.temporary", "commands.types")
+
+
+def test_covers_rejects_an_unknown_scope_id(tmp_path: Path) -> None:
+    document = _with(covers=["errors.temporary", "made.up"])
+    with pytest.raises(ScenarioError) as error:
+        load_scenario(_write(tmp_path, document))
+    assert "unknown scope id" in str(error.value)
+    assert "made.up" in str(error.value)
+
+
+def test_covers_rejects_a_duplicate_scope_id(tmp_path: Path) -> None:
+    document = _with(covers=["errors.temporary", "errors.temporary"])
+    with pytest.raises(ScenarioError) as error:
+        load_scenario(_write(tmp_path, document))
+    assert "repeats" in str(error.value)
+
+
+@pytest.mark.parametrize("value", ["errors.temporary", [], [""], [1]])
+def test_covers_must_be_a_non_empty_list_of_strings(tmp_path: Path, value) -> None:
+    with pytest.raises(ScenarioError) as error:
+        load_scenario(_write(tmp_path, _with(covers=value)))
+    assert "covers" in str(error.value)
+
+
+def test_manual_checks_accept_a_list_of_strings(tmp_path: Path) -> None:
+    document = _with(manual_checks=["Check the toggle by hand."])
+    scenario = load_scenario(_write(tmp_path, document))
+    assert scenario.manual_checks == ("Check the toggle by hand.",)
+
+
+@pytest.mark.parametrize("value", ["one check", [], [""]])
+def test_manual_checks_must_be_a_non_empty_list_of_strings(tmp_path: Path, value) -> None:
+    with pytest.raises(ScenarioError) as error:
+        load_scenario(_write(tmp_path, _with(manual_checks=value)))
+    assert "manual_checks" in str(error.value)
+
+
+def test_covers_survives_language_matrix_expansion(tmp_path: Path) -> None:
+    scenarios = load_scenarios(_write(tmp_path, _matrix(covers=["errors.temporary"])))
+    assert [scenario.covers for scenario in scenarios] == [
+        ("errors.temporary",),
+        ("errors.temporary",),
+    ]
+
+
 def test_unknown_top_level_key_is_rejected(tmp_path: Path) -> None:
     document = _with(unexpected=True)
     with pytest.raises(ScenarioError) as error:

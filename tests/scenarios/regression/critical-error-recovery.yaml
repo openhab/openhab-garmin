@@ -1,0 +1,100 @@
+# Regression: recovery from a critical HTTP error.
+#
+# An HTTP 404 is one of the documented critical errors: the app shows the
+# full-screen error view, keeps polling and returns to the sitemap when a valid
+# response arrives, without a restart (docs/USAGE.md, "Critical errors").
+# `regression/malformed-json` covers the parsing variant; this covers a status
+# code that reaches the app as an HTTP error.
+
+name: critical-error-recovery
+description: An HTTP 404 shows the critical error view and a valid poll brings the app back.
+tier: ui
+suite: regression
+device: fenix7
+mode: ble
+fixture: fast-polling
+openhab:
+  profile: stable
+  sitemap: garmin_e2e
+  items:
+    E2E_Temperature: "20.0"
+language: eng
+timeout_s: 120
+
+covers:
+  - errors.critical
+  - errors.recovery
+  - errors.codes-messages
+manual_checks:
+  - >-
+    The app has no trace event for dismissing the error view (ERRORVIEW is
+    emitted when it is shown, not when it is cleared), so the `recovered`
+    screenshot is the visual proof that the sitemap is back. The trace assertion
+    proves only that polling continued and a 200 arrived.
+  - >-
+    The -1001 and -403 critical paths are not exercised, and neither are the
+    NO PHONE, INVRES and UNRES messages.
+
+shim:
+  rules:
+    - name: not-found
+      match:
+        method: GET
+        path_prefix: /rest/sitemaps/garmin_e2e
+      times: 3
+      response:
+        status: 404
+        body: Not Found
+
+steps:
+  - action: launch
+
+  - action: wait_for_request
+    method: GET
+    path_prefix: /rest/sitemaps/garmin_e2e
+    min_count: 3
+    timeout_ms: 30000
+
+  - action: assert
+    description: All three 404 responses were served by the shim.
+    shim_requests:
+      method: GET
+      path_prefix: /rest/sitemaps/garmin_e2e
+      min_count: 3
+      status: 404
+
+  - action: wait_for_event
+    description: A 404 is classified as a critical error.
+    event: ERROR
+    fields:
+      kind: critical
+    timeout_ms: 30000
+
+  - action: wait_for_event
+    description: The critical error reaches the full-screen error view.
+    event: ERRORVIEW
+    timeout_ms: 30000
+
+  - action: screenshot
+    name: critical-404
+
+  # Polling must continue while the error view is shown.
+  - action: wait_for_request
+    method: GET
+    path_prefix: /rest/sitemaps/garmin_e2e
+    min_count: 6
+    timeout_ms: 45000
+
+  - action: assert
+    description: A later poll is served from openHAB with 200.
+    shim_requests:
+      method: GET
+      path_prefix: /rest/sitemaps/garmin_e2e
+      min_count: 1
+      status: 200
+
+  - action: wait
+    ms: 1500
+
+  - action: screenshot
+    name: recovered

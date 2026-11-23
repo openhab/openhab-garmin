@@ -20,6 +20,15 @@ openhab:
 language: eng
 timeout_s: 120
 
+covers:
+  - errors.temporary
+  - errors.no-escalation
+  - errors.codes-messages
+manual_checks:
+  - >-
+    The suppressed-empty variant (the `suppress-empty` fixture) and the
+    cached-versus-uncached escalation distinction are not exercised here.
+
 shim:
   rules:
     - name: empty-body

@@ -20,6 +20,16 @@ openhab:
 language: eng
 timeout_s: 90
 
+covers:
+  - sitemap.element-types
+  - sitemap.parameters-controls
+  - commands.paths
+  - commands.types
+manual_checks:
+  - >-
+    Rollershutter and player controls are not driven; only the toggle switch is.
+  - The webhook fallback is covered by webhook-command-path, not here.
+
 steps:
   - action: launch
 

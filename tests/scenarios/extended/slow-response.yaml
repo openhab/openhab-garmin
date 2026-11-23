@@ -21,6 +21,17 @@ openhab:
 language: eng
 timeout_s: 180
 
+covers:
+  - errors.escalation
+  - errors.critical
+  - errors.recovery
+  - limits.slow-and-rapid
+manual_checks:
+  - >-
+    Escalation is asserted as temporary-then-critical; the documented 10 s
+    boundary and the exact poll counts are not measured.
+  - Rapid successive updates are not exercised; only delayed responses are.
+
 shim:
   rules:
     - name: slow

@@ -27,6 +27,7 @@ This directory is the foundation tracked by
 | Protocol-tier scenarios (shim trace + `E2E:` trace events) | ready; need the debug trace build from [#364](https://github.com/openhab/openhab-garmin/issues/364) |
 | Wine simulator driver | contract fixed, implementation skeleton only (see [docs/simulator-driver.md](docs/simulator-driver.md)) |
 | Wine feasibility spike | ready to run on an approved Linux host with Docker and the SDK (see [spike/README.md](spike/README.md), issue [#370](https://github.com/openhab/openhab-garmin/issues/370)) |
+| #140 scope coverage map | checked in as `config/scope.yaml` and `docs/coverage.md`; enforced by `python -m e2e coverage --check` |
 
 Nothing here provisions a VM, changes infrastructure, or ships the Connect IQ SDK.
 
@@ -56,6 +57,8 @@ the SDK on every pull request and `main` push that touches `tests/`,
 1. `python -m e2e pin-images --write` then `python -m e2e validate-compose --check-pins`
 1. `python -m e2e contract-test --driver null`
 1. `python -m e2e run --all --dry-run`
+1. `python -m e2e coverage --check` (every #140 scope id has a scenario or a
+   waiver, no scenario names an unknown id, and `docs/coverage.md` is current)
 
 The job installs the package **editable** (`pip install --editable tests/runner`)
 because `e2e/paths.py` derives `tests/` and the repository root from the package
@@ -115,6 +118,7 @@ those steps as **skipped**. It never reports them as passed.
 | `status` | health of every component, plus pin problems |
 | `list-scenarios` | what `run --all` would execute |
 | `variants` | the resolved build-variant table and device coverage; exits non-zero on a gap |
+| `coverage` | map #140 scope entries to scenarios; `--write` regenerates `docs/coverage.md`, `--check` fails on a gap or a stale document |
 | `contract-test` | exercise a simulator driver against the driver contract |
 | `validate-compose` | static Compose validation; `--check-pins` also requires digests |
 | `pin-images` | write or verify image digests (`--refresh` re-resolves from Docker Hub) |
@@ -164,6 +168,13 @@ scheduled in CI; only its pure logic is covered by
 | regression | `malformed-json` | protocol | truncated JSON is critical, polling continues, a valid response recovers |
 | regression | `unsupported-widget` | ui | `Default` on a `Color` item shows an error and sends nothing |
 | regression | `command-confirmation` | ui | cancelling a confirmed command sends no request |
+| regression | `dev-profile-command-confirmation` | ui | on the dev profile the confirmation parameter is present and nothing is sent before confirming |
+| regression | `command-error-temporary` | ui | a failed command is a temporary toast and polling continues |
+| regression | `critical-error-recovery` | protocol | HTTP 404 shows the critical view and a valid poll recovers it |
+| regression | `post-command-hold` | ui | one command is sent and the 2 s hold window does not disturb polling |
+| regression | `webhook-command-path` | ui | with the REST API disabled the command uses the webhook path |
+| extended | `escalation-window` | protocol | persistent failure escalates to critical, then recovers |
+| extended | `openhab-restart` | protocol | an openHAB outage window stays temporary and the app returns by itself |
 | extended | `oversized-response` | protocol | 2 MiB body is reported as a critical error |
 | extended | `slow-response` | protocol | 12 s responses escalate and then recover |
 | extended | `connection-reset` | protocol | dropped connections are temporary errors |
@@ -185,6 +196,13 @@ The `localisation-*` scenarios are one file each but run once per shipped
 language (`eng`, `deu`, `fre`, `ita`, `spa`, `pol`), so the table above is 60
 simulator runs. Coverage, the device rationale and the machine-asserted versus
 review-only split are documented in [docs/localisation.md](docs/localisation.md).
+
+Every scenario also declares the issue #140 scope entries it covers with a
+`covers` list, and `manual_checks` for anything it exercises but cannot assert.
+The generated [docs/coverage.md](docs/coverage.md) lists, per scope id, the
+scenarios with their tier and device, or an explicit waiver with a reason;
+`python -m e2e coverage --check` fails when an entry has neither and when a
+scenario names an unknown id.
 
 `protocol` scenarios assert on the shim trace and on `E2E:` trace events and need
 no screenshots. `ui` scenarios navigate the app and compare screenshots with
@@ -274,24 +292,26 @@ in the file's header, then run the smoke suite against both profiles.
 
 ## What was and was not executed
 
-This change was reviewed on a workstation, so the validation split is:
+The harness has been reviewed on workstations without Docker or the SDK, so the
+validation split is:
 
 ### Executed
 
+The coverage change was validated on a workstation with neither Docker nor the
+SDK:
+
 ```bash
 cd tests/runner
-python -m pytest -q                     # 211 passed
-python -m e2e validate-compose          # compose: valid
-python -m e2e pin-images --write        # digests written from config/openhab.version
-python -m e2e pin-images --check        # pins: ok
-python -m e2e validate-compose --check-pins
-python -m e2e contract-test --driver null       # 14 passed
-python -m e2e run smoke/launch-and-poll --dry-run
-python -m e2e run --all --dry-run       # 14 scenarios, artifacts + JUnit written
-python -m e2e list-scenarios            # 14 scenarios
-python -m e2e variants                  # 93 products, 17 combinations, 17 devices, no gaps
-python -m e2e sdk-check                 # fails with the documented message (no SDK here)
+python -m pytest -q                     # 353 passed
+python -m e2e run --all --dry-run       # 81 scenarios, artifacts + JUnit written
+python -m e2e list-scenarios            # 81 scenarios
+python -m e2e coverage --check          # 65 scope entries, 36 covered, 29 waived, 0 empty
+python -m e2e coverage --write          # regenerated docs/coverage.md
 ```
+
+The Compose, image-pin, driver-contract and SDK checks are unchanged by this
+change and are not re-run here; the `harness` CI job runs them on every pull
+request.
 
 Two checks used a synthetic SDK tree (a temporary directory with `version.txt`,
 `linux/bin/monkeyc` and `windows/bin/simulator.exe`) to exercise the paths that
@@ -367,7 +387,8 @@ Do this once after the stack is up, and again after touching fixtures or the shi
 
 - [docs/architecture.md](docs/architecture.md) – components, data flow, assertion layers
 - [docs/devices.md](docs/devices.md) – build-variant dimensions, the device matrix and its coverage check
-- [docs/scenarios.md](docs/scenarios.md) – scenario schema, language matrix and trace events
+- [docs/scenarios.md](docs/scenarios.md) – scenario schema, language matrix, trace events and `covers`
+- [docs/coverage.md](docs/coverage.md) – generated #140 scope-to-scenario matrix with waivers and manual checks
 - [docs/localisation.md](docs/localisation.md) – language coverage, device choice and review-only assertions
 - [docs/sdk.md](docs/sdk.md) – SDK layout, version pinning, licence handling
 - [docs/simulator-driver.md](docs/simulator-driver.md) – driver contract and Wine plan
