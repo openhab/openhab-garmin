@@ -22,6 +22,11 @@ on:
       - '.github/workflows/e2e-harness.yaml'
   workflow_dispatch:
 
+# Least privilege: the job only checks out the repository and runs Python, so
+# it needs no write scopes.
+permissions:
+  contents: read
+
 jobs:
   harness:
     name: harness
