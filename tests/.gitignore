@@ -1,0 +1,11 @@
+# Generated and machine-specific files for the E2E harness. Nothing here may be
+# committed: caches, downloaded artifacts, golden captures under review and the
+# local `.env` with a machine-specific SDK path.
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+artifacts/
+*.egg-info/
+runner/.env
+compose/.env

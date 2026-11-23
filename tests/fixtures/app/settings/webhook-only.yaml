@@ -1,0 +1,19 @@
+# Webhook command path.
+#
+# `restapi_0: false` makes the app send commands to the webhook identifier
+# instead of `POST /rest/items/{name}` (docs/USAGE.md, "Sending Commands").
+# Sitemap polling still goes through the shim, so the shim sees the poll but
+# must not see a command, which is the assertion used by the webhook scenario.
+
+name: webhook-only
+description: Commands go to a webhook identifier, not the REST API.
+properties:
+  url_0: http://shim:8080/
+  sitemap_0: garmin_e2e
+  restapi_0: false
+  webhook_0: e2e-webhook
+  user_0: ""
+  password_0: ""
+  suppressEmptyResponseExceptions_0: false
+  pollingInterval_0: 1000
+  postCommandHoldTime_0: 0

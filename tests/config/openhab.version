@@ -1,0 +1,38 @@
+# Pinned openHAB versions for the E2E harness.
+#
+# `stable` is the default target: the newest openHAB release that the app is
+# expected to work against out of the box. `dev` is opt-in through the
+# `dev` Compose profile and tracks the next milestone, which is where breaking
+# upstream changes show up first.
+#
+# Both images are Debian based on purpose: the alpine variants use a different
+# JRE layout and are not what users run by default.
+#
+# Digests are multi-architecture manifest-list digests resolved from Docker Hub
+# with `python -m e2e pin-images --write` (see tests/README.md, "Pinning"). Two
+# platforms are published: linux/amd64 and linux/arm64, so Apple Silicon and
+# ARM hosts work unchanged.
+#
+# Resolved on 2026-11-23:
+#   5.2.5     released 2026-11-19, current `latest`
+#   5.3.0.M5  released 2026-11-19, current milestone
+#
+# Bump the tag and digest together, and re-record the date above.
+
+stable_repository = openhab/openhab
+stable_tag = 5.2.5-debian
+stable_digest = sha256:78bb11484098841c7a58fe101507b423d007ca0d17623dd2eea8fa26816a0f81
+
+dev_repository = openhab/openhab
+dev_tag = 5.3.0.M5-debian
+dev_digest = sha256:13e6f9d6c998167d33dea93bc7579150af1200c5ad60c5d5cb6d785c79754762
+
+# Base images of the images this repository builds. Pinned for the same reason:
+# a silent base-image change is indistinguishable from an app regression.
+runner_base_repository = ubuntu
+runner_base_tag = 24.04
+runner_base_digest = sha256:9c7f200c07e3d4a03e7249d2c16bf66a51120fb876aa2242cf31451412543289
+
+shim_base_repository = python
+shim_base_tag = 3.12-slim-bookworm
+shim_base_digest = sha256:935c3c5b12357a7e10caa9c1e6ca5692344d97cf229832ef584be2cec9fc03df

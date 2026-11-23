@@ -1,0 +1,55 @@
+# Regression: an item type without a supported widget.
+#
+# `Default` is only supported when the item type maps to one of the app's
+# widgets (docs/USAGE.md, "Default"). `E2E_ColorLight` is a `Color` item, which
+# has no mapping, so selecting the element must surface an error rather than a
+# control. `garmin_unsupported.sitemap` keeps this case out of the main fixture.
+
+name: unsupported-widget
+description: A Default element on an unsupported item type shows an error.
+tier: ui
+suite: regression
+device: fenix7
+mode: ble
+fixture: fast-polling
+openhab:
+  profile: stable
+  sitemap: garmin_unsupported
+  items:
+    E2E_ColorLight: "0,0,100"
+language: eng
+timeout_s: 90
+
+steps:
+  - action: launch
+
+  - action: wait_for_request
+    method: GET
+    path_prefix: /rest/sitemaps/garmin_unsupported
+    min_count: 1
+    timeout_ms: 30000
+
+  - action: screenshot
+    name: unsupported-homepage
+
+  # The page contains a single frame; enter it and select the first element.
+  - action: press
+    button: ENTER
+
+  - action: press
+    button: ENTER
+
+  - action: screenshot
+    name: unsupported-widget-error
+
+  - action: assert
+    description: An error is shown, and no command is sent for the item.
+    shim_requests:
+      method: POST
+      path_prefix: /rest/items/E2E_ColorLight
+      max_count: 0
+
+  - action: assert
+    golden:
+      name: unsupported-widget-error
+      max_diff_ratio: 0.02

@@ -1,0 +1,18 @@
+# Fast polling and no post-command hold.
+#
+# Used by scenarios that assert on request counts within a short window, and
+# by command scenarios that need to observe the server state immediately after
+# a command instead of waiting out the hold time.
+
+name: fast-polling
+description: 250 ms poll interval, post-command hold disabled.
+properties:
+  url_0: http://shim:8080/
+  sitemap_0: garmin_e2e
+  restapi_0: true
+  webhook_0: ""
+  user_0: ""
+  password_0: ""
+  suppressEmptyResponseExceptions_0: false
+  pollingInterval_0: 250
+  postCommandHoldTime_0: 0

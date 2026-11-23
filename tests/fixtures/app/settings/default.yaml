@@ -1,0 +1,26 @@
+# App settings fixture: the default configuration used by most scenarios.
+#
+# Keys are the Connect IQ application property ids declared in
+# resources/base/settings.xml; the `_0` suffix is the settings index the app
+# reads (AppSettings uses `index_0`). Keeping property ids here means the
+# runner can hand the file straight to the simulator driver without a
+# translation table.
+#
+# `url` points at the shim, which proxies to openHAB. Scenarios must never talk
+# to openHAB directly: the request trace is the primary assertion surface.
+#
+# The app appends the trailing slash itself if it is missing; it is written
+# explicitly here to match what a user would configure.
+
+name: default
+description: Default settings, 1 s poll interval, shim as server.
+properties:
+  url_0: http://shim:8080/
+  sitemap_0: garmin_e2e
+  restapi_0: true
+  webhook_0: ""
+  user_0: ""
+  password_0: ""
+  suppressEmptyResponseExceptions_0: false
+  pollingInterval_0: 1000
+  postCommandHoldTime_0: 2000

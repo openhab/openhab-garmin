@@ -1,0 +1,160 @@
+# Device matrix for the E2E harness.
+#
+# ===========================================================================
+# STATUS: PROVISIONAL CANDIDATE SET - NOT THE APPROVED MATRIX.
+#
+# This list exists so scenarios and the CLI have stable device ids. It is a
+# first guess at a representative subset and makes no claim of build-variant
+# coverage. The approved matrix, its variant-to-device coverage table and the
+# automated coverage check are tracked in issue #366 (part of #140):
+#
+#   https://github.com/openhab/openhab-garmin/issues/366
+#
+# Do not describe the scenarios in this repository as covering every build
+# variant until #366 lands and its coverage check passes.
+# ===========================================================================
+#
+# `id` is what scenarios and the CLI use. `product` is the Connect IQ product
+# identifier passed to `monkeyc --device` and `monkeydo`, and must exist in
+# manifest.xml.
+#
+# `input` drives which interaction primitives a scenario may use:
+#   button       - only button events (up/down/enter/back/start)
+#   touch        - only taps
+#   touch+button - both
+#
+# `screen` is used to size the simulator window and to derive tap coordinates.
+# The values are the CIQ simulator's device resolutions; verify them once on a
+# new SDK and adjust here rather than in scenarios.
+#
+# `tier` records how far a device is expected to be covered:
+#   protocol - sitemap polling and command paths only (no reliable input)
+#   ui       - full menu navigation and screenshots
+#
+# `variants` is an optional list of `dimension:value` tags. The dimensions that
+# #366's coverage table uses are:
+#   input          button | touch | touch+button
+#   ciq_tier       the Connect IQ capability tier of the product
+#   edge_form      button | touch
+#   edge_resources short | tall
+#   screen         round | rectangular
+#   menu           actionmenu | full
+#   source         config paths used by the device (see source/config/README.md)
+#   capability     wifi | glance | neither
+#
+# Tags are additive and optional: a device may carry none, some or all of them.
+# The coverage check in #366 will read this field; nothing in the harness
+# requires it yet, so adding a tag later needs no code change.
+#
+# `notes` is free-form operator context.
+
+version: 1
+default: fenix7
+
+devices:
+  - id: fenix7
+    product: fenix7
+    family: fenix
+    input: button
+    screen: { shape: round, width: 260, height: 260 }
+    tier: ui
+    variants:
+      - input:button
+      - screen:round
+    notes: Provisional candidate. Button-only round watch.
+
+  - id: fenix847mm
+    product: fenix847mm
+    family: fenix
+    input: touch+button
+    screen: { shape: round, width: 416, height: 416 }
+    tier: ui
+    variants:
+      - input:touch+button
+      - screen:round
+    notes: Provisional candidate. Round watch with touch and buttons.
+
+  - id: fr965
+    product: fr965
+    family: forerunner
+    input: touch+button
+    screen: { shape: round, width: 454, height: 454 }
+    tier: ui
+    variants:
+      - input:touch+button
+      - screen:round
+    notes: Provisional candidate.
+
+  - id: venu3
+    product: venu3
+    family: venu
+    input: touch
+    screen: { shape: round, width: 454, height: 454 }
+    tier: ui
+    variants:
+      - input:touch
+      - screen:round
+    notes: Provisional candidate. Touch-only round watch.
+
+  - id: vivoactive5
+    product: vivoactive5
+    family: vivoactive
+    input: touch
+    screen: { shape: round, width: 390, height: 390 }
+    tier: ui
+    variants:
+      - input:touch
+      - screen:round
+    notes: Provisional candidate.
+
+  - id: edge540
+    product: edge540
+    family: edge
+    input: button
+    screen: { shape: rectangular, width: 246, height: 322 }
+    tier: ui
+    variants:
+      - input:button
+      - screen:rectangular
+      - edge_form:button
+    notes: Provisional candidate. Button-only Edge; settings entry is a dedicated home-screen item.
+
+  - id: edge550
+    product: edge550
+    family: edge
+    input: button
+    screen: { shape: rectangular, width: 246, height: 322 }
+    tier: ui
+    variants:
+      - input:button
+      - screen:rectangular
+      - edge_form:button
+    notes: >-
+      Provisional candidate. Menu focus indicator workaround (thin left rule),
+      see docs/USAGE.md.
+
+  - id: edge850
+    product: edge850
+    family: edge
+    input: touch+button
+    screen: { shape: rectangular, width: 282, height: 470 }
+    tier: ui
+    variants:
+      - input:touch+button
+      - screen:rectangular
+      - edge_form:touch
+    notes: >-
+      Provisional candidate. Focus indicator is not drawn; touch is the
+      supported navigation path.
+
+  - id: edge1050
+    product: edge1050
+    family: edge
+    input: touch+button
+    screen: { shape: rectangular, width: 480, height: 800 }
+    tier: ui
+    variants:
+      - input:touch+button
+      - screen:rectangular
+      - edge_form:touch
+    notes: Provisional candidate.

@@ -1,0 +1,19 @@
+# Empty-response suppression enabled.
+#
+# With this setting the app turns the `S:EMRES` / `S:INVRES` toasts into
+# silence, but still escalates to the full-screen error view after 10 seconds
+# of continuous failure (docs/USAGE.md, "How the App Handles Errors").
+# Paired with the shim faults that return empty and invalid bodies.
+
+name: suppress-empty
+description: Empty and invalid sitemap responses are not toasted.
+properties:
+  url_0: http://shim:8080/
+  sitemap_0: garmin_e2e
+  restapi_0: true
+  webhook_0: ""
+  user_0: ""
+  password_0: ""
+  suppressEmptyResponseExceptions_0: true
+  pollingInterval_0: 1000
+  postCommandHoldTime_0: 0

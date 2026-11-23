@@ -1,0 +1,68 @@
+# Extended: a response larger than the app can accept.
+#
+# Garmin's communications layer rejects oversized responses with `-402`. This
+# is a critical error (full-screen, recoverable), and it is worth its own
+# scenario because Wi-Fi mode has a lower effective limit (see #298).
+#
+# 2 MiB is comfortably above both limits; keep it in the low megabytes so the
+# runner's memory stays predictable.
+
+name: oversized-response
+description: A 2 MiB sitemap body raises the -402 response-too-large error.
+tier: protocol
+suite: extended
+device: fenix7
+mode: ble
+fixture: default
+openhab:
+  profile: stable
+  sitemap: garmin_e2e
+  items:
+    E2E_Temperature: "20.0"
+language: eng
+timeout_s: 120
+
+shim:
+  rules:
+    - name: oversized
+      match:
+        method: GET
+        path_prefix: /rest/sitemaps/garmin_e2e
+      times: 2
+      response:
+        status: 200
+        body_size: 2097152
+
+steps:
+  - action: launch
+
+  - action: wait_for_request
+    method: GET
+    path_prefix: /rest/sitemaps/garmin_e2e
+    min_count: 2
+    timeout_ms: 30000
+
+  - action: assert
+    description: The oversized bodies were served by the shim.
+    shim_requests:
+      method: GET
+      path_prefix: /rest/sitemaps/garmin_e2e
+      min_count: 2
+      status: 200
+
+  - action: wait_for_event
+    description: An oversized response is reported as a critical error.
+    event: ERROR
+    fields:
+      kind: critical
+    timeout_ms: 45000
+
+  - action: screenshot
+    name: oversized-response
+
+  - action: assert
+    description: Oversized responses are critical, not fatal - polling continues.
+    shim_requests:
+      method: GET
+      path_prefix: /rest/sitemaps/garmin_e2e
+      min_count: 3

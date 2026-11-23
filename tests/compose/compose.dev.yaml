@@ -1,0 +1,19 @@
+# Override for the `dev` profile.
+#
+#   COMPOSE_PROFILES=dev docker compose -f compose.yaml -f compose.dev.yaml up -d
+#
+# Why this file exists: `compose.yaml` defaults the shim's upstream to
+# `openhab-stable`. Under the `dev` profile that service does not run, so a
+# plain `docker compose --profile dev up` would start a shim that proxies to
+# nothing. Keeping the dev wiring in a second file makes the correct command
+# explicit and makes the wrong one fail loudly (the runner cannot reach openHAB)
+# instead of appearing to work.
+
+services:
+  shim:
+    environment:
+      OPENHAB_UPSTREAM: http://openhab-dev:8080
+
+  runner:
+    environment:
+      E2E_OPENHAB_URL: http://openhab-dev:8080

@@ -1,0 +1,134 @@
+// Baseline sitemap for the openHAB Garmin E2E harness.
+//
+// Derived from the sitemap posted in issue #140 and extended so that every
+// element type, parameter and dynamic feature documented in docs/USAGE.md is
+// reachable from one sitemap. Section order mirrors the "Supported Elements"
+// and "Dynamic Sitemaps" sections of the user manual.
+//
+// The app polls this sitemap with GET {url}rest/sitemaps/garmin_e2e; the
+// sitemap name in the app settings fixture must match the file name.
+//
+// Conventions:
+// - label prefixes are the stable navigation anchors scenarios assert on.
+// - no element relies on an add-on: only core file-based items and sitemaps.
+
+sitemap garmin_e2e label="My Home" {
+
+	// --- Group -------------------------------------------------------------
+	// Group with a control entry (Group:Switch) plus a pipe label, which the
+	// app splits into menu label and control-entry label.
+	Frame label="Group" {
+		Group item=E2E_Group label="Group"
+		Group item=E2E_GroundFloorLights label="All Lights|All Lights Switch [%s]"
+		Switch item=E2E_Group label="All"
+		Switch item=E2E_Light label="Switch 1"
+		Switch item=E2E_Light2 label="Switch 2"
+	}
+
+	// --- Widgets -----------------------------------------------------------
+	Frame label="Widgets" {
+		Switch item=E2E_Toggle label="Toggle Switch"
+		Slider item=E2E_Dimmer label="Slider" minValue=0 maxValue=100 step=10 icon=light
+		Switch item=E2E_Rollershutter label="Shutters" mappings=[0="Open", 100="Closed"]
+		Switch item=E2E_MediaControl label="Audio"
+	}
+
+	// --- Generic switch ----------------------------------------------------
+	Frame label="Generic Switch" {
+		Frame label="Mappings" {
+			Switch item=E2E_TV label="TV A" mappings=[0="mABC"]
+			Switch item=E2E_TV label="TV A/B" mappings=[0="mABC", 1="mBBC"]
+			Switch item=E2E_TV label="TV A/B/C" mappings=[0="mABC", 1="mBBC", 2="mCNN"]
+			Switch item=E2E_TV label="TV Empty Label" mappings=[0="", 1="mBBC"]
+		}
+		Frame label="Metadata" {
+			// ON/OFF options come from the item, not the sitemap.
+			Switch item=E2E_GarageDoor label="Garage Door"
+			// Confirmation dialog is shown before the command is sent. The app
+			// reads `commandConfirmMessage` from the sitemap JSON; the first
+			// smoke run asserts the key is present in the REST payload of the
+			// pinned openHAB version, because a rename upstream would silently
+			// disable every confirmation assertion.
+			Switch item=E2E_GarageDoor label="Garage Door Confirm" mappings=[ON="OPEN"] commandConfirmMessage="Do you really want to open the garage door?"
+			// Five commands force the action menu with a scrollable list.
+			Switch item=E2E_TV label="TV Many" mappings=[0="One", 1="Two", 2="Three", 3="Four", 4="Five"]
+		}
+		// Selection behaves exactly like Switch in the app.
+		Frame label="Selection" {
+			Selection item=E2E_TV label="TV (Selection)" mappings=[0="ABC", 1="BBC", 2="CNN"]
+			Selection item=E2E_TV label="TV (Selection, 1)" mappings=[0="Only"]
+		}
+	}
+
+	// --- Text --------------------------------------------------------------
+	Frame label="Text" {
+		Text item=E2E_Temperature label="Temperature"
+		Text item=E2E_TV label="TV [Channel: %s]"
+		Text item=E2E_Window label="Window"
+		Text item=E2E_LastUpdate label="Last Update"
+		Text label="This text has no item"
+		Text label="Nested page" {
+			Text label="Nested static text"
+			Text item=E2E_Temperature label="Nested temperature"
+		}
+	}
+
+	// --- Default -----------------------------------------------------------
+	// The app resolves Default to the widget of the item type; the last two
+	// entries cover the "unsupported item type" path in a separate sitemap
+	// (garmin_unsupported.sitemap) to keep this one navigable.
+	Frame label="Default" {
+		Default item=E2E_Light2 label="Default Switch"
+		Default item=E2E_Dimmer label="Default Dimmer"
+		Default item=E2E_Rollershutter label="Default Shutters"
+		Default item=E2E_Temperature label="Default Temperature"
+		Default item=E2E_TV label="Default String"
+	}
+
+	// --- Setpoint and Slider ----------------------------------------------
+	Frame label="Setpoint and Slider" {
+		Setpoint item=E2E_Setpoint label="Setpoint" minValue=16 maxValue=30 step=0.5
+		Slider item=E2E_Slider label="Slider" minValue=0 maxValue=100 step=10
+		Slider item=E2E_Slider label="Slider Release Only" minValue=0 maxValue=50 step=0.5 releaseOnly
+	}
+
+	// --- Colors ------------------------------------------------------------
+	Frame label="Colors" {
+		Switch item=E2E_TV label="TV A/B" mappings=[0="ABC", 1="BBC", 2="CNN"] labelcolor=[==0="red", ==1="green", ==2="yellow"] valuecolor=[==0="red", ==1="green", ==2="yellow"]
+		Text item=E2E_EntranceGates_Status label="Gate Status" valuecolor=[==OPEN="red", ==CLOSED="green", ==MOVING="yellow"]
+	}
+
+	// --- Icons -------------------------------------------------------------
+	Frame label="Icons" {
+		Switch item=E2E_Light label="Light" icon=light
+		Slider item=E2E_Dimmer label="Slider" minValue=0 maxValue=100 step=10 icon=light
+		Switch item=E2E_Rollershutter label="Shutters" icon=rollershutter
+		Switch item=E2E_TV label="TV [Channel: %s]" icon=screen mappings=[0="ABC", 1="BBC", 2="CNN"]
+		Text item=E2E_Temperature label="Gates" icon=garagedoor
+		// staticIcon is a boolean in the sitemap DSL and in the REST payload.
+		Text item=E2E_Temperature label="Vehicle SoC" icon=batterylevel staticIcon=true
+		// No icon parameter at all: exercises the state-derived default icon.
+		Text item=E2E_Temperature label="No Icon"
+	}
+
+	// --- Dynamic sitemaps --------------------------------------------------
+	Frame label="Dynamic" {
+		Text item=E2E_Temperature label="Visible when marker is ON" visibility=[E2E_Visible==ON]
+		Text item=E2E_Temperature label="Hidden when marker is ON" visibility=[E2E_Visible!=ON]
+		// A frame whose only child can be hidden: exercising the
+		// "This page is empty" toast.
+		Frame label="Sometimes Empty" {
+			Text item=E2E_Temperature label="Only when marker is ON" visibility=[E2E_Visible==ON]
+		}
+	}
+
+	// --- Empty page --------------------------------------------------------
+	Frame label="Empty" {
+	}
+
+	// --- Commands ----------------------------------------------------------
+	Frame label="Entrance Gates" {
+		Switch item=E2E_EntranceGates_Power label="Open/Close" mappings=[OFF="", ON="OK"]
+		Text item=E2E_EntranceGates_Status label="Status"
+	}
+}

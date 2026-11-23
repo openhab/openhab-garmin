@@ -1,0 +1,152 @@
+name: openhab-garmin-e2e
+
+# E2E harness stack.
+#
+#   app (Wine simulator, inside `runner`)  ->  shim  ->  openHAB
+#
+# Profiles are exclusive on purpose: exactly one openHAB instance runs at a
+# time, so the shim always has one upstream and the two services cannot fight
+# over the same host port.
+#
+#   default (stable):  docker compose up -d
+#   dev milestone:     COMPOSE_PROFILES=dev docker compose -f compose.yaml -f compose.dev.yaml up -d
+#
+# The dev profile needs the override file: without it the shim would keep
+# pointing at `openhab-stable`, which is not running under `dev`. The override
+# is a separate file so that failure mode cannot happen silently.
+#
+# Start from `tests/compose/.env.example` and run
+# `python -m e2e pin-images --write` first; every image reference below fails
+# closed when its variable is missing or unpinned.
+
+services:
+  openhab-stable:
+    profiles: ["stable"]
+    image: ${OPENHAB_STABLE_IMAGE:?run `python -m e2e pin-images --write` in tests/runner and set CIQ_SDK_HOST_PATH in tests/compose/.env}
+    restart: "no"
+    ports:
+      - "${OPENHAB_STABLE_PORT:-8080}:8080"
+    volumes:
+      # The image ships a conf skeleton (items/, sitemaps/, rules/, ...) that
+      # openHAB expects to be able to write to, so conf itself is a writable
+      # named volume seeded from the image. The two directories that come from
+      # this repository are mounted read-only on top of it: fixtures are the
+      # source of truth, never written by the container, and the working tree
+      # stays clean.
+      - openhab-stable-conf:/openhab/conf
+      - ../fixtures/openhab/conf/items:/openhab/conf/items:ro
+      - ../fixtures/openhab/conf/sitemaps:/openhab/conf/sitemaps:ro
+      - openhab-stable-userdata:/openhab/userdata
+    environment:
+      OPENHAB_HTTP_PORT: "8080"
+      OPENHAB_HTTPS_PORT: "8443"
+      CRYPTO_POLICY: unlimited
+      EXTRA_JAVA_OPTS: ${OPENHAB_JAVA_OPTS:--Duser.timezone=UTC}
+    healthcheck:
+      # curl is part of the openHAB image (it is also what the image's own
+      # HEALTHCHECK uses), so this never depends on a missing binary.
+      test: ["CMD-SHELL", "curl -fsS -o /dev/null http://127.0.0.1:8080/rest/ || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 60s
+    networks: [e2e]
+
+  openhab-dev:
+    profiles: ["dev"]
+    image: ${OPENHAB_DEV_IMAGE:?run `python -m e2e pin-images --write` in tests/runner and set CIQ_SDK_HOST_PATH in tests/compose/.env}
+    restart: "no"
+    ports:
+      - "${OPENHAB_DEV_PORT:-8080}:8080"
+    volumes:
+      - openhab-dev-conf:/openhab/conf
+      - ../fixtures/openhab/conf/items:/openhab/conf/items:ro
+      - ../fixtures/openhab/conf/sitemaps:/openhab/conf/sitemaps:ro
+      - openhab-dev-userdata:/openhab/userdata
+    environment:
+      OPENHAB_HTTP_PORT: "8080"
+      OPENHAB_HTTPS_PORT: "8443"
+      CRYPTO_POLICY: unlimited
+      EXTRA_JAVA_OPTS: ${OPENHAB_JAVA_OPTS:--Duser.timezone=UTC}
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS -o /dev/null http://127.0.0.1:8080/rest/ || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 60s
+    networks: [e2e]
+
+  shim:
+    build:
+      context: ..
+      dockerfile: shim/Dockerfile
+      args:
+        SHIM_BASE_IMAGE: ${SHIM_BASE_IMAGE:?set SHIM_BASE_IMAGE in tests/compose/.env}
+    image: openhab-garmin-e2e-shim:${SHIM_VERSION:-dev}
+    restart: "no"
+    ports:
+      - "${SHIM_PORT:-8081}:8080"
+    environment:
+      OPENHAB_UPSTREAM: ${OPENHAB_UPSTREAM:-http://openhab-stable:8080}
+      SHIM_VERSION: ${SHIM_VERSION:-dev}
+      SHIM_BIND: 0.0.0.0
+      SHIM_PORT: "8080"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/__shim__/health', timeout=3)"
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    networks: [e2e]
+
+  runner:
+    build:
+      context: ..
+      dockerfile: runner/Dockerfile
+      args:
+        RUNNER_BASE_IMAGE: ${RUNNER_BASE_IMAGE:?set RUNNER_BASE_IMAGE in tests/compose/.env}
+    image: openhab-garmin-e2e-runner:${RUNNER_VERSION:-dev}
+    restart: "no"
+    working_dir: /work/tests/runner
+    entrypoint: ["/entrypoint.sh"]
+    command: ["sleep", "infinity"]
+    tty: true
+    stdin_open: true
+    init: true
+    environment:
+      # CIQ_SDK_ROOT is the path *inside* the container. The host path is
+      # CIQ_SDK_HOST_PATH, used only for the bind mount below.
+      CIQ_SDK_ROOT: /opt/ciq-sdk
+      E2E_OPENHAB_URL: ${E2E_OPENHAB_URL:-http://openhab-stable:8080}
+      E2E_SHIM_URL: ${E2E_SHIM_URL:-http://shim:8080}
+      E2E_ARTIFACTS: /work/artifacts
+      DISPLAY: ":99"
+      PYTHONUNBUFFERED: "1"
+    volumes:
+      # The SDK is mounted, never baked into the image: Garmin's agreement
+      # forbids redistribution.
+      - ${CIQ_SDK_HOST_PATH:?set CIQ_SDK_HOST_PATH to the Connect IQ SDK root in tests/compose/.env}:/opt/ciq-sdk:ro
+      - ${E2E_REPO_ROOT:-../..}:/work:ro
+      - e2e-artifacts:/work/artifacts
+    healthcheck:
+      test: ["CMD", "python", "-c", "import e2e"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+    networks: [e2e]
+
+networks:
+  e2e:
+    driver: bridge
+
+volumes:
+  # One conf and one userdata volume per openHAB instance: the JSONDB and any
+  # generated config of a dev run must never leak into a stable run.
+  openhab-stable-conf:
+  openhab-stable-userdata:
+  openhab-dev-conf:
+  openhab-dev-userdata:
+  e2e-artifacts:

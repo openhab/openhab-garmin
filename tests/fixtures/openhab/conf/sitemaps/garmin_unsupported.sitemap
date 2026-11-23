@@ -1,0 +1,16 @@
+// Sitemap whose only element cannot be rendered by the app.
+//
+// `Default` is only supported when the item type maps to a supported widget
+// (docs/USAGE.md, "Default"). `Color` has no such widget, so selecting this
+// element must surface an error instead of a control. Used by the regression
+// scenario `unsupported-widget`.
+//
+// The sitemap is intentionally separate from garmin_e2e.sitemap: an element
+// that always errors would make every other scenario harder to navigate.
+
+sitemap garmin_unsupported label="Unsupported" {
+	Frame label="Unsupported" {
+		Default item=E2E_ColorLight label="Color (no supported widget)"
+		Switch item=E2E_ColorLight label="Color as Switch"
+	}
+}

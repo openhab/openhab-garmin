@@ -21,11 +21,13 @@ This README covers the following topics:
   - [Folder `/docs`](#subfolder-docs)
   - [Folder `/resources`](#subfolder-resources)
   - [Folder `/source`](#subfolder-source)
+  - [Folder `/tests`](#subfolder-tests)
 - [Build Instructions](#build-instructions)
   - [To Run the App in the Garmin Simulator](#to-run-the-app-in-the-garmin-simulator)
   - [To Compile for a Single Device](#to-compile-for-a-single-device)
   - [Generating the `.iq` File for Garmin Connect IQ Store Upload](#generating-the-iq-file-for-garmin-connect-iq-store-upload)
   - [To Add a New Device](#to-add-a-new-device)
+- [End-to-End Tests](#end-to-end-tests)
 - [Helpful Tips and Notes](#helpful-tips-and-notes)
 - [Copyright Notice](#copyright-notice)
 - [Attributions](#attributions)
@@ -124,6 +126,12 @@ The app is written in **Monkey C**, Garmin's programming language, using the Con
 
 For more details, continue reading the folder’s [README](source/README.md).
 
+### Subfolder `tests/`
+
+Contains the automated end-to-end test harness: a Docker Compose stack with openHAB, a request-recording proxy and a simulator runner, plus the openHAB fixtures, the scenario YAML and the Python runner.
+
+The Connect IQ SDK is **not** part of this folder or of any image built from it; it is mounted at run time. See the folder’s [README](tests/README.md).
+
 ---
 
 ## Build Instructions
@@ -190,6 +198,30 @@ To support a new device:
 
 - [Connect IQ SDK - Compatible Devices](https://developer.garmin.com/connect-iq/compatible-devices/)
 - [Connect IQ SDK - Device Reference](https://developer.garmin.com/connect-iq/device-reference/)
+
+---
+
+## End-to-End Tests
+
+The `tests/` folder contains an automated end-to-end harness: a pinned openHAB instance, a shim that records every request the app makes (and can inject scripted faults), and a runner that builds the PRG with the Linux `monkeyc` and drives the Connect IQ simulator under Wine.
+
+```bash
+cd tests/compose
+cp .env.example .env          # set CIQ_SDK_HOST_PATH to your Connect IQ SDK
+cd ../runner
+python -m pip install -r requirements.txt
+python -m e2e pin-images --write
+python -m e2e status
+```
+
+The harness unit tests run without Docker or the SDK:
+
+```bash
+cd tests/runner
+python -m pytest
+```
+
+The Connect IQ SDK is never committed and never baked into an image: it is mounted read-only and validated against `tests/config/sdk.version`. See [tests/README.md](tests/README.md) for the full instructions, the scenario list and the current limitations.
 
 ---
 

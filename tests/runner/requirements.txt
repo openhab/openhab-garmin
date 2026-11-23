@@ -1,0 +1,8 @@
+# Harness runtime and test dependencies.
+#
+# PyYAML: scenario, device-matrix and compose documents.
+# pytest: the harness unit tests (scenarios, shim grammar, compose validation).
+# Nothing else is needed: openHAB, shim and Docker are reached over HTTP with
+# the standard library, and image comparison shells out to ImageMagick.
+PyYAML>=6.0,<7
+pytest>=8,<10

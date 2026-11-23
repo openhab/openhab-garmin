@@ -1,0 +1,63 @@
+# Extended: the server drops the connection mid-request.
+#
+# The shim answers with a TCP reset instead of an HTTP response, which reaches
+# the app as a connection error (`S:0` in Wi-Fi mode, a communications error
+# over BLE). This is the case a plain status-code fault cannot reproduce.
+
+name: connection-reset
+description: Dropped connections are handled as temporary communication errors.
+tier: protocol
+suite: extended
+device: fenix7
+mode: ble
+fixture: fast-polling
+openhab:
+  profile: stable
+  sitemap: garmin_e2e
+  items:
+    E2E_Temperature: "20.0"
+language: eng
+timeout_s: 150
+
+shim:
+  rules:
+    - name: reset
+      match:
+        method: GET
+        path_prefix: /rest/sitemaps/garmin_e2e
+      times: 2
+      reset: true
+
+steps:
+  - action: launch
+
+  - action: wait_for_request
+    method: GET
+    path_prefix: /rest/sitemaps/garmin_e2e
+    min_count: 2
+    timeout_ms: 60000
+
+  - action: assert
+    description: The shim recorded the dropped requests.
+    shim_requests:
+      method: GET
+      path_prefix: /rest/sitemaps/garmin_e2e
+      min_count: 2
+      reset: true
+
+  - action: screenshot
+    name: connection-reset
+
+  - action: wait_for_request
+    method: GET
+    path_prefix: /rest/sitemaps/garmin_e2e
+    min_count: 4
+    timeout_ms: 60000
+
+  - action: assert
+    description: A healthy response arrives after the resets are exhausted.
+    shim_requests:
+      method: GET
+      path_prefix: /rest/sitemaps/garmin_e2e
+      min_count: 1
+      status: 200

@@ -1,0 +1,61 @@
+// Baseline item fixture for the openHAB Garmin E2E harness.
+//
+// Mounted read-only into openHAB's `conf/items` directory. Every item named
+// here is referenced by `conf/sitemaps/garmin_e2e.sitemap`, so adding a
+// sitemap element without adding its item breaks the fixture, not the app.
+//
+// Item *states* are not seeded here: the runner sets them over REST
+// (`PUT /rest/items/{name}/state`) before a scenario starts, which is also how
+// scenarios change state mid-run. Only structure lives in this file.
+//
+// The item types below cover every widget the app supports (see
+// docs/USAGE.md, "Supported Elements"), plus the types it deliberately does
+// not support (`Color`), which is used by garmin_unsupported.sitemap.
+
+// --- Groups ----------------------------------------------------------------
+// Group:Switch so that the group itself maps to a controllable widget, which
+// makes the app show a control entry for the group in its submenu.
+Group:Switch:OR(ON,OFF) E2E_Group "Group" <light>
+Group:Switch:OR(ON,OFF) E2E_GroundFloorLights "Ground Floor Lights" <light>
+Group:Switch:OR(ON,OFF) E2E_RoomLights "Room Lights" (E2E_GroundFloorLights) <light>
+
+// --- Switches, dimmers and rollershutters ----------------------------------
+Switch E2E_Light "Switch 1" (E2E_Group, E2E_RoomLights) <light>
+Switch E2E_Light2 "Switch 2" (E2E_Group, E2E_RoomLights) <light>
+
+// Toggle switch: a Switch without ON/OFF command descriptions.
+Switch E2E_Toggle "Toggle Switch" <switch>
+
+// Generic switch from item metadata: the ON/OFF pair carries descriptions, so
+// the app renders a command menu instead of a toggle.
+Switch E2E_GarageDoor "Garage Door" <garagedoor> { commandDescription="" [options="ON=OPEN,OFF=CLOSED"] }
+
+// Generic switch from sitemap mappings only.
+String E2E_TV "TV" <screen>
+
+// Rollershutter: full-screen UP/DOWN/STOP control.
+Rollershutter E2E_Rollershutter "Shutters" <rollershutter>
+
+// Player: full-screen PLAY/PAUSE/NEXT/PREVIOUS control.
+Player E2E_MediaControl "Audio" <player>
+
+Dimmer E2E_Dimmer "Dimmer" (E2E_RoomLights) <slider>
+
+// --- Numeric widgets -------------------------------------------------------
+Number:Temperature E2E_Temperature "Temperature" <temperature> { stateDescription="" [pattern="%.1f °C"] }
+Number E2E_Setpoint "Setpoint" <heating>
+Number E2E_Slider "Slider" <slider>
+
+// --- Read-only widgets -----------------------------------------------------
+Contact E2E_Window "Window" <window>
+DateTime E2E_LastUpdate "Last Update" <time>
+String E2E_EntranceGates_Status "Gate Status" <garagedoor>
+
+// --- Command sources -------------------------------------------------------
+Switch E2E_EntranceGates_Power "Open/Close" <garagedoor>
+Switch E2E_Visible "Visible Marker" <switch>
+
+// --- Deliberately unsupported ----------------------------------------------
+// `Color` has no supported Garmin widget; used by garmin_unsupported.sitemap
+// to cover the "no supported widget" error path.
+Color E2E_ColorLight "Color Light" <colorwheel>
