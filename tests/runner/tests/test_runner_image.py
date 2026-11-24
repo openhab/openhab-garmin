@@ -131,3 +131,27 @@ def test_entrypoint_links_devices_before_checking_the_sdk() -> None:
     text = _entrypoint()
     assert "python -m e2e link-devices" in text
     assert text.index("python -m e2e link-devices") < text.index("python -m e2e sdk-check")
+
+
+def test_entrypoint_clears_a_stale_x_socket_before_starting_xvfb() -> None:
+    """`docker restart` keeps the container filesystem, so the previous Xvfb's
+    socket and lock survive with no server behind them and block a new Xvfb.
+
+    They must only be removed after `xdpyinfo` says nothing is answering, so a
+    live server is never disturbed.
+    """
+    text = _entrypoint()
+    guard = text.index('if xdpyinfo -display "$DISPLAY" >/dev/null 2>&1; then')
+    stale_socket = text.index('rm -f "/tmp/.X11-unix/X${display_number}"')
+    assert guard < stale_socket, "the socket must not be removed while a server answers"
+    assert '"/tmp/.X${display_number}-lock"' in text
+    assert 'Xvfb "$DISPLAY"' in text
+
+
+def test_entrypoint_fails_when_the_display_never_comes_up() -> None:
+    text = _entrypoint()
+    marker = 'if [ "$display_ready" != "true" ]; then'
+    assert marker in text
+    failure = text[text.index(marker) :]
+    assert "exit 78" in failure
+    assert "Xvfb did not start" in failure

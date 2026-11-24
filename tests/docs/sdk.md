@@ -90,8 +90,8 @@ Cannot find device: fenix7
 ```
 
 `depends_on`-style folklore is not needed: `entrypoint.sh` runs
-`python -m e2e link-devices`, which finds the definitions and copies them to
-that path. It looks, in order, at:
+`python -m e2e link-devices`, which finds the definitions and stages them in
+**two** places, because two toolchains read them. It looks, in order, at:
 
 1. `CIQ_DEVICES_ROOT`, when set (it must look like a definitions root);
 1. `/opt/ciq-devices`, the mount fed by `CIQ_DEVICES_HOST_PATH`;
@@ -107,8 +107,23 @@ build failure to decode later. The repository's CI commits a reduced set at
 compiles a jungle scoped to the device under test, see
 [Device-scoped jungle](#device-scoped-jungle).
 
-`python -m e2e link-devices` is also useful outside the container, and
-`--target` overrides the destination.
+Both staged locations are required, and each one alone breaks a different
+consumer:
+
+| Path | Consumer | If it is missing |
+| --- | --- | --- |
+| `$HOME/.Garmin/ConnectIQ/Devices` | Linux `monkeyc` / `monkeydo` | every build fails with `Cannot find device: <device>` |
+| `<WINEPREFIX>/drive_c/users/<user>/AppData/Roaming/Garmin/ConnectIQ/Devices` | `simulator.exe` under Wine | the simulator opens an `Error` window with no device, so the whole `ui` tier renders nothing |
+
+The Linux path is a copy, because the compiler may write caches there. The Wine
+path is a symlink to that copy, so there is exactly one set of files; where
+symlinks are unavailable it falls back to a copy. `WINEPREFIX` defaults to
+`$HOME/.wine`, and the per-user directory follows the UNIX user name the same
+way Wine derives it.
+
+`python -m e2e link-devices` is also useful outside the container; `--target`
+overrides the Linux destination, and the Wine link follows it. On a restart the
+container re-runs the whole staging step, so both paths are re-asserted.
 
 ## Device-scoped jungle
 
