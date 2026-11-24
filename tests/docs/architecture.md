@@ -93,8 +93,10 @@ the export, so CLI commands driven through `exec` - which is how a driver talks
 to the runner - would otherwise report the SDK as unconfigured. It also copies
 the SDK's device definitions to `$HOME/.Garmin/ConnectIQ/Devices`, which is
 where `monkeyc -d <device>` resolves them; without that, `sdk-check` passes and
-every build fails with an unknown device. The same start-up also generates the
-throwaway developer key that `monkeyc -y` requires (see [sdk.md](sdk.md)).
+every build fails with an unknown device. Builds compile a jungle generated for
+the device under test (see [sdk.md](sdk.md#device-scoped-jungle)), so a reduced
+SDK that only defines that device is enough. The same start-up also generates
+the throwaway developer key that `monkeyc -y` requires (see [sdk.md](sdk.md)).
 
 The copy costs the size of the SDK in the container's writable layer on each
 start; `preflight` already requires 5 GiB free disk for the stack.

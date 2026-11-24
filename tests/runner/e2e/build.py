@@ -21,6 +21,12 @@ from pathlib import Path
 from typing import Iterator, Optional, Sequence, Tuple
 
 from .config import jungle_path
+from .jungle import (
+    JungleError,
+    generate_device_jungle,
+    invalid_qualifiers,
+    qualifier_error,
+)
 from .sdk import SdkLayout
 
 
@@ -36,6 +42,9 @@ class BuildResult:
     command: Tuple[str, ...]
     output: str
     duration_ms: float
+    jungle: Path
+    jungle_generated: bool
+    jungle_note: str
 
 
 def prg_name(device: str) -> str:
@@ -134,12 +143,40 @@ def build_prg(
     ``release`` defaults to False on purpose: the E2E trace events are debug
     annotations, and a release build silently removes the harness's event
     assertions.
+
+    By default the jungle is generated for ``device`` from the checkout's
+    ``monkey.jungle`` and written to ``output_dir``. That is what lets a reduced
+    SDK compile at all: the full jungle names every supported device, and
+    ``monkeyc`` rejects qualifiers the SDK does not define. ``jungle`` is the
+    ``--jungle`` escape hatch for a complete SDK.
     """
     if not layout.monkeyc.is_file():
         raise BuildError(f"monkeyc not found at {layout.monkeyc}")
-    jungle_file = Path(jungle) if jungle else jungle_path()
-    if not jungle_file.is_file():
-        raise BuildError(f"Monkey Jungle not found at {jungle_file}")
+
+    if jungle is None:
+        source = jungle_path()
+        target = Path(output_dir) / f"{device}.jungle"
+        try:
+            generated = generate_device_jungle(source, device, target)
+        except JungleError as error:
+            raise BuildError(str(error)) from None
+        jungle_file = generated.path
+        jungle_generated = True
+        kept = ", ".join(generated.sections)
+        jungle_note = (
+            f"generated {jungle_file} from {source} ({kept}) because the full "
+            "jungle names every supported device and a reduced SDK cannot "
+            "validate them; pass --jungle to use a full one with a complete SDK"
+        )
+    else:
+        jungle_file = Path(jungle)
+        if not jungle_file.is_file():
+            raise BuildError(f"Monkey Jungle not found at {jungle_file}")
+        jungle_generated = False
+        jungle_note = (
+            f"using the explicit jungle {jungle_file} (--jungle); the SDK must "
+            "define every device it names"
+        )
 
     output_dir.mkdir(parents=True, exist_ok=True)
     output = output_dir / prg_name(device)
@@ -177,6 +214,9 @@ def build_prg(
 
     output_text = (completed.stdout or "") + (completed.stderr or "")
     if completed.returncode != 0:
+        rejected = invalid_qualifiers(output_text)
+        if rejected:
+            raise BuildError(qualifier_error(device, rejected, jungle_file))
         raise BuildError(
             f"monkeyc failed for device {device} (exit {completed.returncode}):\n"
             f"{output_text.strip()}"
@@ -191,6 +231,9 @@ def build_prg(
         command=tuple(command),
         output=output_text.strip(),
         duration_ms=duration_ms,
+        jungle=jungle_file,
+        jungle_generated=jungle_generated,
+        jungle_note=jungle_note,
     )
 
 

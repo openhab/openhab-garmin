@@ -229,7 +229,7 @@ those steps as **skipped**. It never reports them as passed.
 | `sdk-check` | validate the mounted SDK without starting anything |
 | `link-devices` | copy the SDK's device definitions to `$HOME/.Garmin/ConnectIQ/Devices`, where `monkeyc` looks for them; the runner entrypoint runs it at container start |
 | `health-snapshot` | record the stack's restart counts and memory before/after a run; `--phase after --artifacts` classifies the finished run |
-| `build` | compile the PRG for one or more devices (`--developer-key` overrides the throwaway key generated per build) |
+| `build` | compile the PRG for one or more devices with a jungle generated for that device (`--jungle` uses a supplied one instead; `--developer-key` overrides the throwaway key generated per build) |
 
 Exit codes: `0` success, `1` scenario failures, `2` configuration or environment
 error, `3` invalid environment (a container restarted or was killed during the
@@ -248,6 +248,9 @@ run, so the results are not attributable to the app).
   deleted afterwards. It is never committed and never reused.
 - `--skip-events` skips trace-event assertions (for builds without `(:debug)`).
 - `--prg <file>` reuses a build instead of compiling.
+- `--jungle <file>` compiles a supplied jungle instead of the device-scoped one
+  generated from `monkey.jungle`; it needs an SDK that defines every device the
+  file names (see [docs/sdk.md](docs/sdk.md#device-scoped-jungle)).
 
 ## Stack health
 

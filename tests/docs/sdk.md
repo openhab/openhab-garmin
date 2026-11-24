@@ -42,8 +42,9 @@ archive use different directory layouts, and a contributor may have either.
 - `monkeydo` is required to launch the app in the simulator.
 - `simulator.exe` is required for `ui`-tier scenarios only. Protocol-tier scenarios
   can build and assert without it (`e2e sdk-check` reports it as absent).
-- the device definitions are required to compile at all; see
-  [Device definitions](#device-definitions).
+- the device definitions for the device under test are required to compile at
+  all; see [Device definitions](#device-definitions) and
+  [Device-scoped jungle](#device-scoped-jungle).
 
 ## Writable copy at container start
 
@@ -102,11 +103,53 @@ that path. It looks, in order, at:
 If none is found the container exits with code `78` and a message that lists
 every path it searched — a missing definition is a configuration error, not a
 build failure to decode later. The repository's CI commits a reduced set at
-`.github/ConnectIQ/Devices`; a reduced set is not usable here, because
-`monkey.jungle` declares configuration for every supported device.
+`.github/ConnectIQ/Devices`; that set is usable here because the harness
+compiles a jungle scoped to the device under test, see
+[Device-scoped jungle](#device-scoped-jungle).
 
 `python -m e2e link-devices` is also useful outside the container, and
 `--target` overrides the destination.
+
+## Device-scoped jungle
+
+`monkey.jungle` declares configuration for every supported device, and
+`monkeyc` validates every device qualifier it finds. Compiling the full file
+therefore needs an SDK whose device database contains all of them. A reduced
+SDK — including the set committed at `.github/ConnectIQ/Devices` — fails with
+
+```text
+ERROR: /work/monkey.jungle:449: 'edge550' is not a valid device / family qualifier.
+ERROR: /work/monkey.jungle:450: 'edge550' is not a valid device / family qualifier.
+```
+
+`e2e build` and `e2e run` therefore generate a jungle for the device under test
+before compiling, with the same logic as `.github/scripts/monkeyc-build`:
+
+- keep the `base` section and the selected device's section;
+- follow `$(device.` cross references transitively — for example
+  `venu3.excludeAnnotations = $(approachs50.excludeAnnotations)` also keeps
+  `approachs50`;
+- drop every other device section, while comments, blank lines and project
+  settings (`project.manifest`, `project.typecheck`) are copied verbatim;
+- write the result to `<artifacts>/build/<device>.jungle`, outside the
+  possibly read-only checkout.
+
+The harness therefore no longer requires a complete SDK to compile: it needs the
+device definitions for the device under test, not for the whole matrix. The
+build output records which jungle was used and why.
+
+A complete SDK can still compile the full jungle deliberately. `--jungle <path>`
+is honoured by `e2e build` and `e2e run` and uses the file verbatim, so the SDK
+must define every device the file names:
+
+```bash
+cd tests/runner
+python -m e2e build --device fenix7 --jungle ../../monkey.jungle
+```
+
+If `monkeyc` rejects a qualifier anyway, the harness replaces the raw compiler
+dump with a message that names the missing device, says that the SDK's device
+set is narrower than the jungle, and points at `--device` and this document.
 
 ## Developer key
 
