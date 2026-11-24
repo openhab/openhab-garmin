@@ -73,7 +73,7 @@ display ready -> simulator.ini -> simulator window ("CIQ Simulator")
               -> monkeydo launch -> first E2E: line is the readiness gate
 ```
 
-Waiting for the device name *before* launching deadlocks for the full startup
+Waiting for the device name _before_ launching deadlocks for the full startup
 timeout and blames the device definitions, which is a false lead. The driver
 therefore:
 
