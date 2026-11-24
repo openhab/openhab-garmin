@@ -693,18 +693,22 @@ def _cmd_sdk_check(args: argparse.Namespace) -> int:
 
 
 def _cmd_link_devices(args: argparse.Namespace) -> int:
-    """Copy the device definitions where ``monkeyc`` searches for them."""
+    """Stage the device definitions where ``monkeyc`` and the simulator look."""
     try:
         layout = load_layout()
-        target = link_devices(layout.root, Path(args.target) if args.target else None)
+        links = link_devices(
+            layout.root,
+            Path(args.target) if args.target else None,
+        )
     except SdkError as error:
         print(f"error: {error}", file=sys.stderr)
         return EXIT_CONFIG
     if not args.quiet:
         print(
-            f"devices:   {target} "
-            f"({device_definition_count(target)} definitions)"
+            f"devices:   {links.linux} "
+            f"({device_definition_count(links.linux)} definitions)"
         )
+        print(f"wine:      {links.wine}")
     return EXIT_OK
 
 

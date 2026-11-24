@@ -181,24 +181,84 @@ def test_devices_override_must_be_a_definition_root(tmp_path: Path) -> None:
     assert ENV_DEVICES_ROOT in str(error.value)
 
 
+def _home_env(tmp_path: Path) -> dict:
+    """A fake home so linking never touches the real one during tests."""
+    return {"HOME": str(tmp_path / "home"), "USER": "root"}
+
+
 def test_link_devices_copies_and_re_links_idempotently(tmp_path: Path) -> None:
     sdk = _sdk(tmp_path / "sdk")
     _definitions(sdk / "Devices")
     target = tmp_path / "home" / ".Garmin" / "ConnectIQ" / "Devices"
-    assert link_devices(sdk, target=target, environ={}) == target
+    links = link_devices(sdk, target=target, environ=_home_env(tmp_path))
+    assert links.linux == target
     assert (target / "fenix7" / "compiler.json").is_file()
     (target / "stale").mkdir()
-    link_devices(sdk, target=target, environ={})
+    link_devices(sdk, target=target, environ=_home_env(tmp_path))
     assert not (target / "stale").exists()
     assert device_definition_count(target) == 2
+
+
+def test_link_devices_stages_both_toolchain_locations(tmp_path: Path) -> None:
+    """monkeyc reads $HOME/.Garmin; the Wine simulator reads its prefix.
+
+    Linking only the Linux path disables the whole UI tier: simulator.exe -d
+    <device> opens an Error window and no device.
+    """
+    sdk = _sdk(tmp_path / "sdk")
+    _definitions(sdk / "Devices")
+    env = _home_env(tmp_path)
+    links = link_devices(sdk, environ=env)
+
+    linux = tmp_path / "home" / ".Garmin" / "ConnectIQ" / "Devices"
+    wine = (
+        tmp_path
+        / "home"
+        / ".wine"
+        / "drive_c"
+        / "users"
+        / "root"
+        / "AppData"
+        / "Roaming"
+        / "Garmin"
+        / "ConnectIQ"
+        / "Devices"
+    )
+    assert links.linux == linux
+    assert links.wine == wine
+    for path in (linux, wine):
+        assert (path / "fenix7" / "compiler.json").is_file()
+        assert (path / "venu3" / "compiler.json").is_file()
+    assert device_definition_count(links.wine) == 2
+
+
+def test_link_devices_honours_an_explicit_wine_prefix(tmp_path: Path) -> None:
+    sdk = _sdk(tmp_path / "sdk")
+    _definitions(sdk / "Devices")
+    prefix = tmp_path / "prefix"
+    env = dict(_home_env(tmp_path), WINEPREFIX=str(prefix))
+    links = link_devices(sdk, environ=env)
+    assert links.wine == (
+        prefix
+        / "drive_c"
+        / "users"
+        / "root"
+        / "AppData"
+        / "Roaming"
+        / "Garmin"
+        / "ConnectIQ"
+        / "Devices"
+    )
+    assert (links.wine / "fenix7" / "compiler.json").is_file()
 
 
 def test_link_devices_explains_what_it_searched(tmp_path: Path) -> None:
     sdk = _sdk(tmp_path / "sdk")
     with pytest.raises(SdkError) as error:
-        link_devices(sdk, target=tmp_path / "target", environ={})
+        link_devices(sdk, target=tmp_path / "target", environ=_home_env(tmp_path))
     message = str(error.value)
     assert "Searched" in message and "CIQ_DEVICES_ROOT" in message
+    assert not (tmp_path / "home" / ".wine").exists()
 
 
 def test_inspect_sdk_reports_device_definitions(

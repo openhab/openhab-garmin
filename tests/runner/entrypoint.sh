@@ -100,7 +100,10 @@ mount the definitions read-only and name them in tests/compose/.env:
 
     CIQ_DEVICES_HOST_PATH=/opt/garmin/ConnectIQ/Devices
 
-They are copied to $HOME/.Garmin/ConnectIQ/Devices inside the container.
+They are staged in two places, because two toolchains look for them:
+$HOME/.Garmin/ConnectIQ/Devices for the Linux monkeyc/monkeydo, and the Wine
+prefix's drive_c/users/<user>/AppData/Roaming/Garmin/ConnectIQ/Devices for the
+Windows simulator.
 See tests/docs/sdk.md.
 MSG
     exit 78
@@ -114,14 +117,29 @@ fi
 # One X server per container. Compose sets DISPLAY; start Xvfb only when the
 # display is not already answering, so restarting the entrypoint is safe.
 export DISPLAY="${DISPLAY:-:99}"
-if ! xdpyinfo -display "$DISPLAY" >/dev/null 2>&1; then
+display_number="${DISPLAY##*:}"
+if xdpyinfo -display "$DISPLAY" >/dev/null 2>&1; then
+    echo "using the X server already listening on $DISPLAY"
+else
+    # `docker restart` keeps the container filesystem, so the socket and lock of
+    # the previous Xvfb survive with no server behind them, and Xvfb refuses to
+    # start against a stale socket. Removing them is safe here: xdpyinfo just
+    # confirmed that nothing is answering on this display.
+    rm -f "/tmp/.X11-unix/X${display_number}" "/tmp/.X${display_number}-lock"
     Xvfb "$DISPLAY" -screen 0 1920x1080x24 -nolisten tcp &
-    for _ in $(seq 1 20); do
+    display_ready=false
+    for _ in $(seq 1 40); do
         if xdpyinfo -display "$DISPLAY" >/dev/null 2>&1; then
+            display_ready=true
             break
         fi
         sleep 0.25
     done
+    if [ "$display_ready" != "true" ]; then
+        echo "error: Xvfb did not start on $DISPLAY, so nothing can render" >&2
+        echo "       check /tmp/.X11-unix/X${display_number} and /tmp/.X${display_number}-lock" >&2
+        exit 78
+    fi
 fi
 
 exec "$@"

@@ -91,12 +91,22 @@ copy. `CIQ_SDK_ROOT` is also declared in the image environment with the same
 value: `docker exec` starts a new process from the image config and never sees
 the export, so CLI commands driven through `exec` - which is how a driver talks
 to the runner - would otherwise report the SDK as unconfigured. It also copies
-the SDK's device definitions to `$HOME/.Garmin/ConnectIQ/Devices`, which is
-where `monkeyc -d <device>` resolves them; without that, `sdk-check` passes and
-every build fails with an unknown device. Builds compile a jungle generated for
+the SDK's device definitions into **both** places the toolchains read them:
+`$HOME/.Garmin/ConnectIQ/Devices` for `monkeyc`/`monkeydo`, and
+`<WINEPREFIX>/drive_c/users/<user>/AppData/Roaming/Garmin/ConnectIQ/Devices`
+for the simulator under Wine. Without the second one, `sdk-check` passes and
+the simulator opens an error window with no device, so the UI tier silently has
+nothing to render. Builds compile a jungle generated for
 the device under test (see [sdk.md](sdk.md#device-scoped-jungle)), so a reduced
 SDK that only defines that device is enough. The same start-up also generates
 the throwaway developer key that `monkeyc -y` requires (see [sdk.md](sdk.md)).
+
+The entrypoint also clears a stale X socket and lock before starting Xvfb. A
+`docker restart` keeps the container filesystem, so the previous Xvfb's socket
+survives with no server behind it; Xvfb refuses to start against it, and the
+container would report healthy with nothing able to render. The files are only
+removed after `xdpyinfo` says nothing is answering, and an Xvfb that never
+comes up is a fatal start-up error.
 
 The copy costs the size of the SDK in the container's writable layer on each
 start; `preflight` already requires 5 GiB free disk for the stack.

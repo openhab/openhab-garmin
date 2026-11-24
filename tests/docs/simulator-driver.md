@@ -94,6 +94,17 @@ Consequences:
 - `run --dry-run` exercises scenario wiring with the null driver and marks
   simulator-dependent assertions as skipped.
 
+## The Windows `shell.exe` bridge does not work
+
+Tried on the guest: running the SDK's Windows `shell.exe` under Wine as
+`monkeydo -s`, on the theory that it could replace the Linux SDK for launching
+the app. It connects (`Found Transport: tcp / Connecting...`) but produces no
+app output and the device screen stays black.
+
+The Linux `shell` binary from the official SDK remains the supported path. This
+is a recorded conclusion, not an open question, so it does not have to be
+re-investigated.
+
 ## Fallback if Wine cannot drive the simulator menus
 
 From #140: restart-based mode transitions with reduced coverage. A driver may
