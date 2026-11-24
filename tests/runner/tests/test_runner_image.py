@@ -1,13 +1,16 @@
 """Runner image and entrypoint contract.
 
-Two defects from the first live run live in these two files and neither needs
-Docker to keep them fixed:
+Three defects from the live runs live in these two files and none of them needs
+Docker to keep it fixed:
 
 - the headless JRE had no ``libharfbuzz``, so every ``monkeyc`` invocation died
   with ``UnsatisfiedLinkError`` when it loaded the AWT font manager;
 - ``monkeyc`` rewrites ``$SDK/bin/default.jungle``, so a read-only SDK mount at
   the path the compiler uses cannot work. The entrypoint copies the mount to a
-  writable path instead of making the mount writable.
+  writable path instead of making the mount writable;
+- ``CIQ_SDK_ROOT`` was only exported by the entrypoint, so ``docker exec`` (new
+  process from the image config) never saw it and every CLI command failed with
+  "Connect IQ SDK not configured". The default has to be in the image.
 """
 
 from __future__ import annotations
@@ -27,6 +30,27 @@ def _dockerfile() -> str:
 
 def _entrypoint() -> str:
     return ENTRYPOINT.read_text(encoding="utf-8")
+
+
+def _image_env() -> dict:
+    """Parse the Dockerfile's ``ENV`` values, following line continuations."""
+    values = {}
+    buffer = ""
+    for line in _dockerfile().splitlines():
+        stripped = line.strip()
+        if not buffer:
+            if not stripped.startswith("ENV "):
+                continue
+            buffer = stripped[len("ENV ") :]
+        else:
+            buffer += " " + stripped
+        if buffer.endswith("\\"):
+            buffer = buffer[:-1]
+            continue
+        for match in re.finditer(r'([A-Za-z_][A-Za-z0-9_]*)=("[^"]*"|\S+)', buffer):
+            values[match.group(1)] = match.group(2).strip('"')
+        buffer = ""
+    return values
 
 
 def test_font_and_key_packages_are_installed() -> None:
@@ -53,20 +77,40 @@ def test_image_fails_when_libfontmanager_cannot_resolve() -> None:
 
 
 def test_dockerfile_artifacts_default_matches_compose() -> None:
-    match = re.search(r"^\s*E2E_ARTIFACTS=(\S+)\s*\\$", _dockerfile(), re.MULTILINE)
-    assert match, "the image must set a default E2E_ARTIFACTS"
     runner = compose_module.load_compose()["services"]["runner"]
     environment = compose_module._as_mapping(runner.get("environment"))
-    assert match.group(1) == environment["E2E_ARTIFACTS"]
+    assert _image_env()["E2E_ARTIFACTS"] == environment["E2E_ARTIFACTS"]
+
+
+def test_image_declares_the_staged_sdk_root() -> None:
+    """`docker exec` never sees the entrypoint's export, so the image needs it.
+
+    The two values must not drift: the entrypoint stages the copy at
+    CIQ_SDK_WORKDIR, and every process in the container resolves the SDK
+    through CIQ_SDK_ROOT.
+    """
+    env = _image_env()
+    assert env["CIQ_SDK_ROOT"] == env["CIQ_SDK_WORKDIR"]
+    assert env["CIQ_SDK_ROOT"] == "/tmp/ciq-sdk"
 
 
 def test_entrypoint_copies_the_sdk_out_of_the_read_only_mount() -> None:
     text = _entrypoint()
+    assert 'sdk_workdir="${CIQ_SDK_WORKDIR:-/tmp/ciq-sdk}"' in text
     assert 'sdk_source="${CIQ_SDK_MOUNT:-${CIQ_SDK_ROOT:-}}"' in text
     assert 'cp -a "$sdk_source" "$sdk_workdir"' in text
     assert 'export CIQ_SDK_ROOT="$sdk_workdir"' in text
     # The copy has to happen before anything compiles or validates the SDK.
     assert text.index('cp -a "$sdk_source"') < text.index("python -m e2e sdk-check")
+
+
+def test_entrypoint_reuses_an_existing_copy_without_a_mount() -> None:
+    text = _entrypoint()
+    # The image default makes CIQ_SDK_ROOT equal CIQ_SDK_WORKDIR; a restart
+    # must reuse the copy instead of failing or copying the directory onto
+    # itself, and an empty copy must fail with the mount hint.
+    assert "reusing the staged Connect IQ SDK" in text
+    assert "is empty" in text
 
 
 def test_entrypoint_never_writes_to_the_sdk_mount() -> None:

@@ -43,29 +43,34 @@ See tests/docs/sdk.md.
 MSG
 }
 
-sdk_source="${CIQ_SDK_MOUNT:-${CIQ_SDK_ROOT:-}}"
 sdk_workdir="${CIQ_SDK_WORKDIR:-/tmp/ciq-sdk}"
+sdk_source="${CIQ_SDK_MOUNT:-${CIQ_SDK_ROOT:-}}"
 
 if [ -z "$sdk_source" ] || [ ! -d "$sdk_source" ]; then
     echo "error: the Connect IQ SDK mount is not a directory (got '${sdk_source:-}')" >&2
     sdk_hint
     exit 78
 fi
-if [ "$sdk_source" = "$sdk_workdir" ]; then
-    echo "error: CIQ_SDK_MOUNT and CIQ_SDK_WORKDIR both resolve to $sdk_source;" \
-         "the SDK has to be copied out of its read-only mount" >&2
-    sdk_hint
-    exit 78
-fi
 
-# monkeyc rewrites $SDK/bin/default.jungle, so a read-only SDK at the path the
-# compiler uses cannot work. The operator's mount is never written: it is
-# copied to a writable path and CIQ_SDK_ROOT points at the copy. A restarted
-# container re-runs this, so a changed SDK is picked up.
-echo "staging the Connect IQ SDK: $sdk_source -> $sdk_workdir"
-mkdir -p "$(dirname "$sdk_workdir")"
-rm -rf "$sdk_workdir"
-cp -a "$sdk_source" "$sdk_workdir"
+if [ "$sdk_source" = "$sdk_workdir" ]; then
+    # No mount was given and CIQ_SDK_ROOT already points at the copy, which is
+    # the image default: a container that has started before already staged it.
+    if [ -z "$(ls -A "$sdk_workdir" 2>/dev/null || true)" ]; then
+        echo "error: no Connect IQ SDK mount was provided and $sdk_workdir is empty" >&2
+        sdk_hint
+        exit 78
+    fi
+    echo "reusing the staged Connect IQ SDK at $sdk_workdir"
+else
+    # monkeyc rewrites $SDK/bin/default.jungle, so a read-only SDK at the path
+    # the compiler uses cannot work. The operator's mount is never written: it
+    # is copied to a writable path and CIQ_SDK_ROOT points at the copy. A
+    # restarted container re-runs this, so a changed SDK is picked up.
+    echo "staging the Connect IQ SDK: $sdk_source -> $sdk_workdir"
+    mkdir -p "$(dirname "$sdk_workdir")"
+    rm -rf "$sdk_workdir"
+    cp -a "$sdk_source" "$sdk_workdir"
+fi
 export CIQ_SDK_ROOT="$sdk_workdir"
 
 # The harness itself lives on the bind-mounted checkout. If the mount is

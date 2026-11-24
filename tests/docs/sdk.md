@@ -61,6 +61,14 @@ recreated on every container start, so a changed SDK is picked up by restarting
 the container. This is the same thing the repository's CI does (it copies the SDK
 into `$HOME/.Garmin/ConnectIQ` and git-ignores `Sdks/*/bin/default.jungle`).
 
+`CIQ_SDK_ROOT` is also declared in the **image environment**, pointing at the
+copy. `docker exec` starts a new process from the image config and never sees
+the entrypoint's `export`, so without the image default every command driven
+through `exec` - exactly how a driver would use the runner - fails with
+"Connect IQ SDK not configured" even though the copy and the linked device
+definitions are there. `CIQ_SDK_ROOT` and `CIQ_SDK_WORKDIR` must stay equal; a
+test asserts it.
+
 Two consequences worth knowing:
 
 - the copy occupies the size of the SDK in the container's writable layer for as

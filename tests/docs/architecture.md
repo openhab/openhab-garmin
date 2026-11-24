@@ -87,11 +87,14 @@ ERROR: fenix7: Error occurred while processing application jungle file:
 
 `entrypoint.sh` therefore copies `/opt/ciq-sdk` to `CIQ_SDK_WORKDIR`
 (`/tmp/ciq-sdk`) on every container start and exports `CIQ_SDK_ROOT` to the
-copy. It also copies the SDK's device definitions to
-`$HOME/.Garmin/ConnectIQ/Devices`, which is where `monkeyc -d <device>` resolves
-them; without that, `sdk-check` passes and every build fails with an unknown
-device. The same start-up also generates the throwaway developer key that
-`monkeyc -y` requires (see [sdk.md](sdk.md)).
+copy. `CIQ_SDK_ROOT` is also declared in the image environment with the same
+value: `docker exec` starts a new process from the image config and never sees
+the export, so CLI commands driven through `exec` - which is how a driver talks
+to the runner - would otherwise report the SDK as unconfigured. It also copies
+the SDK's device definitions to `$HOME/.Garmin/ConnectIQ/Devices`, which is
+where `monkeyc -d <device>` resolves them; without that, `sdk-check` passes and
+every build fails with an unknown device. The same start-up also generates the
+throwaway developer key that `monkeyc -y` requires (see [sdk.md](sdk.md)).
 
 The copy costs the size of the SDK in the container's writable layer on each
 start; `preflight` already requires 5 GiB free disk for the stack.
