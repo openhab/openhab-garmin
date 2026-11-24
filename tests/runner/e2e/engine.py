@@ -37,7 +37,7 @@ from .reporting import ERRORED, FAILED, PASSED, SKIPPED, ScenarioResult, StepRes
 from .scenarios import Scenario, Step
 from .settings import AppSettings, load_settings
 from .shim import ShimClient, ShimError, ShimRequest
-from .sim import Button, DriverError, SimulatorDriver, create_driver
+from .sim import Button, DriverError, RUNNABLE_LANGUAGES, SimulatorDriver, create_driver
 from .sdk import SdkLayout
 from .trace import EventMatch, TraceLog
 
@@ -138,6 +138,19 @@ class ScenarioRunner:
                 artifact_dir=workdir,
                 log=self.log,
             )
+            if (
+                scenario.language not in RUNNABLE_LANGUAGES
+                and not driver.provisions_language
+            ):
+                result.status = SKIPPED
+                result.skip_reason = (
+                    f"language {scenario.language!r} cannot be provisioned: device "
+                    "language is a simulator setting the driver cannot apply, so "
+                    "this run would execute in the simulator's default language "
+                    "and prove nothing. See tests/docs/simulator-driver.md."
+                )
+                self.log(f"SKIPPED {scenario.scenario_id}: {result.skip_reason}")
+                return result
             context = _Context(
                 scenario=scenario,
                 device=self.device,
@@ -192,6 +205,17 @@ class ScenarioRunner:
                     driver.stop()
                 except Exception:  # noqa: BLE001 - never mask the real failure
                     pass
+                # The simulator's own log is the only place an app runtime error
+                # (Monkey C stack, missing symbol, bad font) appears; stop()
+                # collects and classifies it, and the report carries the result.
+                try:
+                    runtime_errors = getattr(driver, "runtime_errors", None)
+                    if callable(runtime_errors):
+                        result.runtime_errors = [
+                            dict(item.to_document()) for item in runtime_errors()
+                        ]
+                except Exception:  # noqa: BLE001 - diagnostics must not fail a run
+                    result.runtime_errors = []
             if context is not None and not self.dry_run:
                 try:
                     context.requests = self.shim.requests()
@@ -283,7 +307,11 @@ class ScenarioRunner:
             language=self.scenario.language,
         )
         if step.get("wait_ready", True):
-            context.driver.wait_ready(min(60.0, context.remaining()))
+            # A cold Wine prefix plus the first app start is not fast: the
+            # simulator window comes up quickly, but the app's first trace line
+            # can take most of a minute. 90 s matches the driver's own default
+            # and is still bounded by the scenario budget.
+            context.driver.wait_ready(min(90.0, context.remaining()))
         return PASSED, f"device={context.device.id} mode={self.scenario.mode}", []
 
     def _do_stop(self, step: Step, context: _Context) -> Tuple[str, str, List[str]]:

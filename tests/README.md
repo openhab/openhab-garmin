@@ -31,7 +31,7 @@ This directory is the foundation tracked by
 | openHAB 5.2.5 (stable) and 5.3.0 milestone (dev) image digests | pinned in `config/openhab.version` |
 | Device matrix covering all 17 build variants from `monkey.jungle` and `manifest.xml` | approved in [#366](https://github.com/openhab/openhab-garmin/issues/366); enforced by `runner/tests/test_variants.py` |
 | Protocol-tier scenarios (shim trace + `E2E:` trace events) | ready; need the debug trace build from [#364](https://github.com/openhab/openhab-garmin/issues/364) |
-| Wine simulator driver | contract fixed, implementation skeleton only (see [docs/simulator-driver.md](docs/simulator-driver.md)) |
+| Wine simulator driver | implemented against the contract, with the compiled-properties model and the guest-measured start order; the proof is a driver run on the guest with `--prg` (see [docs/simulator-driver.md](docs/simulator-driver.md)) |
 | Wine feasibility spike | ready to run on an approved Linux host with Docker and the SDK (see [spike/README.md](spike/README.md), issue [#370](https://github.com/openhab/openhab-garmin/issues/370)) |
 | #140 scope coverage map | checked in as `config/scope.yaml` and `docs/coverage.md`; enforced by `python -m e2e coverage --check` |
 | Stack health in every run | complete: restart counts, working set and OOM evidence are classified as `valid`/`invalid`/`unknown`; see [docs/diagnostics.md](docs/diagnostics.md) |
@@ -221,7 +221,7 @@ those steps as **skipped**. It never reports them as passed.
 | `list-scenarios` | what `run --all` would execute |
 | `variants` | the resolved build-variant table and device coverage; exits non-zero on a gap |
 | `coverage` | map #140 scope entries to scenarios; `--write` regenerates `docs/coverage.md`, `--check` fails on a gap or a stale document |
-| `contract-test` | exercise a simulator driver against the driver contract |
+| `contract-test` | exercise a simulator driver against the driver contract; `--prg` adds the cases that need a launched application and its name selects the device (a disagreeing `--device` is refused) |
 | `preflight` | read-only host check before the stack starts; `--skip` a group and `--json` for automation |
 | `validate-compose` | static Compose validation; `--check-pins` also requires digests |
 | `network-env` | render or verify the generated loopback network block in `compose/.env.example` |
@@ -229,7 +229,7 @@ those steps as **skipped**. It never reports them as passed.
 | `sdk-check` | validate the mounted SDK without starting anything |
 | `link-devices` | copy the SDK's device definitions to `$HOME/.Garmin/ConnectIQ/Devices`, where `monkeyc` looks for them; the runner entrypoint runs it at container start |
 | `health-snapshot` | record the stack's restart counts and memory before/after a run; `--phase after --artifacts` classifies the finished run |
-| `build` | compile the PRG for one or more devices with a jungle generated for that device (`--jungle` uses a supplied one instead; `--developer-key` overrides the throwaway key generated per build) |
+| `build` | compile the PRG for one or more devices with a jungle generated for that device, compiling the `--settings` fixture's property defaults in (the build asserts the values `monkeyc` emitted; `--jungle` uses a supplied one instead and cannot carry the override; `--developer-key` overrides the throwaway key generated per build) |
 
 Exit codes: `0` success, `1` scenario failures, `2` configuration or environment
 error, `3` invalid environment (a container restarted or was killed during the
@@ -581,7 +581,9 @@ happened for this change.
 - `docker compose config` and `docker compose build`.
 - Starting openHAB and verifying the fixture sitemap renders in the app.
 - Building the PRG with `monkeyc` and running a real scenario.
-- The Wine driver: it is a skeleton by design.
+- The Wine driver: it needs Wine, the simulator and an X display, so only a run
+  on the guest proves it. `contract-test --driver wine --prg <built.prg>` is
+  that proof; see [docs/simulator-driver.md](docs/simulator-driver.md).
 
 Run the first three before merging a change that touches `compose/`, `runner/Dockerfile`
 or the fixtures.

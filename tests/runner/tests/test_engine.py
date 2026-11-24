@@ -3,7 +3,7 @@
 These exercise the engine end to end without Docker, openHAB, the shim or the
 Connect IQ SDK: the null driver records the interaction, network-dependent
 steps are skipped, and the reports are written. This is the coverage that keeps
-scenario wiring and reporting honest while the Wine driver is still a skeleton.
+scenario wiring and reporting honest without needing Wine or a display.
 """
 
 from __future__ import annotations
@@ -120,6 +120,74 @@ def test_dry_run_passes_the_scenario_language_to_the_driver(
     )
     assert result.status == "passed", result.failures
     assert seen["language"] == "deu"
+
+
+def test_language_that_cannot_be_provisioned_is_reported_as_skipped(
+    tmp_path: Path, monkeypatch
+) -> None:
+    class NoLanguageDriver(NullDriver):
+        name = "wine"
+        provisions_language = False
+
+    monkeypatch.setattr(engine, "create_driver", lambda *args, **kwargs: NoLanguageDriver())
+    scenario = find_scenario("extended/localisation-sitemap-deu")
+    messages = []
+    result = run_scenario(
+        scenario,
+        find_device(default_device_id()),
+        openhab_url="http://openhab.invalid:8080",
+        shim_url="http://shim.invalid:8080",
+        artifacts_dir=tmp_path / "artifacts",
+        dry_run=True,
+        log=messages.append,
+    )
+    assert result.status == "skipped"
+    assert "cannot be provisioned" in result.skip_reason
+    assert any("SKIPPED" in message for message in messages)
+    assert result.steps == [], "a blocked run must not pretend to have executed steps"
+
+
+def test_runtime_errors_from_the_simulator_log_reach_the_report(
+    tmp_path: Path, monkeypatch
+) -> None:
+    class Entry:
+        def __init__(self, kind: str, label: str) -> None:
+            self.kind = kind
+            self.label = label
+
+        def to_document(self) -> dict:
+            return {"kind": self.kind, "label": self.label, "message": ""}
+
+    class RuntimeErrorDriver(NullDriver):
+        name = "wine"
+
+        def runtime_errors(self):
+            return (Entry("symbol-not-found", "build/device mismatch"),)
+
+    monkeypatch.setattr(engine, "create_driver", lambda *args, **kwargs: RuntimeErrorDriver())
+    scenario = find_scenario("smoke/launch-and-poll")
+    result = run_scenario(
+        scenario,
+        find_device(default_device_id()),
+        openhab_url="http://openhab.invalid:8080",
+        shim_url="http://shim.invalid:8080",
+        artifacts_dir=tmp_path / "artifacts",
+        dry_run=True,
+    )
+    assert result.status == "passed"
+    assert result.runtime_errors == [
+        {"kind": "symbol-not-found", "label": "build/device mismatch", "message": ""}
+    ]
+
+    report = Report()
+    report.add(result)
+    written = report.write_artifacts(tmp_path / "report")
+    markdown = written["markdown"].read_text(encoding="utf-8")
+    assert "simulator log: symbol-not-found" in markdown
+    junit = written["junit"].read_text(encoding="utf-8")
+    assert "symbol-not-found" in junit
+    document = json.loads(written["json"].read_text(encoding="utf-8"))
+    assert document["results"][0]["runtime_errors"][0]["kind"] == "symbol-not-found"
 
 
 def test_null_driver_contract_passes(tmp_path: Path) -> None:

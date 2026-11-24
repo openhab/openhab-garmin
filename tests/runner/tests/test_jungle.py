@@ -8,20 +8,23 @@ and need neither the SDK nor Docker.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
 
 from e2e import build as build_module
-from e2e.build import BuildError, build_prg
+from e2e.build import BuildError, build_prg, read_compiled_settings
 from e2e.jungle import (
     JungleError,
     generate_device_jungle,
     invalid_qualifiers,
     qualifier_error,
+    write_resource_override,
 )
 from e2e.paths import repo_root
 from e2e.sdk import SdkLayout
+from e2e.settings import load_settings
 from e2e.variants import jungle_products, parse_jungle, resolve_device
 
 JUNGLE = repo_root() / "monkey.jungle"
@@ -142,6 +145,45 @@ def test_generated_jungle_is_path_independent(tmp_path: Path) -> None:
                 assert Path(entry).is_absolute(), (key, entry)
 
 
+def test_settings_override_is_written_after_resbase(tmp_path: Path) -> None:
+    """Properties are compiled in through a resource override, not a file."""
+    settings = load_settings("default")
+    output = tmp_path / "out" / "fenix847mm.jungle"
+    generated = generate_device_jungle(JUNGLE, "fenix847mm", output, settings=settings)
+
+    assert generated.resource_override is not None
+    override = generated.resource_override
+    assert override == output.parent / "resource-override-fenix847mm"
+    entries = [entry.strip() for entry in _properties(generated.path)[
+        "fenix847mm.resourcePath"
+    ].split(";")]
+    assert entries[0] == "$(resBase)"
+    assert entries[1] == str(override), "the override must come right after resBase"
+    assert Path(override).is_absolute()
+
+    settings_xml = (override / "settings.xml").read_text(encoding="utf-8")
+    for name, value in settings.properties.items():
+        assert f'id="{name}"' in settings_xml
+    assert (
+        f'<property id="url_0" type="string">{settings.properties["url_0"]}</property>'
+        in settings_xml
+    )
+    assert '<property id="restapi_0" type="boolean">true</property>' in settings_xml
+    assert "<settingConfig" in settings_xml, "only defaults change, not the schema"
+
+
+def test_no_override_is_written_without_settings(tmp_path: Path) -> None:
+    generated = _generate(tmp_path, "fenix847mm")
+    assert generated.resource_override is None
+    assert not (tmp_path / "resource-override-fenix847mm").exists()
+
+
+def test_unknown_property_in_the_fixture_is_rejected(tmp_path: Path) -> None:
+    with pytest.raises(JungleError) as error:
+        write_resource_override(tmp_path / "override", {"not_a_property_0": "x"})
+    assert "no <property> element" in str(error.value)
+
+
 def test_unknown_device_is_rejected(tmp_path: Path) -> None:
     with pytest.raises(JungleError) as error:
         generate_device_jungle(JUNGLE, "notadevice", tmp_path / "out.jungle")
@@ -169,7 +211,12 @@ class _Completed:
     stderr = ""
 
 
-def _fake_monkeyc(monkeypatch: pytest.MonkeyPatch, captured: dict, completed=None) -> None:
+def _fake_monkeyc(
+    monkeypatch: pytest.MonkeyPatch,
+    captured: dict,
+    completed=None,
+    settings_document: object = None,
+) -> None:
     result = completed or _Completed()
 
     def fake_run(command, **kwargs):  # noqa: ANN001 - subprocess signature
@@ -177,9 +224,99 @@ def _fake_monkeyc(monkeypatch: pytest.MonkeyPatch, captured: dict, completed=Non
         output = Path(command[command.index("-o") + 1])
         output.parent.mkdir(parents=True, exist_ok=True)
         output.write_bytes(b"PRG")
+        if settings_document is not None:
+            (output.with_name(f"{output.stem}-settings.json")).write_text(
+                json.dumps(settings_document), encoding="utf-8"
+            )
         return result
 
     monkeypatch.setattr(build_module.subprocess, "run", fake_run)
+
+
+def test_build_asserts_the_compiled_settings(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    settings = load_settings("default")
+    document = {
+        "properties": [
+            {"id": "url_0", "type": "string", "defaultValue": settings.properties["url_0"]},
+            {
+                "id": "sitemap_0",
+                "type": "string",
+                "defaultValue": settings.properties["sitemap_0"],
+            },
+        ]
+    }
+    captured: dict = {}
+    _fake_monkeyc(monkeypatch, captured, settings_document=document)
+
+    result = build_prg(_layout(tmp_path), "fenix7", tmp_path / "out", settings=settings)
+
+    assert result.settings_json is not None
+    assert result.settings_values["url_0"] == settings.properties["url_0"]
+    generated = _properties(result.jungle)
+    assert "resource-override-fenix7" in generated["fenix7.resourcePath"]
+
+
+def test_build_fails_when_the_compiled_settings_do_not_match(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    settings = load_settings("default")
+    document = {"url_0": "http://wrong.example/", "sitemap_0": settings.properties["sitemap_0"]}
+    _fake_monkeyc(monkeypatch, {}, settings_document=document)
+
+    with pytest.raises(BuildError) as error:
+        build_prg(_layout(tmp_path), "fenix7", tmp_path / "out", settings=settings)
+
+    message = str(error.value)
+    assert "url_0: compiled" in message
+    assert "but the build requested" in message
+    assert "resourcePath order" in message
+
+
+def test_build_fails_when_the_settings_json_is_missing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _fake_monkeyc(monkeypatch, {})
+    with pytest.raises(BuildError) as error:
+        build_prg(
+            _layout(tmp_path), "fenix7", tmp_path / "out", settings=load_settings("default")
+        )
+    assert "did not write the compiled settings JSON" in str(error.value)
+
+
+def test_explicit_jungle_cannot_carry_the_settings(tmp_path: Path) -> None:
+    explicit = tmp_path / "full.jungle"
+    explicit.write_text("base.resourcePath = resources\n", encoding="utf-8")
+    with pytest.raises(BuildError) as error:
+        build_prg(
+            _layout(tmp_path),
+            "fenix7",
+            tmp_path / "out",
+            jungle=explicit,
+            settings=load_settings("default"),
+        )
+    message = str(error.value)
+    assert "--jungle" in message and "--prg" in message
+
+
+def test_compiled_settings_are_read_from_the_known_shapes(tmp_path: Path) -> None:
+    flat = tmp_path / "flat.json"
+    flat.write_text(json.dumps({"url_0": "u/", "version": 1}), encoding="utf-8")
+    assert read_compiled_settings(flat) == {"url_0": "u/"}
+
+    keyed = tmp_path / "keyed.json"
+    keyed.write_text(
+        json.dumps({"url_0": {"type": "string", "defaultValue": "v/"}}), encoding="utf-8"
+    )
+    assert read_compiled_settings(keyed) == {"url_0": "v/"}
+
+    listed = tmp_path / "listed.json"
+    listed.write_text(
+        json.dumps({"settings": [{"id": "sitemap_0", "defaultValue": "home"}]}),
+        encoding="utf-8",
+    )
+    assert read_compiled_settings(listed) == {"sitemap_0": "home"}
 
 
 def test_build_generates_a_jungle_by_default(

@@ -30,7 +30,11 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Mapping, Sequence, Set, Tuple
+from typing import Any, List, Mapping, Optional, Sequence, Set, Tuple
+from xml.sax.saxutils import escape
+
+from .paths import repo_root
+from .settings import AppSettings, resolve_tokens
 
 #: ``monkeyc`` rejects a device qualifier that the SDK's ``api.db`` does not
 #: define. The compiler repeats the line for each occurrence; the device name
@@ -62,6 +66,18 @@ _PATH_PROPERTIES = ("resourcePath", "sourcePath")
 #: ``project.*`` values that are settings, not paths.
 _NON_PATH_PROJECT_VALUES = frozenset({"true", "false"})
 
+#: A ``<property>`` default in ``settings.xml``. Application properties are
+#: built into the app from these defaults, so an override is a modified copy of
+#: this file in a resource directory that comes later in ``resourcePath``.
+_SETTINGS_PROPERTY = re.compile(
+    r'(?P<open><property\s+id="(?P<id>[^"]+)"\s+type="(?P<type>[^"]+)"[^>]*>)'
+    r"(?P<value>[^<]*)"
+    r"(?P<close></property>)"
+)
+
+#: Where the checkout keeps the app's property defaults.
+SETTINGS_SOURCE = repo_root() / "resources" / "base" / "settings.xml"
+
 
 class JungleError(RuntimeError):
     """Raised when the source jungle cannot produce a device-scoped file."""
@@ -74,6 +90,7 @@ class DeviceJungle:
     path: Path
     source: Path
     sections: Tuple[str, ...]
+    resource_override: Optional[Path] = None
 
     @property
     def transitive(self) -> Tuple[str, ...]:
@@ -169,13 +186,143 @@ def _required_sections(lines: Sequence[str], device: str) -> List[str]:
     return required
 
 
-def generate_device_jungle(source: Path, device: str, output: Path) -> DeviceJungle:
+def render_settings_xml(
+    source: str,
+    properties: Mapping[str, Any],
+    *,
+    environ: Optional[Mapping[str, str]] = None,
+) -> str:
+    """Render ``settings.xml`` with ``properties`` as the compiled defaults.
+
+    Application properties are built into the app from the defaults in this
+    file, so a modified copy in a resource directory that comes *after*
+    ``resources/base`` in ``resourcePath`` overrides them at compile time. Only
+    the ``<property>`` default values change; everything else stays byte for
+    byte, and ``${VAR}`` placeholders are resolved with the same token rules the
+    settings fixtures use.
+    """
+    seen: Set[str] = set()
+
+    def replace(match: "re.Match[str]") -> str:
+        name = match.group("id")
+        if name not in properties:
+            return match.group(0)
+        seen.add(name)
+        value = resolve_tokens(properties[name], environ)
+        return (
+            f"{match.group('open')}"
+            f"{_xml_value(value, match.group('type'))}"
+            f"{match.group('close')}"
+        )
+
+    rendered = _SETTINGS_PROPERTY.sub(replace, source)
+    missing = sorted(set(properties) - seen)
+    if missing:
+        raise JungleError(
+            "settings.xml has no <property> element for "
+            f"{', '.join(missing)}; the fixture and the app's resources have "
+            "drifted apart"
+        )
+    return rendered
+
+
+def _xml_value(value: Any, declared_type: str) -> str:
+    """Render one property default the way ``settings.xml`` declares it."""
+    if declared_type == "boolean" or isinstance(value, bool):
+        text = "true" if bool(value) else "false"
+    else:
+        text = str(value)
+    return escape(text, {'"': "&quot;"})
+
+
+def write_resource_override(
+    directory: Path,
+    properties: Mapping[str, Any],
+    *,
+    source: Optional[Path] = None,
+    environ: Optional[Mapping[str, str]] = None,
+) -> Path:
+    """Write a ``settings.xml`` override into ``directory`` and return it.
+
+    The directory is meant to be appended to a device's ``resourcePath``, which
+    is why it holds only ``settings.xml``: a resource directory overrides the
+    individual resources it defines and leaves the rest of ``resources/base``
+    alone.
+    """
+    source_path = Path(source) if source is not None else SETTINGS_SOURCE
+    try:
+        text = source_path.read_text(encoding="utf-8")
+    except OSError as error:
+        raise JungleError(f"cannot read {source_path}: {error}") from None
+    directory = Path(directory)
+    try:
+        directory.mkdir(parents=True, exist_ok=True)
+        target = directory / "settings.xml"
+        target.write_text(
+            render_settings_xml(text, properties, environ=environ), encoding="utf-8"
+        )
+    except OSError as error:
+        raise JungleError(f"cannot write the settings override in {directory}: {error}") from None
+    return target
+
+
+def _inject_resource_override(
+    lines: Sequence[str],
+    device: str,
+    override: Path,
+) -> List[str]:
+    """Insert ``override`` immediately after ``$(resBase)`` for ``device``.
+
+    ``resources/base`` carries the app's ``settings.xml``; the override has to
+    come after it in ``resourcePath`` so its ``<property>`` defaults win, and
+    before the launcher-icon directories so their resources are unaffected.
+    """
+    key = f"{device}.resourcePath"
+    for index, line in enumerate(lines):
+        match = _ASSIGNMENT.match(line)
+        if match is None:
+            continue
+        if match.group("prefix").split("=", 1)[0].strip() != key:
+            continue
+        entries = [entry.strip() for entry in match.group("value").split(";")]
+        position = next(
+            (index_ for index_, entry in enumerate(entries) if entry.startswith("$(resBase)")),
+            None,
+        )
+        if position is None:
+            entries.insert(0, str(override))
+        else:
+            entries.insert(position + 1, str(override))
+        rewritten = f"{match.group('prefix')}{';'.join(entries)}{match.group('trailing')}"
+        return lines[:index] + [rewritten] + lines[index + 1 :]
+    raise JungleError(
+        f"{device}.resourcePath is not defined in the generated jungle, so the "
+        "harness settings override cannot be applied. The device must declare "
+        "its resourcePath in monkey.jungle."
+    )
+
+
+def generate_device_jungle(
+    source: Path,
+    device: str,
+    output: Path,
+    *,
+    settings: Optional[AppSettings] = None,
+    settings_source: Optional[Path] = None,
+    environ: Optional[Mapping[str, str]] = None,
+) -> DeviceJungle:
     """Write ``output`` with only the sections ``device`` needs.
 
     ``base`` is always kept: it carries the defaults every device inherits.
     Device sections that no kept section references are dropped, which is what
     keeps ``monkeyc`` from validating qualifiers the SDK does not define.
     Comments, blank lines and non-path settings are copied verbatim.
+
+    ``settings`` adds a harness-owned ``settings.xml`` resource override next
+    to the output and appends its directory to ``<device>.resourcePath`` right
+    after ``$(resBase)``. That is how the app's compiled property defaults are
+    set: properties are built into the app at compile time and follow resource
+    overrides, so no simulator-side settings file is involved.
 
     The result is portable. ``monkeyc`` resolves relative jungle paths against
     the jungle file's directory, so a file written outside the checkout would
@@ -224,6 +371,17 @@ def generate_device_jungle(source: Path, device: str, output: Path) -> DeviceJun
         kept.append(_rewrite_paths(line, root, path_variables))
 
     output = Path(output)
+    resource_override: Optional[Path] = None
+    if settings is not None:
+        resource_override = output.parent / f"resource-override-{device}"
+        write_resource_override(
+            resource_override,
+            settings.properties,
+            source=settings_source,
+            environ=environ,
+        )
+        kept = _inject_resource_override(kept, device, resource_override)
+
     try:
         output.parent.mkdir(parents=True, exist_ok=True)
         with output.open("w", encoding="utf-8", newline="\n") as generated:
@@ -232,7 +390,12 @@ def generate_device_jungle(source: Path, device: str, output: Path) -> DeviceJun
     except OSError as error:
         raise JungleError(f"cannot write {output}: {error}") from None
 
-    return DeviceJungle(path=output, source=source, sections=tuple(sections))
+    return DeviceJungle(
+        path=output,
+        source=source,
+        sections=tuple(sections),
+        resource_override=resource_override,
+    )
 
 
 def invalid_qualifiers(output: str) -> Tuple[str, ...]:

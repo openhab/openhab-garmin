@@ -38,9 +38,21 @@ The schema is documented in [scenarios.md](scenarios.md).
 | `localisation-error-long-value` | long dynamic label in `ErrorElementNotSupported` (dedicated `garmin_localisation_long` sitemap) | language, ERRORVIEW exists | wrapping of the long value |
 | `localisation-glyphs` | connection indicator, empty-page toast, Player hints | language, views, TOAST, no error view | every glyph in those screens |
 
-The language runs also prove the wiring: `LANGUAGE` comes from
-`System.getDeviceSettings().systemLanguage`, so a simulator that silently used
-its default would fail the first assertion, not pass with English screenshots.
+The language runs are wired to prove `LANGUAGE` comes from
+`System.getDeviceSettings().systemLanguage`; a `wait_for_event` on
+`LANGUAGE;code=<lang>` fails when the app reports another language.
+
+> **Blocked: the harness cannot provision a language.** The simulator applies
+> its device language from its own UI. `Language` in `simulator.ini` is written
+> and preserved but not applied, and `LANG`/`LANGUAGE`/`LC_ALL` make no
+> difference — the app reports `eng` in every case, and `CIQ_LOG.YML` confirms
+> `Language-Code: eng` (measurements in
+> [simulator-driver.md](simulator-driver.md#language-cannot-be-provisioned)).
+> The engine therefore reports the `deu`/`fre`/`ita`/`spa`/`pol` runs as
+> **skipped** with a reason, and [coverage.md](coverage.md) marks them
+> **blocked** rather than counting them as evidence. Only `eng` is runnable
+> until the simulator's Simulation menu (device settings) or a persistence file
+> it reads becomes available.
 
 ## Strings covered
 
@@ -120,7 +132,8 @@ not claim variant completeness.
 
 Machine-asserted today:
 
-- the simulator language (`LANGUAGE;code=<lang>`);
+- the simulator language (`LANGUAGE;code=<lang>`) — the assertion exists, but
+  only `eng` is provisionable, so the other languages are skipped as blocked;
 - that the expected view is shown (`VIEW;category=...;view=...`);
 - that the full-screen error view is the current view, including its stable id
   (`ERRORVIEW;id=UI:CONFIG`, `ERRORVIEW;id=S:-402`);
@@ -137,11 +150,14 @@ automated coverage.
 
 Review procedure for an operator:
 
-1. Run one language, for example
-   `python -m e2e run extended/localisation-error-config-url-fre`.
+1. Run the English run, for example
+   `python -m e2e run extended/localisation-error-config-url-eng`. The other
+   language runs report themselves as blocked until language provisioning
+   exists.
 1. Open the PNGs in `tests/artifacts/extended/<scenario>/`.
 1. Compare the rendered message with
-   `resources/strings/<lang>/strings-<lang>.xml`.
+   `resources/strings/<lang>/strings-<lang>.xml`; for a language the harness
+   cannot run, take the screenshot by hand in the simulator UI.
 1. Check the whole message is present, that no line ends in an ellipsis the
    translation does not contain, and that accented characters are not fallback
    boxes.

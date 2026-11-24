@@ -246,10 +246,12 @@ The unit tests cover the pure logic, not the experiment. After a run, check:
 - The spike adds a headless JRE to the runner image because `monkeyc` is a Java
   launcher. That is a prerequisite of the harness's own `build` command, not a
   spike-only dependency.
-- `WineSimulatorDriver` stays a skeleton in this change. The verdict decides
-  whether implementing it is worthwhile, and the evidence shows which driver
-  methods are trivial (for example `prepare`'s prefix creation) and which are
-  not (native menus and watch-face-only capture).
+- `WineSimulatorDriver` is implemented in this change against the contract and
+  the ground truth the spike recorded. The proof is a driver run on the guest
+  (`contract-test --driver wine --prg <built.prg>` and a real scenario); the
+  session's own run does not replace it. The per-method status and the parts
+  that are still partial (runtime menus, tap geometry) are listed in
+  [../docs/simulator-driver.md](../docs/simulator-driver.md).
 - Unit tests for the pure logic live in
   `tests/runner/tests/test_spike.py` and run in the existing `harness` job. The
   experiment itself is never scheduled in CI.

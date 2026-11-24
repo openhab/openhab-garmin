@@ -5,12 +5,10 @@ smallest set of primitives a scenario needs: launch, wait until the app is up,
 inject input, capture the screen, stop, and (where available) read the app's
 console output.
 
-The interface is the contract. The Wine implementation under ``wine.py`` is a
-skeleton -- the simulator has no supported automation API, so it is driven
-through Wine, Xvfb and xdotool, and that work is deliberately separate from
-this foundation. Contract tests in ``e2e.contract`` exercise every method, so a
-half-implemented driver fails loudly instead of producing a plausible-looking
-empty run.
+The interface is the contract. ``wine.py`` drives the real simulator through
+Wine, Xvfb and ``xdotool``; ``null.py`` is the dry-run driver. Contract tests in
+``e2e.contract`` exercise every method, so a half-implemented driver fails
+loudly instead of producing a plausible-looking empty run.
 """
 
 from __future__ import annotations
@@ -23,6 +21,13 @@ from typing import ClassVar, List, Optional, Sequence
 
 from ..config import Device
 from ..settings import AppSettings
+
+#: Languages the harness can actually put the app into. Device language is a
+#: simulator device setting applied from its own UI, so unless a driver says it
+#: can provision one, only the simulator's default language is runnable. The
+#: engine reports the other language runs as blocked instead of failing them,
+#: and ``tests/docs/coverage.md`` marks them the same way.
+RUNNABLE_LANGUAGES = ("eng",)
 
 
 class Button(str, Enum):
@@ -57,6 +62,10 @@ class SimulatorDriver(abc.ABC):
     supports_events: ClassVar[bool] = False
     #: True when ``screenshot()`` yields a real screen capture.
     supports_screenshots: ClassVar[bool] = False
+    #: True when ``start()`` can put the app into the requested system language.
+    #: A driver that cannot must say so: the engine reports the runs for other
+    #: languages as blocked rather than failing them for an environment gap.
+    provisions_language: ClassVar[bool] = True
 
     # -- lifecycle ---------------------------------------------------------
     @abc.abstractmethod
