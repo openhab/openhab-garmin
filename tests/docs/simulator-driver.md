@@ -48,15 +48,44 @@ from the outside:
    ImageMagick's `import` exist, then copy the PRG to
    `<artifacts>/launch/app.prg`.
 1. **start** — verify the display answers; rewrite `simulator.ini` for the
-   device, communication state and language; start `wine simulator.exe`; wait
-   until the window title names the device; seed the app properties; launch
+   device, communication state and language; start `wine simulator.exe` and
+   wait for its window; seed the app properties; launch
    `monkeydo <prg> <device>` and capture its stdout.
 1. **wait_ready** — wait for `E2E:LANGUAGE` plus the first `E2E:VIEW` (or
-   `E2E:ERRORVIEW`), and compare the reported language with the requested one.
+   `E2E:ERRORVIEW`), compare the reported language with the requested one, and
+   record what the window title says about the device.
 1. **press / tap** — `xdotool` against the simulator window after focusing it.
 1. **screenshot** — ImageMagick `import -window <id>`, never the root window.
 1. **stop** — terminate the app and the simulator by PID; the X display and the
    Wine prefix stay alive so the next `start` is quick.
+
+### Start ordering: the generic title is expected
+
+Measured on the guest: the simulator window is titled plain `CIQ Simulator`
+until `monkeydo` pushes the app, even with a correct `simulator.ini` and every
+device definition present. With the app pushed, the title becomes
+`CIQ Simulator - fēnix® 8 47mm / … (6.0.3)`.
+
+So the order is fixed and must not be "improved" back:
+
+```text
+display ready -> simulator.ini -> simulator window ("CIQ Simulator")
+              -> monkeydo launch -> first E2E: line is the readiness gate
+```
+
+Waiting for the device name *before* launching deadlocks for the full startup
+timeout and blames the device definitions, which is a false lead. The driver
+therefore:
+
+- treats **any** window named `CIQ Simulator` as "the simulator started";
+- gates readiness on the first `E2E:` line, because that proves the app is
+  running rather than that a window exists;
+- records the device name from the title as **corroboration**: a warning when
+  the title never names a device, or names a different one, never a failure.
+
+A launch that produces no `E2E:` line at all is the failure case, and that is
+where the `link-devices` hint is accurate: the app really did not reach the
+simulator.
 
 Artifacts land under the run's artifacts directory:
 
@@ -76,7 +105,7 @@ PIDs instead.
 | --- | --- |
 | `E2E_WINE_BINARY` | Wine binary, when it is not on `PATH` |
 | `DISPLAY` | X display (default `:99`) |
-| `E2E_WINE_STARTUP_TIMEOUT` | seconds to wait for the device window (default `120`) |
+| `E2E_WINE_STARTUP_TIMEOUT` | seconds to wait for the simulator window (default `120`); the app's first trace line is bounded by the caller (90 s by default) |
 | `E2E_WINE_SETTINGS_FILE` | exact application-properties file to seed; skips discovery |
 | `E2E_WINE_SCREEN_RECT` | `x,y,width,height` of the watch screen inside the window; pin it when taps miss |
 | `E2E_WINE_KEY_<BUTTON>` | X keysym for one button, e.g. `E2E_WINE_KEY_MENU=ctrl+m` |
@@ -86,10 +115,10 @@ PIDs instead.
 | Method | Status | Notes |
 | --- | --- | --- |
 | `prepare` | implemented | Validates the external tools and copies the PRG. Runs before anything touches Wine. |
-| `start` | implemented | Display check, `simulator.ini`, device-title wait, property seeding and `monkeydo` launch. |
-| `wait_ready` | implemented | First view **and** the reported language. A missing device or a dead app fails with the console tail. The first view may be the glance (`category=glance`) on a plain `monkeydo` launch; reaching the sitemap is the app's behaviour and the scenario asserts it, not the driver. |
+| `start` | implemented | Display check, `simulator.ini`, simulator-window wait, property seeding and `monkeydo` launch. The device name is expected to appear only after the launch. |
+| `wait_ready` | implemented | First view **and** the reported language, both from the trace stream. A dead app fails with the console tail. The first view may be the glance (`category=glance`) on a plain `monkeydo` launch; reaching the sitemap is the app's behaviour and the scenario asserts it, not the driver. |
 | `press` | implemented | Keysym per semantic button; the device definition's `simulator.json` is preferred over the defaults. |
-| `tap` | partial | Requires `xdotool` focus. The screen rectangle is a centred, aspect-preserving fit of the device resolution in the window; if the bezel makes that wrong, pin `E2E_WINE_SCREEN_RECT` from a screenshot. |
+| `tap` | partial | The window is focused first. The screen rectangle is a centred, aspect-preserving fit of the device resolution in the window; if the bezel makes that wrong, pin `E2E_WINE_SCREEN_RECT` from a screenshot. |
 | `screenshot` | implemented | Captures the simulator window. Fails when the capture is not a usable PNG instead of returning a blank image. |
 | `events` | implemented | `monkeydo` stdout/stderr with receipt timestamps; `stdbuf` disables its block buffering when available. |
 | `stop` | implemented | Terminates the app and the simulator by PID; leaks nothing into the next scenario. |
@@ -127,18 +156,33 @@ URL is empty.
 
 ## Mode and language
 
-`simulator.ini` is rewritten before the simulator starts:
+`simulator.ini` is rewritten before the simulator starts, in the simulator's own
+format:
+
+- the path is
+  `<prefix>/drive_c/users/<user>/AppData/Roaming/Garmin/ConnectIQ/simulator.ini`
+  — the `ConnectIQ` root, **not** a `Simulator/` subdirectory;
+- the file is flat `key=value` lines with **no section header**;
+- every existing key is preserved, because the simulator rewrites this file
+  itself (`LastFplVersion=9` must survive) and only the keys below are replaced
+  or appended.
 
 | Requested | Keys written |
 | --- | --- |
-| `ble` | `BleState=true`, `WifiState=false` |
-| `wifi` | `BleState=false`, `WifiState=true` |
-| `offline` | `BleState=false`, `WifiState=false` |
+| `ble` | `BleState=2`, `WifiState=1` |
+| `wifi` | `BleState=1`, `WifiState=2` |
+| `offline` | `BleState=1`, `WifiState=0` |
 
-Missing keys are appended under `[Simulator]` and existing keys keep their
-spelling; the driver logs exactly which keys it wrote and appended.
+The states are numbers, not booleans. The operator's Windows simulator writes
+`BleState=2` for a connected phone; the other values follow
+`System.ConnectionState` (0 = not initialised, 1 = not connected,
+2 = connected). `offline` uses `0` for Wi-Fi on purpose: the app's
+`hasWifiCapability()` is false then, so it goes straight to `OFFLINE` instead of
+waiting for a Wi-Fi check that has nothing to talk to. `nightMode=1` and
+`UseHttpsRequirements=0` in that same file confirm the numeric convention; the
+driver does not set them.
 
-The language is written as `Language=<code>` and is **verified** through
+Language is written as `Language=<code>` and is **verified** through
 `E2E:LANGUAGE`, which the app emits from
 `System.getDeviceSettings().systemLanguage`. The configuration that was written
 is never used as evidence.
@@ -198,10 +242,11 @@ is enough to act on it.
 | Message | Meaning | Next step |
 | --- | --- | --- |
 | `no X display is answering on ':99'` | the display never came up, or `DISPLAY` names the wrong one | run `xdpyinfo -display :99` in the container; the entrypoint starts Xvfb before staging the SDK |
-| `the simulator opened an error dialog` | the Wine prefix has no device definitions | `python -m e2e link-devices` |
-| `simulator-window did not complete within …` with `last title seen: 'CIQ Simulator'` | the device did not load, so the title stayed generic | check the prefix's `AppData/Roaming/Garmin/ConnectIQ/Devices` |
-| `the simulator loaded a different device` | `LastUsedDevice` or the device argument is wrong | compare the title with `config/devices.yaml` |
+| `the simulator opened an error dialog` | the Wine prefix has no device definitions, or the simulator cannot start | `python -m e2e link-devices`, then check the prefix's `AppData/Roaming/Garmin/ConnectIQ/Devices` |
+| `simulator-window … no window titled 'CIQ Simulator' appeared` | the simulator process never produced a window | read `logs/simulator.log`; the device definitions are only one cause at this point |
+| `device title … does not match` / `does not name a device` | **warning only**; the trace stream already proved the app is running | check `LastUsedDevice` in `simulator.ini` if results look wrong |
 | `monkeydo exited with code …` | wrong PRG or device name | read `logs/console.log` |
+| `app-ready … no console line` | the app started but produced no `E2E:` line | check the PRG is a debug build and the device wiring (`link-devices` is accurate here) |
 | `the app reported system language …` | `Language` in `simulator.ini` was ignored | see the language section above |
 | `the app showed the configuration error view` | the seeded properties did not reach the app | pin `E2E_WINE_SETTINGS_FILE` |
 | `no application-properties file was found` | the simulator never created one | run the app once, save its settings, pin the file |

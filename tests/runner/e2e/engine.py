@@ -283,7 +283,11 @@ class ScenarioRunner:
             language=self.scenario.language,
         )
         if step.get("wait_ready", True):
-            context.driver.wait_ready(min(60.0, context.remaining()))
+            # A cold Wine prefix plus the first app start is not fast: the
+            # simulator window comes up quickly, but the app's first trace line
+            # can take most of a minute. 90 s matches the driver's own default
+            # and is still bounded by the scenario budget.
+            context.driver.wait_ready(min(90.0, context.remaining()))
         return PASSED, f"device={context.device.id} mode={self.scenario.mode}", []
 
     def _do_stop(self, step: Step, context: _Context) -> Tuple[str, str, List[str]]:

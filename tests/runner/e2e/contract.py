@@ -77,7 +77,7 @@ def run_contract(
     device_id: Optional[str] = None,
     settings_fixture: str = "default",
     prg: Optional[Path] = None,
-    ready_timeout_s: float = 60.0,
+    ready_timeout_s: float = 90.0,
 ) -> List[ContractCase]:
     """Exercise every part of the driver contract against ``driver``.
 

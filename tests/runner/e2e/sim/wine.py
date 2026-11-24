@@ -48,6 +48,7 @@ import os
 import re
 import shlex
 import shutil
+import socket
 import subprocess
 import tempfile
 import threading
@@ -83,11 +84,16 @@ ENV_KEY_PREFIX = "E2E_WINE_KEY_"
 #: Startup and readiness budgets in seconds.
 ENV_STARTUP_TIMEOUT = "E2E_WINE_STARTUP_TIMEOUT"
 DEFAULT_STARTUP_TIMEOUT = 120.0
-DEFAULT_READY_TIMEOUT = 60.0
+DEFAULT_READY_TIMEOUT = 90.0
 #: Delay between repeated xdotool events, so the app can process each one.
 DEFAULT_KEY_DELAY_MS = 150
 #: How long a discovery launch may run while looking for the properties file.
 DISCOVERY_LAUNCH_TIMEOUT = 25.0
+#: TCP transport ``monkeydo`` connects to; the simulator listens on it after
+#: start. Waiting for it avoids racing the push against the simulator's start-up.
+SIMULATOR_TCP_HOST = "127.0.0.1"
+SIMULATOR_TCP_PORT = 1234
+SIMULATOR_TRANSPORT_TIMEOUT = 15.0
 
 #: ``CIQ Simulator - <device marketing name> (<version>)``. The version group is
 #: optional because a device that fails to load keeps the bare title, and some
@@ -138,10 +144,17 @@ _VK_KEYSYMS: Mapping[int, str] = {
 #: Startup keys the simulator reads from ``simulator.ini``. The simulation
 #: state keys come from the #140 investigation; the driver writes them and
 #: records exactly what was written, but never claims a runtime mode change.
+#:
+#: The simulator stores these states as numbers, not booleans: the operator's
+#: Windows simulator writes ``BleState=2`` for a connected phone, and the other
+#: values follow ``System.ConnectionState`` (0 = not initialised, 1 = not
+#: connected, 2 = connected). ``offline`` uses 0 for Wi-Fi on purpose: the app's
+#: ``hasWifiCapability()`` is false then, so it goes straight to ``OFFLINE``
+#: instead of waiting for a Wi-Fi check that has nothing to talk to.
 MODE_INI_VALUES: Mapping[str, Mapping[str, str]] = {
-    "ble": {"BleState": "true", "WifiState": "false"},
-    "wifi": {"BleState": "false", "WifiState": "true"},
-    "offline": {"BleState": "false", "WifiState": "false"},
+    "ble": {"BleState": "2", "WifiState": "1"},
+    "wifi": {"BleState": "1", "WifiState": "2"},
+    "offline": {"BleState": "1", "WifiState": "0"},
 }
 
 #: The app starts in BLE and only leaves it after a request fails
@@ -165,10 +178,16 @@ SETTINGS_GLOBS: Tuple[str, ...] = (
     "drive_c/users/*/Temp/com.garmin.connectiq/**/settings.*",
 )
 
-#: Candidate ``simulator.ini`` locations, relative to the Wine prefix.
+#: Candidate ``simulator.ini`` locations, relative to the Wine prefix. The
+#: simulator keeps the file at the ``ConnectIQ`` root, not in a ``Simulator``
+#: subdirectory: on the guest the real file is
+#: ``ConnectIQ/simulator.ini`` with flat ``key=value`` lines and no section
+#: header. A stale ``ConnectIQ/Simulator/simulator.ini`` is deliberately not a
+#: candidate, so an earlier run cannot leave the driver writing a file the
+#: simulator never reads.
 INI_HINTS: Tuple[str, ...] = (
-    "drive_c/users/{user}/AppData/Roaming/Garmin/ConnectIQ/Simulator/simulator.ini",
-    "drive_c/users/{user}/AppData/Local/Garmin/ConnectIQ/Simulator/simulator.ini",
+    "drive_c/users/{user}/AppData/Roaming/Garmin/ConnectIQ/simulator.ini",
+    "drive_c/users/{user}/AppData/Local/Garmin/ConnectIQ/simulator.ini",
     "drive_c/users/{user}/Temp/com.garmin.connectiq/simulator.ini",
 )
 
@@ -564,12 +583,13 @@ class IniUpdate:
 
 
 def update_ini(text: Optional[str], updates: Mapping[str, str]) -> IniUpdate:
-    """Rewrite existing keys and append missing ones under ``[Simulator]``.
+    """Rewrite ``simulator.ini`` in the simulator's own format.
 
-    Keys are matched case-insensitively on the part before ``=`` so a
-    simulator-written key keeps its original spelling. A missing key is
-    appended rather than invented elsewhere in the document, which keeps the
-    change reviewable in the artifact.
+    The file the simulator writes is flat ``key=value`` lines with **no section
+    header** (for example ``LastFplVersion=9``, ``BleState=2``). Existing keys
+    are replaced in place and keep their original spelling, every unrelated key
+    is preserved because the simulator rewrites the file itself, and a missing
+    key is appended at the end rather than under an invented section.
     """
     lines = (text or "").splitlines()
     written: List[str] = []
@@ -585,30 +605,13 @@ def update_ini(text: Optional[str], updates: Mapping[str, str]) -> IniUpdate:
         if not found:
             pending[name] = value
 
-    appended: List[str] = []
-    if pending:
-        section = next(
-            (
-                index
-                for index, line in enumerate(lines)
-                if line.strip().lower() == "[simulator]"
-            ),
-            None,
-        )
-        new_lines = [f"{name}={value}" for name, value in pending.items()]
-        appended = list(pending)
-        if section is None:
-            if lines and lines[-1].strip():
-                lines.append("")
-            lines.append("[Simulator]")
-            lines.extend(new_lines)
-        else:
-            lines[section + 1:section + 1] = new_lines
+    for name, value in pending.items():
+        lines.append(f"{name}={value}")
 
     return IniUpdate(
         text="\n".join(lines) + "\n" if lines else "",
         written=tuple(written),
-        appended=tuple(appended),
+        appended=tuple(pending),
     )
 
 
@@ -711,11 +714,12 @@ _STAGE_HINTS: Mapping[str, str] = {
         "names the same display."
     ),
     "simulator-window": (
-        "The simulator window must name the device, e.g. `CIQ Simulator - "
-        "Fenix 7 (6.0.3)`. A generic title or an Error dialog means the device "
-        "definition was not found: run `python -m e2e link-devices` and check "
-        "that the Wine prefix has "
-        "`drive_c/users/<user>/AppData/Roaming/Garmin/ConnectIQ/Devices`."
+        "The simulator must show a window titled `CIQ Simulator`. An Error "
+        "dialog or no window at all means the simulator itself did not start: "
+        "run `python -m e2e link-devices` and check that the Wine prefix has "
+        "`drive_c/users/<user>/AppData/Roaming/Garmin/ConnectIQ/Devices`. The "
+        "device name only appears in the title after `monkeydo` pushes the app, "
+        "so it is not the readiness signal here."
     ),
     "app-launch": (
         "`monkeydo <prg> <device>` must stay running and stream `E2E:` lines. "
@@ -902,7 +906,7 @@ class WineSimulatorDriver(SimulatorDriver):
 
         self._ensure_display()
         self._write_simulator_ini(device, mode, language)
-        self._start_simulator(device)
+        self._start_simulator()
         self._seed_settings(device, settings)
         self._launch_app(device)
         self._started = True
@@ -955,6 +959,49 @@ class WineSimulatorDriver(SimulatorDriver):
                 f"{modes} is expected for requested mode {self._mode!r}. The scenario's "
                 "request assertions prove the transition."
             )
+        self._record_device_title()
+
+    def _record_device_title(self) -> None:
+        """Corroborate the requested device from the window title.
+
+        The trace stream, not the title, proves the app is running: the title
+        only gains the device name after ``monkeydo`` pushes the app. A silent
+        or different title is recorded as a warning so the run is not failed on
+        a name, but the log says what to check when results look wrong.
+        """
+        device = self._device
+        if device is None:
+            return
+        window = self._window
+        if window is None:
+            windows = self._find_windows()
+            window = windows[0] if windows else None
+        name = self._window_name(window) if window else None
+        title = parse_window_title(name or "")
+        if title.error:
+            self._record(
+                f"warning: an error dialog is visible after the app started: {name!r}"
+            )
+            return
+        if not title.loaded:
+            self._record(
+                "warning: the simulator title still does not name a device "
+                f"({name!r}); the E2E trace proves the app is running, so this is "
+                "recorded rather than failed. If the app misbehaves, check "
+                f"`LastUsedDevice` in {self._ini_description()}"
+            )
+            return
+        matches = title_matches_device(title.device, device.product, self._display_name)
+        if matches is False:
+            self._record(
+                f"warning: the simulator title names {title.device!r}, which does "
+                f"not match {device.product!r}; treat these results as suspect and "
+                f"check `LastUsedDevice` in {self._ini_description()}"
+            )
+            return
+        self._record(
+            f"device title confirms {title.device!r} for {device.product!r}"
+        )
 
     def stop(self) -> None:
         """Terminate the app and the simulator by PID; keep the X display."""
@@ -1095,7 +1142,7 @@ class WineSimulatorDriver(SimulatorDriver):
         )
 
     # -- simulator ---------------------------------------------------------
-    def _start_simulator(self, device: Device) -> None:
+    def _start_simulator(self) -> None:
         wine = self._wine()
         command = simulator_command(wine, require_simulator(self.layout))
         self.simulator_log.parent.mkdir(parents=True, exist_ok=True)
@@ -1109,70 +1156,86 @@ class WineSimulatorDriver(SimulatorDriver):
         self._record(
             f"simulator PID {self._simulator_process.pid}: {shlex.join(command)}"
         )
-        self._await_device_window(device)
+        self._await_simulator_window()
+        self._await_simulator_transport()
 
-    def _await_device_window(self, device: Device) -> None:
+    def _await_simulator_transport(self) -> None:
+        """Wait until the simulator accepts TCP connections from ``monkeydo``.
+
+        The window can exist before the transport is listening. A closed port
+        is only a warning: the launch that follows fails with its own,
+        more precise message, and this must not mask it.
+        """
+        deadline = time.monotonic() + SIMULATOR_TRANSPORT_TIMEOUT
+        while time.monotonic() < deadline:
+            try:
+                with socket.create_connection(
+                    (SIMULATOR_TCP_HOST, SIMULATOR_TCP_PORT), timeout=0.5
+                ):
+                    self._record(
+                        f"simulator transport {SIMULATOR_TCP_HOST}:"
+                        f"{SIMULATOR_TCP_PORT} accepts connections"
+                    )
+                    return
+            except OSError:
+                time.sleep(0.25)
+        self._record(
+            f"warning: {SIMULATOR_TCP_HOST}:{SIMULATOR_TCP_PORT} did not accept a "
+            f"connection within {SIMULATOR_TRANSPORT_TIMEOUT:.0f}s; launching anyway"
+        )
+
+    def _await_simulator_window(self) -> None:
+        """Wait until the simulator has *a* window.
+
+        The generic title ``CIQ Simulator`` is the correct readiness signal for
+        the process: the title only names the device once ``monkeydo`` pushes
+        the app, which happens after this returns. Waiting for the device name
+        here deadlocks for the full startup timeout and reports the wrong
+        cause, so the device name is only corroboration in :meth:`wait_ready`.
+        """
         timeout = _float_env(ENV_STARTUP_TIMEOUT, DEFAULT_STARTUP_TIMEOUT)
         deadline = time.monotonic() + timeout
-        seen = ""
         while time.monotonic() < deadline:
             process = self._simulator_process
             if process is not None and process.poll() is not None:
                 raise DriverError(
-                    f"the simulator exited with code {process.returncode} before its "
-                    f"window named {device.product!r}.\n"
+                    f"the simulator exited with code {process.returncode} before "
+                    "its window appeared.\n"
                     f"log: {self.simulator_log}\n"
                     f"{_STAGE_HINTS['simulator-window']}"
                 )
             for window in self._find_windows():
                 name = self._window_name(window) or ""
                 title = parse_window_title(name)
-                if title.raw:
-                    seen = title.raw
                 if title.error:
                     raise DriverError(
                         f"the simulator opened an error dialog ({name!r}).\n"
                         f"{_STAGE_HINTS['simulator-window']}\n"
                         f"log: {self.simulator_log}"
                     )
-                if not title.loaded:
-                    continue
-                matches = title_matches_device(
-                    title.device, device.product, self._display_name
-                )
-                if matches is False:
-                    raise DriverError(
-                        f"the simulator loaded a different device: its title is "
-                        f"{name!r}, but the scenario requested {device.product!r}"
-                        + (f" ({self._display_name!r})" if self._display_name else "")
-                        + ".\n"
-                        f"Set `LastUsedDevice` in {self._ini_description()} or check "
-                        "that the device definition is linked into the Wine prefix."
-                    )
-                if matches is None:
-                    self._record(
-                        f"warning: no device definition name to compare with; "
-                        f"accepting title {name!r} without confirming it names "
-                        f"{device.product!r}"
-                    )
                 self._window = window
-                self._record(f"simulator window {window}: {name!r} ({title.describe()})")
+                self._record(
+                    f"simulator window {window}: {name!r} ({title.describe()}); "
+                    "the device name appears once monkeydo pushes the app"
+                )
                 return
             if self._error_windows():
                 raise DriverError(
-                    "the simulator opened an error dialog; it does not show a "
-                    "window titled `CIQ Simulator - <device>`.\n"
+                    "the simulator opened an error dialog instead of its main "
+                    "window.\n"
                     f"{_STAGE_HINTS['simulator-window']}\n"
                     f"log: {self.simulator_log}"
                 )
             time.sleep(0.5)
 
-        detail = f"last title seen: {seen!r}" if seen else "no simulator window appeared"
         raise timeout_error(
             "simulator-window",
             timeout,
             display=self.display,
-            details=[detail, f"log: {self.simulator_log}"],
+            details=[
+                "no window titled `CIQ Simulator` appeared",
+                f"log: {self.simulator_log}",
+            ],
         )
 
     def _find_windows(self) -> List[str]:

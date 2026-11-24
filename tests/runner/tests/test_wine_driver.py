@@ -360,46 +360,130 @@ def test_mode_and_language_become_ini_updates() -> None:
     assert ble == {
         "LastUsedDevice": "fenix7",
         "Language": "deu",
-        "BleState": "true",
-        "WifiState": "false",
+        "BleState": "2",
+        "WifiState": "1",
     }
-    assert ini_updates("fenix7", "wifi", "eng")["WifiState"] == "true"
+    wifi = ini_updates("fenix7", "wifi", "eng")
+    assert (wifi["BleState"], wifi["WifiState"]) == ("1", "2")
     offline = ini_updates("fenix7", "offline", "eng")
-    assert (offline["BleState"], offline["WifiState"]) == ("false", "false")
+    assert (offline["BleState"], offline["WifiState"]) == ("1", "0")
     with pytest.raises(DriverError):
         ini_updates("fenix7", "carrier-pigeon", "eng")
 
 
 def test_existing_ini_keys_are_rewritten_case_insensitively() -> None:
     update = update_ini(
-        "[Simulator]\nlanguage = eng\nBleState=false\n",
-        {"Language": "deu", "BleState": "true"},
+        "language = eng\nBleState=0\n",
+        {"Language": "deu", "BleState": "2"},
     )
-    assert update.text.splitlines() == [
-        "[Simulator]",
-        "language=deu",
-        "BleState=true",
-    ]
+    assert update.text.splitlines() == ["language=deu", "BleState=2"]
     assert set(update.written) == {"Language", "BleState"}
     assert update.appended == ()
 
 
-def test_missing_ini_keys_are_appended_under_the_simulator_section() -> None:
-    update = update_ini("[Simulator]\nLanguage=eng\n", {"WifiState": "true"})
-    assert update.text.splitlines() == ["[Simulator]", "WifiState=true", "Language=eng"]
+def test_missing_ini_keys_are_appended_without_a_section_header() -> None:
+    update = update_ini("Language=eng\n", {"WifiState": "2"})
+    assert update.text.splitlines() == ["Language=eng", "WifiState=2"]
     assert update.appended == ("WifiState",)
+    assert "[" not in update.text
 
 
-def test_ini_created_from_nothing_has_a_section() -> None:
+def test_ini_created_from_nothing_is_flat() -> None:
     update = update_ini("", {"Language": "deu"})
-    assert update.text.splitlines() == ["[Simulator]", "Language=deu"]
+    assert update.text == "Language=deu\n"
+
+
+def test_ini_keeps_the_keys_the_simulator_wrote_itself() -> None:
+    """The simulator rewrites the file, so unrelated keys must survive.
+
+    The shape is the one the operator's Windows simulator writes: flat
+    ``key=value``, numeric connection states, no section header.
+    """
+    original = (
+        "LastFplVersion=9\n"
+        "LastUsedDevice=fenix9pro47mm\n"
+        "BleState=2\n"
+        "UseHttpsRequirements=0\n"
+        "nightMode=1\n"
+    )
+    update = update_ini(
+        original,
+        {
+            "LastUsedDevice": "fenix6pro",
+            "Language": "deu",
+            "BleState": "1",
+            "WifiState": "2",
+        },
+    )
+    lines = update.text.splitlines()
+    for kept in ("LastFplVersion=9", "UseHttpsRequirements=0", "nightMode=1"):
+        assert kept in lines
+    assert "LastUsedDevice=fenix6pro" in lines
+    assert "BleState=1" in lines
+    assert "Language=deu" in lines
+    assert "WifiState=2" in lines
+    assert not any(line.strip().startswith("[") for line in lines)
 
 
 def test_ini_update_is_idempotent() -> None:
-    once = update_ini("", {"Language": "deu", "BleState": "true"})
-    twice = update_ini(once.text, {"Language": "deu", "BleState": "true"})
+    once = update_ini("LastFplVersion=9\n", {"Language": "deu", "BleState": "2"})
+    twice = update_ini(once.text, {"Language": "deu", "BleState": "2"})
     assert twice.text == once.text
     assert set(twice.written) == {"Language", "BleState"}
+
+
+def test_simulator_ini_is_written_at_the_connectiq_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Not under ``ConnectIQ/Simulator/``: the simulator never reads that."""
+    monkeypatch.setenv("USER", "root")
+    monkeypatch.delenv("WINEUSERNAME", raising=False)
+    driver = _driver(tmp_path)
+    driver._write_simulator_ini(_device("fenix7"), "ble", "deu")
+
+    files = sorted((tmp_path / "prefix").rglob("simulator.ini"))
+    assert len(files) == 1
+    assert files[0].parent.name == "ConnectIQ"
+    assert "Simulator" not in files[0].parts
+    text = files[0].read_text(encoding="utf-8")
+    assert "[Simulator]" not in text
+    assert "LastUsedDevice=fenix7" in text
+    assert "Language=deu" in text
+    assert "BleState=2" in text
+    assert "WifiState=1" in text
+
+
+def test_simulator_ini_rewrite_keeps_the_simulators_own_keys(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("USER", "root")
+    monkeypatch.delenv("WINEUSERNAME", raising=False)
+    real = (
+        tmp_path
+        / "prefix"
+        / "drive_c"
+        / "users"
+        / "root"
+        / "AppData"
+        / "Roaming"
+        / "Garmin"
+        / "ConnectIQ"
+        / "simulator.ini"
+    )
+    real.parent.mkdir(parents=True)
+    real.write_text(
+        "LastFplVersion=9\nLastUsedDevice=fenix9pro47mm\nBleState=2\n", encoding="utf-8"
+    )
+    driver = _driver(tmp_path)
+    driver._write_simulator_ini(_device("fenix7"), "wifi", "eng")
+
+    text = real.read_text(encoding="utf-8")
+    assert "LastFplVersion=9" in text
+    assert "LastUsedDevice=fenix7" in text
+    assert "BleState=1" in text
+    assert "WifiState=2" in text
+    assert "Language=eng" in text
+    assert len(sorted((tmp_path / "prefix").rglob("simulator.ini"))) == 1
 
 
 # ---------------------------------------------------------------------------
@@ -674,99 +758,106 @@ def test_seeding_prefers_a_file_that_already_holds_the_app_keys(tmp_path: Path) 
     assert chosen == related
 
 
-def test_device_window_timeout_names_the_title_it_saw(
+class _IdleSimulator:
+    """A simulator process that keeps running."""
+
+    returncode = None
+    pid = 1
+
+    def poll(self) -> Optional[int]:
+        return None
+
+
+def test_generic_title_is_enough_to_start(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """The device name only appears after monkeydo pushes the app."""
     driver = _driver(tmp_path)
-    driver._prg = tmp_path / "app.prg"
-    driver._prg.write_bytes(b"prg")
-    monkeypatch.setenv(ENV_STARTUP_TIMEOUT, "1")
+    driver._simulator_process = _IdleSimulator()  # type: ignore[assignment]
     monkeypatch.setattr(driver, "_find_windows", lambda: ["42"])
     monkeypatch.setattr(driver, "_window_name", lambda window: "CIQ Simulator")
     monkeypatch.setattr(driver, "_error_windows", lambda: [])
-    monkeypatch.setattr(
-        "e2e.sim.wine.time.sleep", lambda seconds: None
-    )
-
-    class Idle:
-        returncode = None
-        pid = 1
-
-        def poll(self) -> Optional[int]:
-            return None
-
-    driver._simulator_process = Idle()  # type: ignore[assignment]
-    with pytest.raises(DriverError) as error:
-        driver._await_device_window(_device())
-    message = str(error.value)
-    assert "CIQ Simulator" in message
-    assert "link-devices" in message
+    driver._await_simulator_window()
+    assert driver._window == "42"
+    log = (driver.artifact_dir / "logs" / "driver.log").read_text(encoding="utf-8")
+    assert "monkeydo pushes the app" in log
 
 
-def test_device_window_rejects_an_error_dialog(
+def test_simulator_window_timeout_says_no_window_appeared(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     driver = _driver(tmp_path)
+    driver._simulator_process = _IdleSimulator()  # type: ignore[assignment]
+    monkeypatch.setenv(ENV_STARTUP_TIMEOUT, "1")
+    monkeypatch.setattr(driver, "_find_windows", lambda: [])
+    monkeypatch.setattr(driver, "_error_windows", lambda: [])
+    monkeypatch.setattr("e2e.sim.wine.time.sleep", lambda seconds: None)
+    with pytest.raises(DriverError) as error:
+        driver._await_simulator_window()
+    message = str(error.value)
+    assert "no window titled `CIQ Simulator` appeared" in message
+    assert "link-devices" in message
+    assert "device name only appears" in message
+
+
+def test_simulator_window_rejects_an_error_title(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    driver = _driver(tmp_path)
+    driver._simulator_process = _IdleSimulator()  # type: ignore[assignment]
     monkeypatch.setattr(driver, "_find_windows", lambda: ["42"])
     monkeypatch.setattr(driver, "_window_name", lambda window: "Error")
     monkeypatch.setattr(driver, "_error_windows", lambda: [])
-
-    class Idle:
-        returncode = None
-        pid = 1
-
-        def poll(self) -> Optional[int]:
-            return None
-
-    driver._simulator_process = Idle()  # type: ignore[assignment]
     with pytest.raises(DriverError) as error:
-        driver._await_device_window(_device())
+        driver._await_simulator_window()
     assert "error dialog" in str(error.value)
-
-
-def test_device_window_rejects_a_different_device(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    driver = _driver(tmp_path)
-    monkeypatch.setattr(driver, "_find_windows", lambda: ["42"])
-    monkeypatch.setattr(
-        driver, "_window_name", lambda window: "CIQ Simulator - Edge 540 (6.0.3)"
-    )
-    monkeypatch.setattr(driver, "_error_windows", lambda: [])
-
-    class Idle:
-        returncode = None
-        pid = 1
-
-        def poll(self) -> Optional[int]:
-            return None
-
-    driver._simulator_process = Idle()  # type: ignore[assignment]
-    with pytest.raises(DriverError) as error:
-        driver._await_device_window(_device("fenix7"))
-    assert "different device" in str(error.value)
-    assert "Edge 540" in str(error.value)
 
 
 def test_separate_error_dialog_is_reported(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     driver = _driver(tmp_path)
+    driver._simulator_process = _IdleSimulator()  # type: ignore[assignment]
     monkeypatch.setattr(driver, "_find_windows", lambda: [])
     monkeypatch.setattr(driver, "_error_windows", lambda: ["99"])
     monkeypatch.setattr("e2e.sim.wine.time.sleep", lambda seconds: None)
-
-    class Idle:
-        returncode = None
-        pid = 1
-
-        def poll(self) -> Optional[int]:
-            return None
-
-    driver._simulator_process = Idle()  # type: ignore[assignment]
     with pytest.raises(DriverError) as error:
-        driver._await_device_window(_device())
+        driver._await_simulator_window()
     assert "error dialog" in str(error.value)
+
+
+def test_transport_wait_records_success(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    driver = _driver(tmp_path)
+
+    class Connection:
+        def __enter__(self) -> "Connection":
+            return self
+
+        def __exit__(self, *args: object) -> bool:
+            return False
+
+    monkeypatch.setattr(
+        "e2e.sim.wine.socket.create_connection", lambda address, timeout=0.5: Connection()
+    )
+    driver._await_simulator_transport()
+    log = (driver.artifact_dir / "logs" / "driver.log").read_text(encoding="utf-8")
+    assert "accepts connections" in log
+
+
+def test_transport_wait_only_warns_when_the_port_stays_closed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    driver = _driver(tmp_path)
+
+    def refuse(address, timeout=0.5):  # type: ignore[no-untyped-def]
+        raise OSError("connection refused")
+
+    monkeypatch.setattr("e2e.sim.wine.SIMULATOR_TRANSPORT_TIMEOUT", 0.05)
+    monkeypatch.setattr("e2e.sim.wine.socket.create_connection", refuse)
+    monkeypatch.setattr("e2e.sim.wine.time.sleep", lambda seconds: None)
+    driver._await_simulator_transport()
+    log = (driver.artifact_dir / "logs" / "driver.log").read_text(encoding="utf-8")
+    assert "launching anyway" in log
 
 
 class _IdleApp:
@@ -779,14 +870,65 @@ class _IdleApp:
         return None
 
 
-def _ready_driver(tmp_path: Path, language: str = "deu", url: str = "http://shim/") -> WineSimulatorDriver:
+def _ready_driver(
+    tmp_path: Path,
+    language: str = "deu",
+    url: str = "http://shim/",
+    title: str = "CIQ Simulator - Fenix 7 (6.0.3)",
+) -> WineSimulatorDriver:
     driver = _driver(tmp_path)
     driver._started = True
     driver._language = language
+    driver._device = _device("fenix7")
+    driver._window = "42"
+    driver._window_name = lambda window: title  # type: ignore[method-assign]
     driver._app_process = _IdleApp()  # type: ignore[assignment]
     settings = load_settings("default").with_overrides({"url_0": url})
     driver._settings = settings
     return driver
+
+
+def _driver_log(driver: WineSimulatorDriver) -> str:
+    return (driver.artifact_dir / "logs" / "driver.log").read_text(encoding="utf-8")
+
+
+def test_wait_ready_confirms_the_device_from_the_title(tmp_path: Path) -> None:
+    driver = _ready_driver(tmp_path, language="deu")
+    driver._events = [
+        (0.0, "E2E:LANGUAGE;code=deu"),
+        (0.0, "E2E:VIEW;category=sitemap;view=HomepageMenu;depth=2"),
+    ]
+    driver.wait_ready(5.0)
+    assert "device title confirms" in _driver_log(driver)
+
+
+def test_wait_ready_warns_when_the_title_never_names_the_device(
+    tmp_path: Path,
+) -> None:
+    """The trace stream is the gate; the title is corroboration only."""
+    driver = _ready_driver(tmp_path, language="deu", title="CIQ Simulator")
+    driver._events = [
+        (0.0, "E2E:LANGUAGE;code=deu"),
+        (0.0, "E2E:VIEW;category=glance;view=GlanceSitemapView;depth=1"),
+    ]
+    driver.wait_ready(5.0)
+    log = _driver_log(driver)
+    assert "does not name a device" in log
+    assert "E2E trace proves the app is running" in log
+
+
+def test_wait_ready_warns_on_a_different_device_title(tmp_path: Path) -> None:
+    driver = _ready_driver(
+        tmp_path, language="deu", title="CIQ Simulator - Edge 540 (6.0.3)"
+    )
+    driver._events = [
+        (0.0, "E2E:LANGUAGE;code=deu"),
+        (0.0, "E2E:VIEW;category=sitemap;view=HomepageMenu;depth=2"),
+    ]
+    driver.wait_ready(5.0)
+    log = _driver_log(driver)
+    assert "does not match" in log
+    assert "Edge 540" in log
 
 
 def test_wait_ready_verifies_the_reported_language(tmp_path: Path) -> None:
