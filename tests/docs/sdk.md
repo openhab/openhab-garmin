@@ -129,10 +129,19 @@ before compiling, with the same logic as `.github/scripts/monkeyc-build`:
 - follow `$(device.` cross references transitively — for example
   `venu3.excludeAnnotations = $(approachs50.excludeAnnotations)` also keeps
   `approachs50`;
-- drop every other device section, while comments, blank lines and project
-  settings (`project.manifest`, `project.typecheck`) are copied verbatim;
-- write the result to `<artifacts>/build/<device>.jungle`, outside the
-  possibly read-only checkout.
+- drop every other device section, while comments, blank lines and non-path
+  settings (`project.typecheck`) are copied verbatim;
+- rewrite every path that refers to the checkout to an absolute path rooted at
+  the checkout: `project.manifest`, path-valued `project.*` settings,
+  `resourcePath` and `sourcePath` entries, and the variables they reference.
+  `monkeyc` resolves a relative path in a jungle file against _that file's_
+  directory, and the checkout may be read-only, so the generated file cannot
+  live in the project root;
+- write the result to `<artifacts>/build/<device>.jungle`, outside the possibly
+  read-only checkout.
+
+The generated jungle is portable: it does not depend on the directory it was
+written to, and it never needs write access to the checkout.
 
 The harness therefore no longer requires a complete SDK to compile: it needs the
 device definitions for the device under test, not for the whole matrix. The
