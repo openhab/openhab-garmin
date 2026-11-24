@@ -68,11 +68,16 @@ the app's own locale:
 ```
 
 The `LANGUAGE` trace event is emitted by `OHApp.onStart` from
-`System.getDeviceSettings().systemLanguage`, so asserting it proves the
-simulator really started in the requested language instead of silently falling
-back to the default. The engine passes the scenario language to
-`SimulatorDriver.start(device, settings, mode, language)`; a driver that cannot
-select it must raise rather than run in a different language.
+`System.getDeviceSettings().systemLanguage`, so asserting it proves which language
+the simulator really started in instead of assuming the requested one. The engine
+passes the scenario language to
+`SimulatorDriver.start(device, settings, mode, language)`. A driver declares
+`provisions_language`; when it is false and the language is not `eng`, the engine
+reports the run as **skipped** (with `skip_reason` in the report) instead of
+executing it in the wrong language. The Wine driver cannot provision a device
+language, so only `eng` runs today; the measurements are in
+[simulator-driver.md](simulator-driver.md#language-cannot-be-provisioned) and
+[coverage.md](coverage.md) marks the rest blocked.
 
 ## Scope coverage
 
@@ -268,7 +273,8 @@ diagnostics.
 1. Use `languages` instead of `language` when the behaviour must hold in every
    shipped language, and assert `LANGUAGE;code=${language}`. A language matrix
    of a `ui` scenario costs one simulator run per language; keep the rest of the
-   scenario deterministic so the only variable is the locale.
+   scenario deterministic so the only variable is the locale. Only `eng` is
+   runnable today (see the language matrix section above).
 1. Reuse an existing fixture. Add items only if the sitemap needs them, and keep
    `fixtures/openhab/conf/items` and `fixtures/openhab/conf/sitemaps` in sync —
    `python -m e2e setup` fails when a sitemap refers to an undefined item.

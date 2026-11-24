@@ -50,6 +50,8 @@ from .config import (
 )
 from .contract import format_report as format_contract_report
 from .contract import run_contract
+from .contract import ContractError
+from .contract import device_from_prg
 from .contract import exit_code as contract_exit_code
 from .contract import summary as contract_summary
 from .coverage import (
@@ -601,7 +603,15 @@ def _cmd_contract_test(args: argparse.Namespace) -> int:
     prg = Path(args.prg) if args.prg else None
     if prg is not None and not prg.is_file():
         return _fail(f"--prg {prg} is not a file")
-    cases = run_contract(driver, workdir, device_id=args.device, prg=prg)
+    if prg is not None:
+        derived = device_from_prg(prg)
+        if derived is not None:
+            print(f"device: {derived.id} (from {prg.name})")
+    try:
+        cases = run_contract(driver, workdir, device_id=args.device, prg=prg)
+    except ContractError as error:
+        driver.stop()
+        return _fail(str(error))
     print(format_contract_report(cases))
     counts = contract_summary(cases)
     print(f"\n{counts}")
@@ -882,7 +892,13 @@ def build_parser() -> argparse.ArgumentParser:
 
     contract = subparsers.add_parser("contract-test", help="exercise a simulator driver against its contract")
     contract.add_argument("--driver", choices=DRIVER_NAMES, default="null")
-    contract.add_argument("--device")
+    contract.add_argument(
+        "--device",
+        help=(
+            "device id; with --prg the device comes from the PRG's name and a "
+            "disagreeing --device is refused"
+        ),
+    )
     contract.add_argument(
         "--prg",
         help=(

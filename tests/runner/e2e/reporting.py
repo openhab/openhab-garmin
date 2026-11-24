@@ -98,6 +98,8 @@ class ScenarioResult:
     steps: List[StepResult] = field(default_factory=list)
     requests: int = 0
     failures: List[str] = field(default_factory=list)
+    runtime_errors: List[Mapping[str, str]] = field(default_factory=list)
+    skip_reason: str = ""
     artifacts_dir: str = ""
     dry_run: bool = False
 
@@ -122,6 +124,8 @@ class ScenarioResult:
             "requests": self.requests,
             "dry_run": self.dry_run,
             "failures": list(self.failures),
+            "runtime_errors": [dict(item) for item in self.runtime_errors],
+            "skip_reason": self.skip_reason,
             "artifacts_dir": self.artifacts_dir,
             "skipped_steps": [step.action for step in self.skipped_steps],
             "steps": [step.to_document() for step in self.steps],
@@ -224,11 +228,18 @@ class Report:
                     )
                     failure.text = "\n".join(result.failures)
                 elif result.status == SKIPPED:
-                    ET.SubElement(case, "skipped", message="scenario skipped")
+                    ET.SubElement(
+                        case, "skipped", message=result.skip_reason or "scenario skipped"
+                    )
                 if result.skipped_steps:
                     ET.SubElement(case, "system-out").text = (
                         "skipped steps: "
                         + ", ".join(step.action for step in result.skipped_steps)
+                    )
+                if result.runtime_errors:
+                    ET.SubElement(case, "system-err").text = "\n".join(
+                        f"{item.get('kind')}: {item.get('label')}"
+                        for item in result.runtime_errors
                     )
 
         ET.indent(root)
@@ -328,6 +339,12 @@ class Report:
                 notes.append(f"{len(result.skipped_steps)} step(s) skipped")
             if result.failures:
                 notes.append(result.failures[0].splitlines()[0])
+            if result.skip_reason:
+                notes.append(result.skip_reason)
+            for item in result.runtime_errors:
+                notes.append(
+                    f"simulator log: {item.get('kind')} ({item.get('label')})"
+                )
             notes_text = "; ".join(notes)
             lines.append(
                 f"| {result.scenario_id} | {result.tier} | {result.device} | {result.status} "
@@ -467,6 +484,12 @@ def _scenario_result_from_document(entry: Mapping[str, object]) -> ScenarioResul
         ],
         requests=int(entry.get("requests") or 0),
         failures=[str(failure) for failure in entry.get("failures") or []],
+        runtime_errors=[
+            dict(item)
+            for item in entry.get("runtime_errors") or []
+            if isinstance(item, Mapping)
+        ],
+        skip_reason=str(entry.get("skip_reason") or ""),
         artifacts_dir=str(entry.get("artifacts_dir") or ""),
         dry_run=bool(entry.get("dry_run")),
     )

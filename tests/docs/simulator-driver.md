@@ -34,8 +34,13 @@ engine reports event and golden assertions as **skipped**, never passed.
   `screenshot`, `events`) are reported `not-implemented` with that reason, and
   the command exits `2`. The placeholder PRG the contract writes is not a
   runnable app.
-- The contract starts with `mode=ble, language=deu`, so a language regression
-  surfaces in `wait_ready` rather than in a scenario.
+- The device comes from the PRG's name (`openhab-garmin-<device>.prg`, the
+  build's pattern). A `--device` that names another device is **refused**, and
+  an unrecognised PRG name needs an explicit `--device`: launching one device's
+  build as another produced a `Symbol Not Found` and a pointless `tap` failure
+  on the guest, which is a false result rather than a test.
+- The contract starts with `mode=ble, language=deu`. The language is reported
+  and compared, never forced (see "Language cannot be provisioned").
 
 ## How the Wine driver works
 
@@ -113,6 +118,8 @@ Artifacts land under the run's artifacts directory:
 | `logs/driver.log` | every driver decision, including the PIDs and the ini/properties files it wrote |
 | `logs/simulator.log` | Wine's stdout/stderr for the simulator |
 | `logs/console.log` | `monkeydo`'s stdout/stderr, i.e. the app console with the `E2E:` lines |
+| `logs/CIQ_LOG.YML` | the simulator's own runtime log, copied on `stop()`; the only place a crash or a missing symbol appears |
+| `logs/ciq-log-errors.txt` | the classified runtime errors from that log, one per class |
 
 `stop()` never uses `pkill -f <pattern>`: inside `docker exec` such a pattern
 matches the exec's own command line and kills the exec. The driver keeps both
@@ -142,7 +149,7 @@ PIDs instead.
 | `events` | implemented | `monkeydo` stdout/stderr with receipt timestamps; `stdbuf` disables its block buffering when available. |
 | `stop` | implemented | Terminates the app and the simulator by PID; leaks nothing into the next scenario. |
 | mode (`ble`/`wifi`/`offline`) | partial | The startup keys are written and reported. The app always starts in `BLE` and only leaves it after a request fails, so the driver does not claim a runtime mode; the scenario's request-count assertions cover the transition. |
-| language (`eng`/`deu`/...) | implemented, verified | `Language` is written before start and **verified** from `E2E:LANGUAGE`. A mismatch fails the run with the ini file and what was written. |
+| language (`eng`/`deu`/...) | implemented, not provisionable | `Language` is written before start but the simulator does not apply it. The reported language is compared and a mismatch is recorded as a warning; the engine skips non-`eng` runs and `coverage.md` marks them blocked. |
 | app properties | implemented, verified at build | Compiled into the PRG through a `settings.xml` resource override; `e2e build` asserts the defaults `monkeyc` emitted, and `wait_ready` rejects a `UI:CONFIG` error view. See below. |
 
 ## Application properties
@@ -218,21 +225,88 @@ waiting for a Wi-Fi check that has nothing to talk to. `nightMode=1` and
 `UseHttpsRequirements=0` in that same file confirm the numeric convention; the
 driver does not set them.
 
-Language is written as `Language=<code>` and is **verified** through
-`E2E:LANGUAGE`, which the app emits from
-`System.getDeviceSettings().systemLanguage`. The configuration that was written
+Language is written as `Language=<code>` before start and the app's actual
+language is read from `E2E:LANGUAGE` (which comes from
+`System.getDeviceSettings().systemLanguage`). The configuration that was written
 is never used as evidence.
 
+### Language cannot be provisioned
+
+Measured on the guest, twice:
+
+```text
+simulator.ini: Language=deu                            -> app: E2E:LANGUAGE;code=eng
+LANG=de_DE.UTF-8 LANGUAGE=de LC_ALL=de_DE.UTF-8 + deu  -> app: E2E:LANGUAGE;code=eng
+```
+
+The simulator's own `CIQ_LOG.YML` says `Language-Code: eng` in both cases.
+`GARMIN/Settings/` stays empty, there is no `HKCU\Software\Garmin*` key, and
+`deu` is a language the binary knows (the value survives in `simulator.ini`), so
+this is not a spelling problem: **device language is a device setting the
+simulator applies through its own UI**, and those menus are not scripted.
+
+The consequence is honest reporting, not pretending:
+
+- `wait_ready` requires that a language is reported and compares it with the
+  request. A mismatch is recorded as a **warning** in `logs/driver.log`
+  (including the requested and reported codes); it does not fail the run,
+  because no driver-side action can change it.
+- The engine skips a run whose language is not `eng` when the driver says it
+  cannot provision a language (`provisions_language = False` on the Wine
+  driver), with `skip_reason` in the report and a `skipped` entry in JUnit. The
+  dry run still exercises those scenarios' wiring with the null driver.
+- `tests/docs/coverage.md` lists every non-English variant as **blocked**
+  instead of counting it as evidence, and the summary counts them.
+
+The future path is one of: script the simulator's Simulation menu (device
+settings), or find a persistence file the simulator actually reads. The SDK
+history notes device-settings change notifications for language; nothing else on
+the guest accepted a language yet.
+
 A mode change at runtime (the simulator's `Simulation` and `Connection` menus)
-is **not implemented**. The driver would have to script native Win32 menus with
-`Alt+S`/`Alt+C` plus arrow keys and confirm the effect from `E2E:CONNECTION`;
-the spike under [`spike/`](../spike/README.md) exercises that path, and its
-verdict decides whether it is reliable enough for the driver. Until then a
-scenario that needs a mode gets it at startup, and the request-count assertions
-prove the app's behaviour.
+is likewise **not implemented**. The driver would have to script native Win32
+menus with `Alt+S`/`Alt+C` plus arrow keys and confirm the effect from
+`E2E:CONNECTION`; the spike under [`spike/`](../spike/README.md) exercises that
+path, and its verdict decides whether it is reliable enough for the driver.
+Until then a scenario that needs a mode gets it at startup, and the request-count
+assertions prove the app's behaviour.
 
 Night mode, sleep mode and HTTPS requirements are also only available through
 those menus and are not scripted.
+
+## Simulator runtime log (`CIQ_LOG.YML`)
+
+The `E2E:` stream only carries what the app prints. A crash, a missing symbol or
+a bad font appears only in the simulator's own log,
+`Temp/com.garmin.connectiq/GARMIN/APPS/LOGS/CIQ_LOG.YML`. `stop()` copies it to
+`<artifacts>/logs/CIQ_LOG.YML`, writes the classified entries to
+`logs/ciq-log-errors.txt`, records them in `logs/driver.log`, and exposes them
+through `runtime_errors()`; the engine puts them in `report.json`, the JUnit
+`system-err` and the markdown notes.
+
+| Class | Marker | What it means |
+| --- | --- | --- |
+| `symbol-not-found` | `Symbol Not Found` | **Build/device mismatch**: the PRG was compiled for another device, or its annotations do not match this device. Rebuild and launch that device's build; this is not an app defect. |
+| `invalid-font` | `Invalid Font Specified` | **Device definition**: this device's definition does not provide the font. Not an app defect until a second device shows it too. |
+| `out-of-memory` | `Out Of Memory` | App or size limit: compare the device's memory limit with the sitemap size. |
+
+The log's header (`Language-Code`, `Part-Number`, `Firmware-Version`,
+`ConnectIQ-Version`, `Appname`) is recorded too: it corroborates the environment
+a run actually had, which a screenshot cannot. Only one error per class is
+reported, so a thousand repeats do not drown the report.
+
+Two cases seen on the guest, recorded so neither is filed as an app bug:
+
+- `Symbol Not Found ... Could not find symbol 'createBufferedBitmap'` at
+  `BufferedBitmapFactory.mc:35`: that line is inside the `(:exclForCiqPre400)`
+  overload, which belongs in a `fenix847mm` build and is excluded for
+  `fenix6pro`. It appeared only because a `fenix847mm` PRG was launched as
+  `fenix6pro` — the mismatch the contract test now refuses.
+- `Invalid Font Specified` at `GlanceSitemapView.mc:99` (`_textArea.draw`) on
+  `fenix6pro` / CIQ 3.4.5 with `UI_GLANCE_FONTS = [FONT_SMALL, FONT_TINY,
+  FONT_GLANCE]`. The build used the SDK's own `api.db` (no `-a` subset), so this
+  is a device-definition limitation until a second device shows it. The
+  `fenix847mm` repeat (CIQ 6.0.4) distinguishes the two.
 
 ## Input
 
@@ -325,13 +399,17 @@ proof is a driver run on the guest, which the operator performs:
    app's property defaults in, and the build fails if `monkeyc`'s settings JSON
    does not echo them.
 1. Run `python -m e2e contract-test --driver wine --prg <built.prg>` inside the
-   runner container and confirm the report is all `pass` with exit `0`.
+   runner container and confirm the report is all `pass` with exit `0`. The
+   device is taken from the PRG name; pass `--device fenix847mm` with that
+   build so `tap` is exercised on a touch device for real.
 1. Run `python -m e2e run smoke/launch-and-poll --driver wine` (or `--prg
    <built.prg>`; the run command builds per scenario, with that scenario's
    fixture) and confirm the assertions are evaluated, not skipped.
-1. Open `logs/driver.log` and check the `simulator.ini` line names the file and
-   the keys that were written, that no properties file was needed, and that
-   the device-title line is corroboration rather than a gate.
+1. Open `logs/driver.log` and `logs/CIQ_LOG.YML`: the first should show the
+   `simulator.ini` keys, the transport, `app properties come from the build`,
+   the device-title corroboration and the language warning; the second is the
+   evidence when anything crashed. `logs/ciq-log-errors.txt` lists the
+   classified errors.
 1. Run one language scenario (`extended/localisation-sitemap`) and one mode
    scenario (`extended/wifi-mode`) to confirm the verification paths.
 1. If taps miss, compare a screenshot with `display.location` in the device's

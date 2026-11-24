@@ -22,6 +22,13 @@ from typing import ClassVar, List, Optional, Sequence
 from ..config import Device
 from ..settings import AppSettings
 
+#: Languages the harness can actually put the app into. Device language is a
+#: simulator device setting applied from its own UI, so unless a driver says it
+#: can provision one, only the simulator's default language is runnable. The
+#: engine reports the other language runs as blocked instead of failing them,
+#: and ``tests/docs/coverage.md`` marks them the same way.
+RUNNABLE_LANGUAGES = ("eng",)
+
 
 class Button(str, Enum):
     """Device buttons the harness can press.
@@ -55,6 +62,10 @@ class SimulatorDriver(abc.ABC):
     supports_events: ClassVar[bool] = False
     #: True when ``screenshot()`` yields a real screen capture.
     supports_screenshots: ClassVar[bool] = False
+    #: True when ``start()`` can put the app into the requested system language.
+    #: A driver that cannot must say so: the engine reports the runs for other
+    #: languages as blocked rather than failing them for an environment gap.
+    provisions_language: ClassVar[bool] = True
 
     # -- lifecycle ---------------------------------------------------------
     @abc.abstractmethod

@@ -20,6 +20,8 @@ from e2e.contract import (
     FAIL,
     NOT_IMPLEMENTED,
     PASS,
+    ContractError,
+    device_from_prg,
     exit_code,
     run_contract,
     summary,
@@ -48,6 +50,8 @@ from e2e.sim.wine import (
     read_device_display_name,
     read_device_keys,
     read_simulator_definition,
+    classify_ciq_message,
+    parse_ciq_log,
     render_properties,
     screen_rect,
     simulator_command,
@@ -893,6 +897,95 @@ def test_transport_wait_only_warns_when_the_port_stays_closed(
     assert "launching anyway" in log
 
 
+# ---------------------------------------------------------------------------
+# simulator runtime log
+# ---------------------------------------------------------------------------
+
+
+def test_ciq_log_messages_are_classified() -> None:
+    symbol = classify_ciq_message(
+        "Symbol Not Found Error: Could not find symbol 'createBufferedBitmap'"
+    )
+    assert symbol is not None and symbol.kind == "symbol-not-found"
+    assert "Rebuild" in symbol.label and "not treat it as an app defect" in symbol.label
+    assert "createBufferedBitmap" in symbol.message
+
+    font = classify_ciq_message("Invalid Font Specified")
+    assert font is not None and font.kind == "invalid-font"
+
+    memory = classify_ciq_message("Out Of Memory")
+    assert memory is not None and memory.kind == "out-of-memory"
+
+    assert classify_ciq_message("Something else happened") is None
+
+
+def test_ciq_log_is_parsed_with_its_header() -> None:
+    text = (
+        "header:\n"
+        "  Language-Code: eng\n"
+        "  Part-Number: 006-B4024-00\n"
+        "entries:\n"
+        "  - Message: \"Invalid Font Specified\"\n"
+        "  - Message: \"Symbol Not Found Error: Could not find symbol 'x'\"\n"
+        "  - Message: \"Unrelated warning\"\n"
+    )
+    header, errors = parse_ciq_log(text)
+    assert header["Language-Code"] == "eng"
+    assert {error.kind for error in errors} == {"invalid-font", "symbol-not-found"}
+    assert len(errors) == 2, "one per class keeps the report readable"
+
+
+def test_ciq_log_falls_back_to_raw_lines() -> None:
+    header, errors = parse_ciq_log("not: [valid yaml\nOut Of Memory\n")
+    assert header == {}
+    assert [error.kind for error in errors] == ["out-of-memory"]
+
+
+def test_ciq_log_is_collected_into_the_artifacts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("USER", "root")
+    monkeypatch.delenv("WINEUSERNAME", raising=False)
+    driver = _driver(tmp_path)
+    log = (
+        tmp_path
+        / "prefix"
+        / "drive_c"
+        / "users"
+        / "root"
+        / "Temp"
+        / "com.garmin.connectiq"
+        / "GARMIN"
+        / "APPS"
+        / "LOGS"
+        / "CIQ_LOG.YML"
+    )
+    log.parent.mkdir(parents=True)
+    log.write_text(
+        "header:\n  Language-Code: eng\nentries:\n"
+        "  - Message: \"Symbol Not Found Error: could not find 'x'\"\n",
+        encoding="utf-8",
+    )
+    driver._collect_ciq_log()
+    assert driver.ciq_log is not None and driver.ciq_log.is_file()
+    assert driver.ciq_header["Language-Code"] == "eng"
+    errors = driver.runtime_errors()
+    assert [error.kind for error in errors] == ["symbol-not-found"]
+    assert (driver.artifact_dir / "logs" / "ciq-log-errors.txt").is_file()
+
+
+def test_ciq_log_absent_is_not_an_error(tmp_path: Path) -> None:
+    driver = _driver(tmp_path)
+    driver._collect_ciq_log()
+    assert driver.runtime_errors() == ()
+    assert driver.ciq_log is None
+
+
+def test_only_the_wine_driver_cannot_provision_a_language() -> None:
+    assert WineSimulatorDriver.provisions_language is False
+    assert SimulatorDriver.provisions_language is True
+
+
 class _IdleApp:
     """A launched app that keeps running."""
 
@@ -964,17 +1057,31 @@ def test_wait_ready_warns_on_a_different_device_title(tmp_path: Path) -> None:
     assert "Edge 540" in log
 
 
-def test_wait_ready_verifies_the_reported_language(tmp_path: Path) -> None:
+def test_wait_ready_warns_when_the_language_cannot_be_provisioned(
+    tmp_path: Path,
+) -> None:
+    """A language mismatch is recorded, not failed: the harness cannot set it."""
     driver = _ready_driver(tmp_path)
     driver._events = [
         (0.0, "E2E:LANGUAGE;code=eng"),
-        (0.0, "E2E:CONNECTION;mode=BLE"),
         (0.0, "E2E:VIEW;category=sitemap;view=HomepageMenu;depth=2"),
     ]
-    with pytest.raises(DriverError) as error:
-        driver.wait_ready(5.0)
-    message = str(error.value)
-    assert "eng" in message and "deu" in message
+    driver.wait_ready(5.0)
+    log = _driver_log(driver)
+    assert "requested 'deu'" in log
+    assert "cannot provision" in log
+
+
+def test_wait_ready_confirms_the_requested_language_when_it_matches(
+    tmp_path: Path,
+) -> None:
+    driver = _ready_driver(tmp_path, language="eng")
+    driver._events = [
+        (0.0, "E2E:LANGUAGE;code=eng"),
+        (0.0, "E2E:VIEW;category=sitemap;view=HomepageMenu;depth=2"),
+    ]
+    driver.wait_ready(5.0)
+    assert "language confirmed: eng" in _driver_log(driver)
 
 
 def test_wait_ready_accepts_the_matching_language(tmp_path: Path) -> None:
@@ -1073,7 +1180,7 @@ def test_contract_reports_not_implemented_without_a_prg(tmp_path: Path) -> None:
 
 
 def test_contract_blocks_the_rest_when_start_fails(tmp_path: Path) -> None:
-    prg = tmp_path / "app.prg"
+    prg = tmp_path / "openhab-garmin-fenix7.prg"
     prg.write_bytes(b"prg")
     cases = run_contract(_FakeDriver(fail_start=True), tmp_path, prg=prg)
     by_name = {case.name: case for case in cases}
@@ -1085,10 +1192,46 @@ def test_contract_blocks_the_rest_when_start_fails(tmp_path: Path) -> None:
 
 
 def test_contract_runs_every_case_with_a_real_prg(tmp_path: Path) -> None:
-    prg = tmp_path / "app.prg"
+    prg = tmp_path / "openhab-garmin-fenix7.prg"
     prg.write_bytes(b"prg")
     driver = _FakeDriver()
     cases = run_contract(driver, tmp_path, prg=prg)
     assert {case.status for case in cases} == {PASS}
     assert driver.stopped
     assert exit_code(cases) == 0
+
+
+def test_device_is_derived_from_the_prg_name(tmp_path: Path) -> None:
+    """A build for another device must not be launched as the default one."""
+    prg = tmp_path / "openhab-garmin-fenix847mm.prg"
+    prg.write_bytes(b"prg")
+    derived = device_from_prg(prg)
+    assert derived is not None and derived.id == "fenix847mm"
+    assert device_from_prg(tmp_path / "app.prg") is None
+
+
+def test_contract_refuses_a_prg_device_mismatch(tmp_path: Path) -> None:
+    prg = tmp_path / "openhab-garmin-fenix847mm.prg"
+    prg.write_bytes(b"prg")
+    with pytest.raises(ContractError) as error:
+        run_contract(_FakeDriver(), tmp_path, prg=prg, device_id="fenix6pro")
+    message = str(error.value)
+    assert "fenix847mm" in message and "fenix6pro" in message
+    assert "Drop --device" in message
+
+
+def test_contract_requires_a_device_for_an_unrecognised_prg_name(tmp_path: Path) -> None:
+    prg = tmp_path / "my-build.prg"
+    prg.write_bytes(b"prg")
+    with pytest.raises(ContractError) as error:
+        run_contract(_FakeDriver(), tmp_path, prg=prg)
+    assert "--device" in str(error.value)
+
+
+def test_contract_accepts_an_unrecognised_name_with_an_explicit_device(
+    tmp_path: Path,
+) -> None:
+    prg = tmp_path / "my-build.prg"
+    prg.write_bytes(b"prg")
+    cases = run_contract(_FakeDriver(), tmp_path, prg=prg, device_id="fenix7")
+    assert {case.status for case in cases} == {PASS}

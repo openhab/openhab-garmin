@@ -58,6 +58,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
+import yaml
+
 from ..config import Device
 from ..sdk import (
     SdkLayout,
@@ -166,14 +168,33 @@ MODE_CONNECTION_NAMES: Mapping[str, Tuple[str, ...]] = {
     "offline": ("OFFLINE",),
 }
 
-#: Where the simulator keeps app data. Recorded so the documentation and a
-#: future driver do not have to guess: the simulator scans
-#: ``Temp/com.garmin.connectiq/GARMIN/APPS/SETTINGS`` and ``.../GARMIN/Settings``
-#: and rewrites ``<APP>.SET`` there (a property key table, no values). A
-#: ``<app>-settings.json`` dropped into that directory is consumed and deleted
-#: at launch and carries no value into the app, so the driver does not seed one.
-#: Properties come from the build instead; see ``tests/docs/simulator-driver.md``.
-SIMULATOR_APP_DATA = "drive_c/users/{user}/Temp/com.garmin.connectiq"
+#: Where the simulator keeps its own runtime log. It is the only place an app
+#: runtime error (a Monkey C stack, a missing symbol, a bad font) appears: the
+#: `E2E:` stream only carries what the app chooses to print.
+CIQ_LOG_HINT = "drive_c/users/{user}/Temp/com.garmin.connectiq/GARMIN/APPS/LOGS/CIQ_LOG.YML"
+
+#: Runtime errors this suite meets, and what each one means. The first two are
+#: false defect classes: a device/PRG mismatch and a device-definition gap.
+CIQ_ERROR_CLASSES: Tuple[Tuple[str, str, str], ...] = (
+    (
+        "symbol-not-found",
+        "Symbol Not Found",
+        "build/device mismatch: the PRG was compiled for another device, or its "
+        "annotations do not match this device. Rebuild with `e2e build --device <id>` "
+        "and launch that build; do not treat it as an app defect.",
+    ),
+    (
+        "invalid-font",
+        "Invalid Font Specified",
+        "device definition: this device's definition does not provide the font. "
+        "Not an app defect until a second device shows it too.",
+    ),
+    (
+        "out-of-memory",
+        "Out Of Memory",
+        "app or size limit: compare the device's memory limit with the sitemap size.",
+    ),
+)
 
 #: Candidate ``simulator.ini`` locations, relative to the Wine prefix. The
 #: simulator keeps the file at the ``ConnectIQ`` root, not in a ``Simulator``
@@ -744,6 +765,92 @@ def _render_value(value: Any) -> str:
 
 
 # ---------------------------------------------------------------------------
+# pure helpers: the simulator's runtime log (CIQ_LOG.YML)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class CiqLogError:
+    """One classified simulator runtime error."""
+
+    kind: str
+    label: str
+    message: str
+
+    def to_document(self) -> Dict[str, str]:
+        return {"kind": self.kind, "label": self.label, "message": self.message}
+
+
+def classify_ciq_message(message: str) -> Optional[CiqLogError]:
+    """Map a log message to one of the known false-defect classes."""
+    text = " ".join((message or "").split())
+    lowered = text.lower()
+    for kind, marker, label in CIQ_ERROR_CLASSES:
+        if marker.lower() in lowered:
+            return CiqLogError(kind=kind, label=label, message=text)
+    return None
+
+
+def _ciq_messages(node: Any) -> List[str]:
+    """Every message-ish string in a parsed log document."""
+    found: List[str] = []
+
+    def walk(value: Any) -> None:
+        if isinstance(value, Mapping):
+            for key, item in value.items():
+                if (
+                    str(key).lower() in ("message", "text", "description")
+                    and isinstance(item, str)
+                ):
+                    found.append(item)
+                else:
+                    walk(item)
+        elif isinstance(value, list):
+            for item in value:
+                walk(item)
+        elif isinstance(value, str):
+            lowered = value.lower()
+            if "error" in lowered or "invalid" in lowered or "not found" in lowered:
+                found.append(value)
+
+    walk(node)
+    return found
+
+
+def parse_ciq_log(text: str) -> Tuple[Dict[str, str], List[CiqLogError]]:
+    """Parse ``CIQ_LOG.YML`` into its header and classified runtime errors.
+
+    The file is YAML on the guest builds, but its exact shape is not part of the
+    SDK's contract. The parser therefore walks whatever YAML it gets, and falls
+    back to the raw lines for the known markers. One error per class is kept:
+    the report needs the class and the evidence, not a thousand repeats.
+    """
+    header: Dict[str, str] = {}
+    messages: List[str] = []
+    try:
+        document = yaml.safe_load(text)
+    except yaml.YAMLError:
+        document = None
+    if isinstance(document, Mapping):
+        raw_header = document.get("header") or document.get("Header")
+        if isinstance(raw_header, Mapping):
+            header = {str(key): str(value) for key, value in raw_header.items()}
+        messages = _ciq_messages(document)
+    if not messages:
+        messages = [line for line in text.splitlines() if line.strip()]
+
+    errors: List[CiqLogError] = []
+    seen: set = set()
+    for message in messages:
+        error = classify_ciq_message(message)
+        if error is None or error.kind in seen:
+            continue
+        seen.add(error.kind)
+        errors.append(error)
+    return header, errors
+
+
+# ---------------------------------------------------------------------------
 # pure helpers: error messages
 # ---------------------------------------------------------------------------
 
@@ -813,6 +920,11 @@ class WineSimulatorDriver(SimulatorDriver):
     name: str = "wine"
     supports_events: bool = True
     supports_screenshots: bool = True
+    #: The simulator applies device language from its own UI; writing
+    #: ``Language`` to ``simulator.ini`` is preserved but not applied, so this
+    #: driver cannot provision a language. ``wait_ready`` records the language
+    #: the app reports, and the engine reports other languages as blocked.
+    provisions_language: bool = False
 
     def __init__(
         self,
@@ -852,6 +964,9 @@ class WineSimulatorDriver(SimulatorDriver):
         self._display_name = ""
         self._ini_path: Optional[Path] = None
         self._ini_summary: Optional[IniUpdate] = None
+        self._ciq_errors: List[CiqLogError] = []
+        self._ciq_header: Dict[str, str] = {}
+        self._ciq_log: Optional[Path] = None
         self._started = False
         self._display_checked = False
 
@@ -943,6 +1058,9 @@ class WineSimulatorDriver(SimulatorDriver):
         self._settings = settings
         self._mode = mode
         self._language = language
+        self._ciq_errors = []
+        self._ciq_header = {}
+        self._ciq_log = None
         devices_root = find_device_definitions(self.layout.root)
         definition = read_simulator_definition(devices_root, device.product)
         self._display_name = read_device_display_name(devices_root, device.product)
@@ -967,15 +1085,18 @@ class WineSimulatorDriver(SimulatorDriver):
         language = next((event for event in parsed if event.event == "LANGUAGE"), None)
         observed = language.get("code") if language is not None else "unknown"
         if observed != self._language:
-            raise DriverError(
-                f"the app reported system language {observed!r} but the scenario "
-                f"requested {self._language!r}.\n"
-                f"simulator.ini: {self._ini_description()}\n"
-                "The simulator applies `Language` when it starts; if it ignored "
-                "the key, the language scenarios cannot run through this driver "
-                "yet (the Connection/Simulation menus are not scripted). "
-                "tests/docs/simulator-driver.md records what is implemented."
+            # The simulator applies device language through its own UI, which is
+            # not scripted. The app still reports the language it runs in, so a
+            # mismatch is evidence to record, not a reason to fail a run.
+            self._record(
+                f"warning: the app reported system language {observed!r} but the "
+                f"scenario requested {self._language!r}; device language is a "
+                "simulator setting the harness cannot provision (the ini key is "
+                "written and preserved, but not applied). tests/docs/"
+                "simulator-driver.md records the measurements."
             )
+        else:
+            self._record(f"language confirmed: {observed}")
 
         if self._settings is not None and self._settings.url:
             for event in parsed:
@@ -1052,9 +1173,25 @@ class WineSimulatorDriver(SimulatorDriver):
     def stop(self) -> None:
         """Terminate the app and the simulator by PID; keep the X display."""
         self._stop_app()
+        self._collect_ciq_log()
         self._stop_simulator()
         self._window = None
         self._started = False
+
+    def runtime_errors(self) -> Sequence[CiqLogError]:
+        """Classified simulator runtime errors from the last collected log."""
+        return tuple(self._ciq_errors)
+
+    @property
+    def ciq_header(self) -> Mapping[str, str]:
+        """The ``CIQ_LOG.YML`` header, e.g. ``Language-Code`` and
+        ``Part-Number``; corroborating evidence for the run's environment."""
+        return dict(self._ciq_header)
+
+    @property
+    def ciq_log(self) -> Optional[Path]:
+        """The copied simulator log in the artifacts, once collected."""
+        return self._ciq_log
 
     def press(self, button: Button, count: int = 1) -> None:
         """Press a device button ``count`` times."""
@@ -1192,8 +1329,8 @@ class WineSimulatorDriver(SimulatorDriver):
             self._display_checked = True
 
     # -- simulator.ini -----------------------------------------------------
-    def _ini_candidates(self) -> List[Path]:
-        users = list(
+    def _user_candidates(self) -> List[str]:
+        return list(
             dict.fromkeys(
                 [
                     os.environ.get("WINEUSERNAME") or "",
@@ -1202,8 +1339,10 @@ class WineSimulatorDriver(SimulatorDriver):
                 ]
             )
         )
+
+    def _ini_candidates(self) -> List[Path]:
         candidates: List[Path] = []
-        for user in (user for user in users if user):
+        for user in (user for user in self._user_candidates() if user):
             for hint in INI_HINTS:
                 candidates.append(self.prefix / hint.format(user=user))
         return candidates
@@ -1595,6 +1734,69 @@ class WineSimulatorDriver(SimulatorDriver):
             f"seeded {len(settings.properties)} app property/properties into {path} "
             f"({document.fmt}) as fixture {settings.name!r}"
         )
+
+    # -- simulator runtime log ---------------------------------------------
+    def _ciq_log_source(self) -> Optional[Path]:
+        for user in (user for user in self._user_candidates() if user):
+            candidate = self.prefix / CIQ_LOG_HINT.format(user=user)
+            if candidate.is_file():
+                return candidate
+        for candidate in self.prefix.glob(
+            "drive_c/users/*/Temp/com.garmin.connectiq/GARMIN/APPS/LOGS/CIQ_LOG.YML"
+        ):
+            return candidate
+        return None
+
+    def _collect_ciq_log(self) -> None:
+        """Copy and classify ``CIQ_LOG.YML``, the only place runtime errors appear.
+
+        The ``E2E:`` stream only carries what the app prints; a Monkey C stack
+        from a crash, a missing symbol or a bad font lives here. Classifying it
+        is what turns "the screenshot looked fine" into an honest result.
+        """
+        source = self._ciq_log_source()
+        if source is None:
+            self._record("no CIQ_LOG.YML in the prefix; nothing to classify")
+            return
+        try:
+            text = source.read_text(encoding="utf-8", errors="replace")
+        except OSError as error:
+            self._record(f"warning: cannot read {source}: {error}")
+            return
+        target = self.artifact_dir / "logs" / "CIQ_LOG.YML"
+        try:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(text, encoding="utf-8")
+            self._ciq_log = target
+        except OSError as error:
+            self._record(f"warning: cannot copy {source} to {target}: {error}")
+
+        header, errors = parse_ciq_log(text)
+        self._ciq_header = header
+        self._ciq_errors = list(errors)
+        if header:
+            self._record(
+                "CIQ log header: "
+                + ", ".join(f"{key}={value}" for key, value in sorted(header.items()))
+            )
+        if not errors:
+            self._record(f"CIQ log collected from {source}: no classified runtime error")
+            return
+        for error in errors:
+            self._record(
+                f"CIQ runtime error [{error.kind}]: {error.label} — {error.message}"
+            )
+        summary = self.artifact_dir / "logs" / "ciq-log-errors.txt"
+        try:
+            summary.write_text(
+                "\n".join(
+                    f"{error.kind}\t{error.label}\t{error.message}" for error in errors
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+        except OSError:
+            pass
 
     # -- helpers -----------------------------------------------------------
     def _wine(self) -> str:

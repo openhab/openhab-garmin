@@ -221,7 +221,7 @@ those steps as **skipped**. It never reports them as passed.
 | `list-scenarios` | what `run --all` would execute |
 | `variants` | the resolved build-variant table and device coverage; exits non-zero on a gap |
 | `coverage` | map #140 scope entries to scenarios; `--write` regenerates `docs/coverage.md`, `--check` fails on a gap or a stale document |
-| `contract-test` | exercise a simulator driver against the driver contract; `--prg` adds the cases that need a launched application |
+| `contract-test` | exercise a simulator driver against the driver contract; `--prg` adds the cases that need a launched application and its name selects the device (a disagreeing `--device` is refused) |
 | `preflight` | read-only host check before the stack starts; `--skip` a group and `--json` for automation |
 | `validate-compose` | static Compose validation; `--check-pins` also requires digests |
 | `network-env` | render or verify the generated loopback network block in `compose/.env.example` |

@@ -14,11 +14,12 @@ cases are reported ``not-implemented`` with that reason.
 from __future__ import annotations
 
 import inspect
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Sequence
 
-from .config import load_devices
+from .config import Device, load_devices
 from .settings import load_settings
 from .sim.base import Button, SimulatorDriver
 
@@ -26,6 +27,18 @@ PASS = "pass"
 FAIL = "fail"
 SKIPPED = "skipped"
 NOT_IMPLEMENTED = "not-implemented"
+
+
+class ContractError(RuntimeError):
+    """Raised when the contract cannot be exercised for the inputs given."""
+
+
+#: The build names a PRG ``openhab-garmin-<device>.prg`` (``build.prg_name``),
+#: so the device travels with the artifact. A PRG built for another device must
+#: never be launched as the contract's default device: on the guest that ran a
+#: fenix847mm build as fenix6pro, which produced a ``Symbol Not Found`` runtime
+#: error and made ``tap`` fail for a device that has no touch screen.
+_PRG_NAME = re.compile(r"^openhab-garmin-(?P<device>[A-Za-z0-9_]+)\.prg$")
 
 
 @dataclass(frozen=True)
@@ -42,6 +55,26 @@ class ContractCase:
 def missing_methods(driver_class: type) -> List[str]:
     """Names of abstract members left unimplemented by ``driver_class``."""
     return sorted(getattr(driver_class, "__abstractmethods__", frozenset()))
+
+
+def device_from_prg(prg: Path, devices: Optional[Sequence[Device]] = None) -> Optional[Device]:
+    """The device a PRG was built for, from its name, or ``None``.
+
+    ``None`` means the name is not the harness's pattern; a caller must then be
+    told which device to use instead of silently picking one.
+    """
+    match = _PRG_NAME.match(Path(prg).name)
+    if match is None:
+        return None
+    product = match.group("device")
+    known = tuple(devices) if devices is not None else tuple(load_devices())
+    for device in known:
+        if device.product == product:
+            return device
+    for device in known:
+        if device.id == product:
+            return device
+    return None
 
 
 def _png_is_valid(path: Path) -> str:
@@ -85,12 +118,35 @@ def run_contract(
     with one: the placeholder written here is not a runnable application. When
     it is omitted, the device-dependent cases are reported ``not-implemented``
     with that reason instead of passing or failing for the wrong cause. The
-    driver is stopped at the end even when a case fails.
+    device is taken from the PRG's name when it matches the build's pattern, and
+    a ``--device`` that disagrees raises :class:`ContractError`. The driver is
+    stopped at the end even when a case fails.
     """
     workdir = Path(workdir)
     workdir.mkdir(parents=True, exist_ok=True)
 
     devices = load_devices()
+    if prg is not None:
+        derived = device_from_prg(Path(prg), devices)
+        if derived is None:
+            if device_id is None:
+                raise ContractError(
+                    f"cannot tell which device {Path(prg).name} was built for: it "
+                    "is not named `openhab-garmin-<device>.prg`.\n"
+                    "Pass --device <id> so the contract launches it as the right "
+                    "device; launching a build for another device reports runtime "
+                    "errors that belong to no one."
+                )
+        else:
+            if device_id is not None and device_id != derived.id:
+                raise ContractError(
+                    f"--prg {Path(prg).name} was built for {derived.id!r}, but "
+                    f"--device says {device_id!r}. A PRG compiled for one device "
+                    "must not be launched as another: it surfaces runtime errors "
+                    "from the mismatch and fails input checks for the wrong "
+                    "device. Drop --device or point --prg at that device's build."
+                )
+            device_id = derived.id
     device = next(
         (candidate for candidate in devices if candidate.id == (device_id or devices[0].id)),
         devices[0],
