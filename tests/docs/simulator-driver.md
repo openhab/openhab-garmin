@@ -105,6 +105,15 @@ The Linux `shell` binary from the official SDK remains the supported path. This
 is a recorded conclusion, not an open question, so it does not have to be
 re-investigated.
 
+## Stopping the simulator
+
+`pkill -f <pattern>` inside a `docker exec` also matches the exec's own command
+line, so `docker exec runner pkill -f simulator.exe` kills the `exec` itself
+before it can report anything. This cost two commands on the guest. A driver
+that has to stop the simulator must use a PID it obtained explicitly - the
+window PID from `xdotool getwindowpid`, or a recorded child PID - or
+`pkill -x wine`, which matches the process name only.
+
 ## Fallback if Wine cannot drive the simulator menus
 
 From #140: restart-based mode transitions with reduced coverage. A driver may

@@ -7,7 +7,8 @@
 #
 # It also stages everything the compile needs: the SDK is copied out of its
 # read-only mount into a writable path, and its device definitions are linked
-# into the path monkeyc searches.
+# into the paths the toolchains search. The X server comes up first, because it
+# is cheap and independent while staging copies ~250 MB.
 set -euo pipefail
 
 sdk_hint() {
@@ -42,6 +43,37 @@ See tests/docs/sdk.md.
 ========================================================================
 MSG
 }
+
+# One X server per container, started before anything is staged: staging copies
+# the SDK (~250 MB) and validates it, and a container that reports healthy while
+# no display is up yet makes a UI driver look like a display failure. Compose
+# sets DISPLAY; start Xvfb only when the display is not already answering, so
+# restarting the entrypoint is safe.
+export DISPLAY="${DISPLAY:-:99}"
+display_number="${DISPLAY##*:}"
+if xdpyinfo -display "$DISPLAY" >/dev/null 2>&1; then
+    echo "using the X server already listening on $DISPLAY"
+else
+    # `docker restart` keeps the container filesystem, so the socket and lock of
+    # the previous Xvfb survive with no server behind them, and Xvfb refuses to
+    # start against a stale socket. Removing them is safe here: xdpyinfo just
+    # confirmed that nothing is answering on this display.
+    rm -f "/tmp/.X11-unix/X${display_number}" "/tmp/.X${display_number}-lock"
+    Xvfb "$DISPLAY" -screen 0 1920x1080x24 -nolisten tcp &
+    display_ready=false
+    for _ in $(seq 1 40); do
+        if xdpyinfo -display "$DISPLAY" >/dev/null 2>&1; then
+            display_ready=true
+            break
+        fi
+        sleep 0.25
+    done
+    if [ "$display_ready" != "true" ]; then
+        echo "error: Xvfb did not start on $DISPLAY, so nothing can render" >&2
+        echo "       check /tmp/.X11-unix/X${display_number} and /tmp/.X${display_number}-lock" >&2
+        exit 78
+    fi
+fi
 
 sdk_workdir="${CIQ_SDK_WORKDIR:-/tmp/ciq-sdk}"
 sdk_source="${CIQ_SDK_MOUNT:-${CIQ_SDK_ROOT:-}}"
@@ -112,34 +144,6 @@ fi
 if ! python -m e2e sdk-check --quiet; then
     sdk_hint
     exit 78
-fi
-
-# One X server per container. Compose sets DISPLAY; start Xvfb only when the
-# display is not already answering, so restarting the entrypoint is safe.
-export DISPLAY="${DISPLAY:-:99}"
-display_number="${DISPLAY##*:}"
-if xdpyinfo -display "$DISPLAY" >/dev/null 2>&1; then
-    echo "using the X server already listening on $DISPLAY"
-else
-    # `docker restart` keeps the container filesystem, so the socket and lock of
-    # the previous Xvfb survive with no server behind them, and Xvfb refuses to
-    # start against a stale socket. Removing them is safe here: xdpyinfo just
-    # confirmed that nothing is answering on this display.
-    rm -f "/tmp/.X11-unix/X${display_number}" "/tmp/.X${display_number}-lock"
-    Xvfb "$DISPLAY" -screen 0 1920x1080x24 -nolisten tcp &
-    display_ready=false
-    for _ in $(seq 1 40); do
-        if xdpyinfo -display "$DISPLAY" >/dev/null 2>&1; then
-            display_ready=true
-            break
-        fi
-        sleep 0.25
-    done
-    if [ "$display_ready" != "true" ]; then
-        echo "error: Xvfb did not start on $DISPLAY, so nothing can render" >&2
-        echo "       check /tmp/.X11-unix/X${display_number} and /tmp/.X${display_number}-lock" >&2
-        exit 78
-    fi
 fi
 
 exec "$@"

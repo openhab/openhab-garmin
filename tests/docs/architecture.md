@@ -106,7 +106,9 @@ The entrypoint also clears a stale X socket and lock before starting Xvfb. A
 survives with no server behind it; Xvfb refuses to start against it, and the
 container would report healthy with nothing able to render. The files are only
 removed after `xdpyinfo` says nothing is answering, and an Xvfb that never
-comes up is a fatal start-up error.
+comes up is a fatal start-up error. Xvfb starts before the SDK is staged: the
+copy is ~250 MB, and a display that only appears afterwards would make "healthy"
+and "can render" mean different things while a UI driver is already running.
 
 The copy costs the size of the SDK in the container's writable layer on each
 start; `preflight` already requires 5 GiB free disk for the stack.
