@@ -3,6 +3,12 @@
 # `commandConfirmMessage` makes the app show a confirmation dialog before the
 # command is sent (docs/USAGE.md, "Command Confirmation"). Cancelling must
 # send nothing, which is asserted on the shim trace rather than on the screen.
+#
+# This runs on the dev profile: the `confirmCmd` sitemap parameter and the
+# `commandConfirmMessage` REST field were added in openHAB core 5.3
+# (openhab/openhab-core#5769). The pinned stable image (5.2.5) predates them,
+# so it cannot express or return a confirmation at all. `garmin_confirm.sitemap`
+# is staged only by `openhab-dev-init`; see issue #394 for the finding.
 
 name: command-confirmation
 description: Cancelling a confirmed command sends nothing to openHAB.
@@ -12,51 +18,62 @@ device: fenix7
 mode: ble
 fixture: fast-polling
 openhab:
-  profile: stable
-  sitemap: garmin_e2e
+  profile: dev
+  sitemap: garmin_confirm
   items:
     E2E_GarageDoor: "OFF"
 language: eng
-timeout_s: 90
+timeout_s: 120
 
 covers:
   - sitemap.parameters-mappings
   - commands.types
+notes: >-
+  The stable pin cannot carry the `confirmCmd` parameter or the
+  `commandConfirmMessage` field, so this scenario must be run against the dev
+  profile: `COMPOSE_PROFILES=dev docker compose -f compose.yaml -f
+  compose.dev.yaml up -d`.
+
+settings:
+  sitemap_0: garmin_confirm
 
 steps:
   - action: launch
 
   - action: wait_for_request
     method: GET
-    path_prefix: /rest/sitemaps/garmin_e2e
+    path_prefix: /rest/sitemaps/garmin_confirm
     min_count: 1
     timeout_ms: 30000
 
+  - action: wait_for_event
+    description: The homepage menu is rendered before navigation starts.
+    event: VIEW
+    fields:
+      category: sitemap
+      view: HomepageMenu
+    timeout_ms: 60000
+
   - action: reset_shim
 
-  # Widgets -> Generic Switch -> Metadata -> "Garage Door Confirm".
-  - action: press
-    button: DOWN
-  - action: press
-    button: ENTER
-  - action: press
-    button: DOWN
+  # The homepage has one frame ("Confirm"); open it, then select its only
+  # element ("Garage Door Confirm").
   - action: press
     button: ENTER
-  - action: press
-    button: DOWN
-  - action: press
-    button: ENTER
-  - action: press
-    button: DOWN
+
+  - action: wait_for_event
+    description: The frame page is rendered before selecting its element.
+    event: VIEW
+    fields:
+      category: sitemap
+      view: PageMenu
+    timeout_ms: 30000
+
   - action: press
     button: ENTER
 
   # Selecting the element opens the confirmation dialog; the dialog is the
   # first thing the command menu shows for a single mapping.
-  - action: press
-    button: ENTER
-
   - action: screenshot
     name: confirmation-dialog
 

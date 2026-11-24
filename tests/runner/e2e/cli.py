@@ -2,7 +2,8 @@
 
 Subcommands:
 
-    setup             validate compose, SDK, openHAB and the shim; seed nothing
+    setup             validate compose, SDK, openHAB, the shim and the fixture sets
+    verify-fixtures   assert openHAB loaded the expected items and sitemaps
     run               run one or more scenarios and write reports
     reset             clear the shim's script and request trace
     status            one-shot health summary of every component
@@ -35,6 +36,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 from . import compose as compose_module
+from . import fixtures as fixtures_module
 from . import health as health_module
 from . import network as network_module
 from . import reporting as reporting_module
@@ -63,6 +65,7 @@ from .coverage import (
     write_markdown,
 )
 from .engine import run_scenario
+from .fixtures import FixtureError
 from .health import EXIT_INVALID_ENVIRONMENT, HealthError
 from .openhab import OpenHabClient, OpenHabError
 from .paths import repo_root, tests_root
@@ -233,13 +236,19 @@ def _cmd_setup(args: argparse.Namespace) -> int:
     shim.wait_ready(args.timeout)
     print(f"shim:    ready, {shim.describe()}")
 
-    items = {item.name for item in openhab.items()}
-    print(f"items:   {len(items)} item(s) loaded")
+    try:
+        fixture_report = fixtures_module.verify(openhab, args.profile)
+    except FixtureError as error:
+        print("fixtures: FAILED", file=sys.stderr)
+        print(str(error), file=sys.stderr)
+        return EXIT_FAILURES
+    print(f"fixtures: {fixture_report.summary()}")
 
     payload = openhab.sitemap_json(args.sitemap)
     if not payload:
         return _fail(f"sitemap {args.sitemap!r} is empty")
     referenced = openhab.item_names_in_sitemap(args.sitemap)
+    items = {item.name for item in openhab.items()}
     missing = [name for name in referenced if name not in items]
     if missing:
         return _fail(
@@ -249,6 +258,41 @@ def _cmd_setup(args: argparse.Namespace) -> int:
         )
     print(f"sitemap: {args.sitemap!r} resolves, {len(referenced)} item reference(s) all defined")
     print("setup:   ok")
+    return EXIT_OK
+
+
+def _cmd_verify_fixtures(args: argparse.Namespace) -> int:
+    openhab = OpenHabClient(_openhab_url(args))
+    try:
+        openhab.wait_ready(args.timeout)
+        report = fixtures_module.verify(
+            openhab,
+            args.profile,
+            expected_path=Path(args.expected) if args.expected else None,
+            log_paths=[Path(path) for path in args.log],
+            log_dir=Path(args.log_dir) if args.log_dir else None,
+            strict=args.strict,
+            wait_s=args.wait,
+        )
+    except (FixtureError, OpenHabError) as error:
+        print("fixtures: FAILED", file=sys.stderr)
+        print(str(error), file=sys.stderr)
+        return EXIT_FAILURES
+
+    if args.json:
+        _emit_json(
+            {
+                "ok": True,
+                "profile": report.profile,
+                "items": report.items,
+                "sitemaps": report.sitemaps,
+                "warnings": list(report.warnings),
+            }
+        )
+    else:
+        print(f"fixtures: {report.summary()}")
+        for block in report.warnings:
+            print(block)
     return EXIT_OK
 
 
@@ -821,8 +865,50 @@ def build_parser() -> argparse.ArgumentParser:
     setup = subparsers.add_parser("setup", help="validate compose, SDK, openHAB and the shim")
     add_common(setup)
     setup.add_argument("--timeout", type=float, default=180.0, help="readiness timeout in seconds")
+    setup.add_argument("--profile", choices=fixtures_module.PROFILES, default="stable", help="openHAB profile staged in the stack")
     setup.add_argument("--sitemap", default="garmin_e2e", help="sitemap to resolve as a fixture check")
     setup.set_defaults(handler=_cmd_setup)
+
+    verify_fixtures = subparsers.add_parser(
+        "verify-fixtures",
+        help="assert openHAB loaded the expected items and sitemaps",
+    )
+    add_common(verify_fixtures)
+    verify_fixtures.add_argument(
+        "--profile",
+        choices=fixtures_module.PROFILES,
+        default="stable",
+        help="openHAB profile staged in the stack",
+    )
+    verify_fixtures.add_argument(
+        "--expected",
+        help="expected fixture manifest (default: <fixtures>/openhab/expected.yaml)",
+    )
+    verify_fixtures.add_argument(
+        "--log",
+        action="append",
+        default=[],
+        help="read openHAB DSL warnings from this log file (repeatable)",
+    )
+    verify_fixtures.add_argument(
+        "--log-dir",
+        help="directory containing <profile>/logs/openhab.log",
+    )
+    verify_fixtures.add_argument(
+        "--strict",
+        action="store_true",
+        help="also fail when the sets match but openHAB logged a DSL model error",
+    )
+    verify_fixtures.add_argument(
+        "--timeout", type=float, default=180.0, help="readiness timeout in seconds"
+    )
+    verify_fixtures.add_argument(
+        "--wait",
+        type=float,
+        default=60.0,
+        help="seconds to keep retrying while openHAB finishes loading its models",
+    )
+    verify_fixtures.set_defaults(handler=_cmd_verify_fixtures)
 
     reset = subparsers.add_parser("reset", help="clear the shim script and request trace")
     add_common(reset)

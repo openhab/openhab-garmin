@@ -38,6 +38,12 @@ The schema is documented in [scenarios.md](scenarios.md).
 | `localisation-error-long-value` | long dynamic label in `ErrorElementNotSupported` (dedicated `garmin_localisation_long` sitemap) | language, ERRORVIEW exists | wrapping of the long value |
 | `localisation-glyphs` | connection indicator, empty-page toast, Player hints | language, views, TOAST, no error view | every glyph in those screens |
 
+The empty page in `garmin_localisation.sitemap` is a `Frame` without a block, not
+an empty `{}` block: the sitemap DSL rejects a linkable block with no child, and
+openHAB serializes a childless `Frame` as `"widgets": []`. The app treats that
+empty array as a page with no content and shows the `EmptyPage` toast, so the
+scenario still exercises the intended path.
+
 The language runs are wired to prove `LANGUAGE` comes from
 `System.getDeviceSettings().systemLanguage`; a `wait_for_event` on
 `LANGUAGE;code=<lang>` fails when the app reports another language.

@@ -148,6 +148,27 @@ checkout. It also runs `python -m e2e pin-images --write` before
 `tests/compose/.env` with `tests/config/openhab.version`, and the committed
 digests make that write offline.
 
+### openHAB fixture job
+
+The static job cannot prove that the fixtures parse: a healthy openHAB whose
+models were all rejected still answers HTTP 200 and returns `[]` from
+`/rest/items` and `/rest/sitemaps` (issue #394). The same workflow therefore has
+a second job, `fixtures`, with a `stable` and a `dev` matrix leg:
+
+1. derive `tests/compose/.env` from the committed pins;
+1. start the pinned openHAB image and wait for its healthcheck;
+1. read `/openhab/userdata/logs/openhab.log` from the container;
+1. run `python -m e2e verify-fixtures --profile <profile> --log openhab.log
+   --strict --wait 180`.
+
+The job is per pull request, not scheduled. The workflow is already
+path-filtered to `tests/`, `manifest.xml`, `monkey.jungle` and the workflow
+itself, so app-only pull requests pay nothing, while a fixture change is exactly
+when the cost is justified. A cold leg is one image pull plus a 60-90 s start;
+the two legs run in parallel. The dev leg is required, not optional: the stable
+pin cannot parse `confirmCmd`, and the only such fixture lives in the dev
+overlay.
+
 ## Quick start
 
 ```bash
@@ -168,8 +189,13 @@ docker compose ps                     # wait for the healthchecks
 
 cd ../runner
 python -m e2e status                  # SDK, openHAB, shim, pins
-python -m e2e setup                   # fixture sanity check over REST
+python -m e2e setup                   # fixture sets over REST, then the sitemap
+python -m e2e verify-fixtures         # the fixture guard on its own
 ```
+
+`e2e run` runs the same guard before every scenario, so a scenario can no longer
+reach an openHAB whose models were rejected; `setup` and `verify-fixtures` expose
+it for a manual check and for CI.
 
 `docker compose up -d` starts a one-shot `openhab-stable-init` (or
 `openhab-dev-init`) first: it copies `tests/fixtures/openhab/conf/` into the
@@ -214,7 +240,8 @@ those steps as **skipped**. It never reports them as passed.
 
 | Command | Purpose |
 | --- | --- |
-| `setup` | validate Compose, SDK, openHAB readiness and that the fixture sitemap resolves |
+| `setup` | validate Compose, SDK, openHAB readiness and the expected fixture sets, then resolve the fixture sitemap |
+| `verify-fixtures` | assert `/rest/items` and `/rest/sitemaps` contain the expected sets; `--strict` also fails on a `DSL model ... has errors` line, `--log` points at the openHAB log |
 | `run` | run scenario names, `--suite`, or `--all`; writes JSON, JUnit XML, Markdown and the stack-health artifact |
 | `reset` | clear the shim's script and request trace (optionally reset item states) |
 | `status` | health of every component, plus pin problems |
@@ -318,7 +345,7 @@ scheduled in CI; only its pure logic is covered by
 | regression | `empty-response` | protocol | empty 200 bodies surface as a temporary error |
 | regression | `malformed-json` | protocol | truncated JSON is critical, polling continues, a valid response recovers |
 | regression | `unsupported-widget` | ui | `Default` on a `Color` item shows an error and sends nothing |
-| regression | `command-confirmation` | ui | cancelling a confirmed command sends no request |
+| regression | `command-confirmation` | ui | on the dev profile, cancelling a confirmed command sends no request |
 | regression | `dev-profile-command-confirmation` | ui | on the dev profile the confirmation parameter is present and nothing is sent before confirming |
 | regression | `command-error-temporary` | ui | a failed command is a temporary toast and polling continues |
 | regression | `critical-error-recovery` | protocol | HTTP 404 shows the critical view and a valid poll recovers it |
@@ -381,11 +408,13 @@ BLE scenario has populated the device cache. Any `smoke/` scenario does that.
 ## Fixtures
 
 ```text
+fixtures/openhab/expected.yaml                     expected item and sitemap sets (the guard)
 fixtures/openhab/conf/items/garmin_e2e.items       every supported item type + one unsupported
 fixtures/openhab/conf/sitemaps/garmin_e2e.sitemap  every supported element and parameter
 fixtures/openhab/conf/sitemaps/garmin_unsupported.sitemap  the "no supported widget" path
 fixtures/openhab/conf/sitemaps/garmin_localisation.sitemap  stable localisation menu
 fixtures/openhab/conf/sitemaps/garmin_localisation_long.sitemap  long-dynamic-value error path
+fixtures/openhab/conf-dev/sitemaps/garmin_confirm.sitemap  dev-only `confirmCmd` case
 fixtures/app/settings/*.yaml                       Connect IQ property sets (`${E2E_SHIM_URL}`)
 ```
 
@@ -393,8 +422,42 @@ The baseline sitemap starts from the one posted in
 [#140](https://github.com/openhab/openhab-garmin/issues/140#issuecomment-...) and
 covers `Frame`, `Default`, `Text`, `Group`, `Switch`, `Selection`, `Setpoint`,
 `Slider` (including `releaseOnly`), nesting, `mappings`, `labelcolor`/`valuecolor`,
-`visibility`, `icon`/`staticIcon`, `commandConfirmMessage`, empty pages and the
-full state/command matrix (toggle, generic switch, rollershutter, player).
+`visibility`, `icon`/`staticIcon`, empty pages and the full state/command matrix
+(toggle, generic switch, rollershutter, player).
+
+### Stable and dev fixture trees
+
+`fixtures/openhab/conf` must parse on the **stable** pin (openHAB 5.2.5). One
+rejected element makes openHAB ignore the whole model, so a construct the stable
+image does not understand makes every other scenario in that file unexecutable.
+`fixtures/openhab/conf-dev` is an overlay that `openhab-dev-init` copies on top
+of the common tree for the dev profile only.
+
+That split exists because command confirmation was added in openHAB core 5.3:
+the stable pin has neither the `confirmCmd` sitemap parameter nor the
+`commandConfirmMessage` REST field. Both confirmation scenarios therefore use
+`garmin_confirm.sitemap` on the dev profile. The rest of the fixture uses valid
+DSL equivalents: `staticIcon=<icon>` (not `staticIcon=true`) marks the icon
+static, and an empty page is a `Frame` without a block (openHAB serializes it as
+`"widgets": []`, which the app turns into the empty-page toast).
+
+### Fixture guard
+
+`fixtures/openhab/expected.yaml` lists every item and, per profile, every
+sitemap. `e2e verify-fixtures`, `e2e setup` and every non-dry scenario compare it
+with `GET /rest/items` and `GET /rest/sitemaps`, retry for a short cold-start
+window, and fail with the openHAB `DSL model ... has errors` lines when the sets
+do not match. The guard derives the declared names from the DSL files and fails
+when the manifest has drifted, so adding a fixture without listing it is caught
+before openHAB is involved.
+
+The runner reads the manifest from `/e2e-fixtures`, which Compose mounts from
+`../fixtures` relative to `tests/compose` (the same source the staging service
+copies). If `E2E_REPO_ROOT` points the runner's `/work` mount at a different
+checkout, the two trees differ and the guard fails with an explicit message. The
+stack must be started from the checkout under test; `tests/compose/.env` is read
+from the Compose project directory, and `openhab-<profile>-init` stages
+`../fixtures` relative to the Compose file.
 
 Fixture files are the source of truth:
 
@@ -404,8 +467,9 @@ Fixture files are the source of truth:
 - **runtime structural changes** (adding an element while the app runs) belong to
   REST UI components (`/rest/ui/components/ui:sitemap`), not to these files.
 
-The two fixture directories are mounted **read-only** into a writable conf volume,
-so the container can create its own files without ever writing into the checkout.
+The fixture directories (the common `conf` tree and, for the dev profile, the
+`conf-dev` overlay) are mounted **read-only** into a writable conf volume, so
+the container can create its own files without ever writing into the checkout.
 
 The app settings fixtures write `url_0: ${E2E_SHIM_URL}/`, not a literal host.
 `E2E_SHIM_URL` is the same variable Compose passes to the runner, so the app
@@ -623,8 +687,11 @@ Do this once after the stack is up, and again after touching fixtures or the shi
    critical error view while polling continues.
 1. **Edge cases** – `Empty` page toast (step 2), `visibility` toggling while the app
    is open (change `E2E_Visible` over REST and watch the `Dynamic` frame),
-   `commandConfirmMessage` cancel (sends nothing), and a `Rollershutter`/`Player`
-   control (full-screen UP/DOWN/STOP and PLAY/PAUSE/NEXT/PREVIOUS).
+   `commandConfirmMessage` cancel on the **dev** profile (start it with
+   `COMPOSE_PROFILES=dev docker compose -f compose.yaml -f compose.dev.yaml up -d`,
+   then use `garmin_confirm.sitemap`; the stable pin cannot express the
+   parameter), and a `Rollershutter`/`Player` control (full-screen
+   UP/DOWN/STOP and PLAY/PAUSE/NEXT/PREVIOUS).
 
 ### Operator verification: loopback and host overlay
 
@@ -669,7 +736,9 @@ manual counterpart to `tests/runner/tests/test_compose.py` and
 | Container exits with code 78 | SDK missing, unreadable, or its `version.txt` does not match `config/sdk.version` |
 | `pins: OPENHAB_STABLE_IMAGE is not pinned` | run `python -m e2e pin-images --write` |
 | `setup: sitemap ... references item(s) that are not defined` | fixture `.items` file drifted from the sitemap |
-| openHAB healthy but no sitemap | the `garmin_e2e` fixture failed to parse; check `docker compose logs openhab-stable` |
+| openHAB healthy but no sitemap | the `garmin_e2e` fixture failed to parse; `python -m e2e verify-fixtures --strict --log <openhab.log>` prints the `DSL model ... has errors` lines, or check `docker compose logs openhab-stable` |
+| `verify-fixtures` reports `does not match the checkout fixture tree` | `E2E_REPO_ROOT` points the runner at a different checkout than the Compose project's `../fixtures`; start the stack from the checkout under test |
+| `verify-fixtures` reports `missing sitemap(s): garmin_confirm` on a dev scenario | the stack was started without `-f compose.dev.yaml`, so `openhab-dev-init` did not stage the dev overlay |
 | Everything times out on the dev profile | you started it without `-f compose.dev.yaml` |
 | `compose: services.shim.SHIM_BIND resolves to '0.0.0.0'` | the host overlay was edited to hardcode a bind address; use `${E2E_LOOPBACK_HOST}` |
 | `the generated network block has drifted` | run `python -m e2e network-env --write` after editing `config/network.yaml` |

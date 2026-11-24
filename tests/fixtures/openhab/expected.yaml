@@ -1,0 +1,56 @@
+# Expected openHAB fixture sets for the E2E harness.
+#
+# The harness asserts this file against `GET /rest/items` and
+# `GET /rest/sitemaps` before every scenario and in the CI fixture job. It is
+# the guard that turns "openHAB answered HTTP 200" into "openHAB actually
+# loaded the fixture models": an instance with zero items and zero sitemaps is
+# healthy over HTTP, which is how issue #394 stayed invisible.
+#
+# Rules:
+# - Every declared item and sitemap in the fixture tree must be listed here,
+#   and nothing else. `e2e verify-fixtures` derives the names from the DSL
+#   files and fails when this file has drifted, so a new fixture cannot be
+#   forgotten.
+# - Sitemap names are per profile. `stable` is the common tree
+#   (`openhab/conf`); `dev` adds the overlay (`openhab/conf-dev`), which is the
+#   only place constructs that openHAB 5.2.5 cannot parse (currently
+#   `confirmCmd`) may live.
+# - Item names are shared by both profiles: the overlay may add sitemaps, not
+#   items, so the item set is identical everywhere.
+
+version: 1
+
+items:
+  - E2E_ColorLight
+  - E2E_Dimmer
+  - E2E_EntranceGates_Power
+  - E2E_EntranceGates_Status
+  - E2E_GarageDoor
+  - E2E_Group
+  - E2E_GroundFloorLights
+  - E2E_LastUpdate
+  - E2E_Light
+  - E2E_Light2
+  - E2E_MediaControl
+  - E2E_Rollershutter
+  - E2E_RoomLights
+  - E2E_Setpoint
+  - E2E_Slider
+  - E2E_TV
+  - E2E_Temperature
+  - E2E_Toggle
+  - E2E_Visible
+  - E2E_Window
+
+sitemaps:
+  stable:
+    - garmin_e2e
+    - garmin_localisation
+    - garmin_localisation_long
+    - garmin_unsupported
+  dev:
+    - garmin_confirm
+    - garmin_e2e
+    - garmin_localisation
+    - garmin_localisation_long
+    - garmin_unsupported

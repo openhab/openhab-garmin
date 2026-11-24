@@ -17,11 +17,11 @@
 // makes the app show a control entry for the group in its submenu.
 Group:Switch:OR(ON,OFF) E2E_Group "Group" <light>
 Group:Switch:OR(ON,OFF) E2E_GroundFloorLights "Ground Floor Lights" <light>
-Group:Switch:OR(ON,OFF) E2E_RoomLights "Room Lights" (E2E_GroundFloorLights) <light>
+Group:Switch:OR(ON,OFF) E2E_RoomLights "Room Lights" <light> (E2E_GroundFloorLights)
 
 // --- Switches, dimmers and rollershutters ----------------------------------
-Switch E2E_Light "Switch 1" (E2E_Group, E2E_RoomLights) <light>
-Switch E2E_Light2 "Switch 2" (E2E_Group, E2E_RoomLights) <light>
+Switch E2E_Light "Switch 1" <light> (E2E_Group, E2E_RoomLights)
+Switch E2E_Light2 "Switch 2" <light> (E2E_Group, E2E_RoomLights)
 
 // Toggle switch: a Switch without ON/OFF command descriptions.
 Switch E2E_Toggle "Toggle Switch" <switch>
@@ -39,7 +39,7 @@ Rollershutter E2E_Rollershutter "Shutters" <rollershutter>
 // Player: full-screen PLAY/PAUSE/NEXT/PREVIOUS control.
 Player E2E_MediaControl "Audio" <player>
 
-Dimmer E2E_Dimmer "Dimmer" (E2E_RoomLights) <slider>
+Dimmer E2E_Dimmer "Dimmer" <slider> (E2E_RoomLights)
 
 // --- Numeric widgets -------------------------------------------------------
 Number:Temperature E2E_Temperature "Temperature" <temperature> { stateDescription="" [pattern="%.1f °C"] }
