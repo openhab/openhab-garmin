@@ -230,7 +230,7 @@ docker compose -f ../compose/compose.yaml exec runner \
   python -m e2e run --all
 
 # bring the artifacts out and finish the window
-docker compose -f ../compose/compose.yaml cp runner:/work/artifacts ./artifacts
+docker compose -f ../compose/compose.yaml cp runner:/artifacts ./artifacts
 python -m e2e health-snapshot --phase after \
   --output health-window.json --artifacts ./artifacts
 ```

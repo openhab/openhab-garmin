@@ -66,33 +66,115 @@ def test_openhab_profiles_are_exclusive() -> None:
     assert any("profiles must be exactly ['dev']" in problem for problem in problems)
 
 
-def test_fixture_directories_must_be_read_only() -> None:
+def test_openhab_must_not_mount_the_fixtures_itself() -> None:
+    """openHAB's entrypoint chowns /openhab recursively; a read-only fixture
+    mount underneath it aborts the container on first start (live-run defect)."""
     document = _document()
-    document["services"]["openhab-stable"]["volumes"] = [
-        "openhab-stable-conf:/openhab/conf",
-        "../fixtures/openhab/conf/items:/openhab/conf/items",
-        "../fixtures/openhab/conf/sitemaps:/openhab/conf/sitemaps:ro",
-        "openhab-stable-userdata:/openhab/userdata",
-    ]
+    document["services"]["openhab-stable"]["volumes"].insert(
+        1, "../fixtures/openhab/conf/items:/openhab/conf/items:ro"
+    )
     problems = compose_module.validate_compose_document(document, _env())
-    assert any("fixtures/openhab/conf/items read-only" in problem for problem in problems)
+    assert any("must not mount fixtures/openhab/conf/items" in problem for problem in problems)
+    assert any("chown -R openhab:openhab" in problem for problem in problems)
 
 
-def test_fixture_directories_must_be_mounted() -> None:
+def test_staging_service_is_required() -> None:
     document = _document()
-    document["services"]["openhab-stable"]["volumes"] = [
+    del document["services"]["openhab-dev-init"]
+    problems = compose_module.validate_compose_document(document, _env())
+    assert any("services.openhab-dev-init is missing" in problem for problem in problems)
+
+
+def test_openhab_must_wait_for_the_fixture_staging() -> None:
+    document = _document()
+    del document["services"]["openhab-stable"]["depends_on"]
+    problems = compose_module.validate_compose_document(document, _env())
+    assert any("service_completed_successfully" in problem for problem in problems)
+
+
+def test_wrong_staging_dependency_condition_is_rejected() -> None:
+    document = _document()
+    document["services"]["openhab-stable"]["depends_on"]["openhab-stable-init"][
+        "condition"
+    ] = "service_started"
+    problems = compose_module.validate_compose_document(document, _env())
+    assert any("service_completed_successfully" in problem for problem in problems)
+
+
+def test_staging_service_must_be_one_shot() -> None:
+    document = _document()
+    document["services"]["openhab-stable-init"]["restart"] = "always"
+    problems = compose_module.validate_compose_document(document, _env())
+    assert any('services.openhab-stable-init.restart must be "no"' in problem for problem in problems)
+
+
+def test_staging_service_must_use_the_pinned_openhab_image() -> None:
+    document = _document()
+    document["services"]["openhab-stable-init"]["image"] = "busybox:1.36"
+    problems = compose_module.validate_compose_document(document, _env())
+    assert any("OPENHAB_STABLE_IMAGE" in problem for problem in problems)
+
+
+def test_staging_profiles_must_match_the_openhab_service() -> None:
+    document = _document()
+    document["services"]["openhab-dev-init"]["profiles"] = ["stable"]
+    problems = compose_module.validate_compose_document(document, _env())
+    assert any("profiles must match" in problem for problem in problems)
+
+
+def test_fixture_source_mounted_read_write_is_rejected() -> None:
+    document = _document()
+    document["services"]["openhab-stable-init"]["volumes"] = [
         "openhab-stable-conf:/openhab/conf",
-        "openhab-stable-userdata:/openhab/userdata",
+        "../fixtures/openhab/conf:/fixtures",
+        "./seed-openhab-conf.sh:/seed-conf.sh:ro",
     ]
     problems = compose_module.validate_compose_document(document, _env())
-    assert any("fixtures/openhab/conf/items" in problem for problem in problems)
+    assert any("must be read-only (:ro)" in problem for problem in problems)
+
+
+def test_artifacts_mount_inside_the_read_only_checkout_is_rejected() -> None:
+    """Reproduces the live-run daemon error without Docker: a volume target
+    nested in a read-only mount cannot have its mountpoint created."""
+    document = _document()
+    runner = document["services"]["runner"]
+    runner["volumes"] = [
+        "${CIQ_SDK_HOST_PATH:?set it}:/opt/ciq-sdk:ro",
+        "${CIQ_DEVICES_HOST_PATH:-e2e-empty-devices}:/opt/ciq-devices:ro",
+        "${E2E_REPO_ROOT:-../..}:/work:ro",
+        "e2e-artifacts:/work/artifacts",
+    ]
+    runner["environment"]["E2E_ARTIFACTS"] = "/work/artifacts"
+    problems = compose_module.validate_compose_document(document, _env())
+    assert any("read-only file system" in problem for problem in problems)
+    assert any("E2E_ARTIFACTS=/work/artifacts is inside the read-only mount /work" in problem for problem in problems)
+
+
+def test_artifacts_path_must_be_covered_by_a_writable_mount() -> None:
+    document = _document()
+    document["services"]["runner"]["environment"]["E2E_ARTIFACTS"] = "/data/artifacts"
+    problems = compose_module.validate_compose_document(document, _env())
+    assert any("is not covered by a writable volume" in problem for problem in problems)
+
+
+def test_artifacts_path_must_be_absolute() -> None:
+    document = _document()
+    document["services"]["runner"]["environment"]["E2E_ARTIFACTS"] = "artifacts"
+    problems = compose_module.validate_compose_document(document, _env())
+    assert any("must be an absolute container path" in problem for problem in problems)
+
+
+def test_mount_rules_hold_for_the_repository_stack() -> None:
+    document = _document()
+    services = document["services"]
+    assert compose_module.mount_problems(services, _env()) == []
+    assert compose_module.artifacts_mount_problems(services, _env()) == []
+    assert compose_module.staging_problems(services) == []
 
 
 def test_conf_must_be_a_writable_named_volume() -> None:
     document = _document()
     document["services"]["openhab-stable"]["volumes"] = [
-        "../fixtures/openhab/conf/items:/openhab/conf/items:ro",
-        "../fixtures/openhab/conf/sitemaps:/openhab/conf/sitemaps:ro",
         "openhab-stable-userdata:/openhab/userdata",
     ]
     problems = compose_module.validate_compose_document(document, _env())
@@ -170,8 +252,9 @@ def test_shim_upstream_must_default_to_openhab_stable() -> None:
 def test_runner_sdk_mount_must_be_read_only() -> None:
     document = _document()
     document["services"]["runner"]["volumes"] = [
-        "${CIQ_SDK_ROOT:?set it}:/opt/ciq-sdk",
-        "e2e-artifacts:/work/artifacts",
+        "${CIQ_SDK_HOST_PATH:?set it}:/opt/ciq-sdk",
+        "${CIQ_DEVICES_HOST_PATH:-e2e-empty-devices}:/opt/ciq-devices:ro",
+        "e2e-artifacts:/artifacts",
     ]
     problems = compose_module.validate_compose_document(document, _env())
     assert any("read-only" in problem for problem in problems)
@@ -179,9 +262,28 @@ def test_runner_sdk_mount_must_be_read_only() -> None:
 
 def test_runner_sdk_mount_is_required() -> None:
     document = _document()
-    document["services"]["runner"]["volumes"] = ["e2e-artifacts:/work/artifacts"]
+    document["services"]["runner"]["volumes"] = [
+        "${CIQ_DEVICES_HOST_PATH:-e2e-empty-devices}:/opt/ciq-devices:ro",
+        "e2e-artifacts:/artifacts",
+    ]
     problems = compose_module.validate_compose_document(document, _env())
     assert any("must mount the Connect IQ SDK" in problem for problem in problems)
+
+
+def test_runner_device_definition_mount_is_required_and_read_only() -> None:
+    document = _document()
+    document["services"]["runner"]["volumes"] = [
+        "${CIQ_SDK_HOST_PATH:?set it}:/opt/ciq-sdk:ro",
+        "e2e-artifacts:/artifacts",
+    ]
+    problems = compose_module.validate_compose_document(document, _env())
+    assert any("device definitions at /opt/ciq-devices" in problem for problem in problems)
+
+    document["services"]["runner"]["volumes"].insert(
+        1, "${CIQ_DEVICES_HOST_PATH:-e2e-empty-devices}:/opt/ciq-devices"
+    )
+    problems = compose_module.validate_compose_document(document, _env())
+    assert any("/opt/ciq-devices read-only" in problem for problem in problems)
 
 
 def test_privileged_services_are_rejected() -> None:

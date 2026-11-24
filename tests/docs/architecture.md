@@ -7,19 +7,21 @@ flowchart LR
     subgraph stack["Docker Compose (tests/compose)"]
         runner["runner<br/>Ubuntu 24.04, Wine, Xvfb,<br/>xdotool, ImageMagick, Python 3"]
         shim["shim<br/>proxy + fault injector<br/>records every request"]
+        init["openhab-&lt;profile&gt;-init<br/>one-shot fixture staging"]
         stable["openhab-stable<br/>profile: stable (default)"]
         dev["openhab-dev<br/>profile: dev (opt-in)"]
         fx[("fixtures<br/>items + sitemaps (ro)")]
-        arts[("e2e-artifacts")]
+        arts[("e2e-artifacts<br/>mounted at /artifacts")]
     end
-    sdk[("Connect IQ SDK<br/>mounted ro, never baked")]
+    sdk[("Connect IQ SDK<br/>mounted ro, copied to /tmp")]
     sdk --> runner
     runner -->|"monkeyc builds PRG"| runner
     runner -->|"app HTTP requests"| shim
     shim -->|"proxy"| stable
     shim -.->|"proxy (dev override)"| dev
-    fx --> stable
-    fx -.-> dev
+    fx -->|"copy into the conf volume"| init
+    init -->|"service_completed_successfully"| stable
+    init -.->|"same, dev profile"| dev
     runner --> arts
 ```
 
@@ -27,8 +29,72 @@ flowchart LR
 | --- | --- | --- |
 | `runner` | build the PRG, drive one simulator, run steps, assert, report | contain or download the SDK |
 | `shim` | record requests, inject scripted faults | know about the app's internals |
+| `openhab-<profile>-init` | seed the conf volume with `dist/conf` and the fixture tree, then exit | stay running, serve requests |
 | `openhab-stable` / `openhab-dev` | serve the sitemap, apply item state | talk to the app directly |
 | fixtures | define item structure and the sitemap | hold item _state_ |
+| `e2e-artifacts` | reports, JUnit XML, screenshots, bundles, build output | live inside the read-only checkout mount |
+
+## Fixture staging
+
+The fixtures are the source of truth and stay read-only, but they cannot be
+mounted directly into the openHAB conf volume. The image's entrypoint ends with
+`chown -R openhab:openhab /openhab` under `set -e`; the first live run on a real
+host died exactly there:
+
+```text
++ initialize_volume /openhab/conf /openhab/dist/conf
++ chown -R openhab:openhab /openhab
+chown: changing ownership of '/openhab/conf/items/garmin_e2e.items': Read-only file system
+```
+
+So `openhab-stable-init` / `openhab-dev-init` run first, one-shot, and:
+
+1. seed `/openhab/conf` from the image's `/openhab/dist/conf` **only while the
+   volume is empty**. That is what the image's own `initialize_volume` does;
+   because the init step leaves the volume non-empty, openHAB skips its own
+   seeding and would otherwise start without the dist skeleton;
+1. replace `conf/items` and `conf/sitemaps` with the fixture trees, so a second
+   `up` is idempotent and a fixture removed from the repository disappears from
+   the volume;
+1. `chown -R openhab:openhab` is left to openHAB itself, which can now do it
+   because nothing underneath `/openhab` is read-only.
+
+The staging step uses the pinned openHAB image rather than a small helper image:
+it needs `/openhab/dist/conf`, `cp`, and the same uid/gid openHAB runs as, and
+it is already digest-pinned and checked by `validate-compose --check-pins`. A
+helper image copying only the fixtures would skip step 1 and could break the
+first start in a new way.
+
+openHAB starts only after `condition: service_completed_successfully`, and
+`validate-compose` fails when that dependency is missing, when an openHAB
+service mounts the fixtures itself, when any read-only mount lands under
+`/openhab`, or when a fixture source is mounted read-write.
+
+Reset paths: `docker compose run --rm --no-deps openhab-stable-init` re-asserts
+the fixture state in a running stack, and `docker compose down -v` followed by
+`up` rebuilds the volumes from scratch.
+
+## Runner start-up
+
+The SDK is mounted read-only at `/opt/ciq-sdk` (Garmin's agreement forbids
+redistribution, and the operator's SDK must not be mutated), but `monkeyc`
+rewrites `$SDK/bin/default.jungle`, so the compiler cannot run from the mount:
+
+```text
+ERROR: fenix7: Error occurred while processing application jungle file:
+/opt/ciq-sdk/linux/bin/default.jungle (Read-only file system)
+```
+
+`entrypoint.sh` therefore copies `/opt/ciq-sdk` to `CIQ_SDK_WORKDIR`
+(`/tmp/ciq-sdk`) on every container start and exports `CIQ_SDK_ROOT` to the
+copy. It also copies the SDK's device definitions to
+`$HOME/.Garmin/ConnectIQ/Devices`, which is where `monkeyc -d <device>` resolves
+them; without that, `sdk-check` passes and every build fails with an unknown
+device. The same start-up also generates the throwaway developer key that
+`monkeyc -y` requires (see [sdk.md](sdk.md)).
+
+The copy costs the size of the SDK in the container's writable layer on each
+start; `preflight` already requires 5 GiB free disk for the stack.
 
 ## Request flow
 
@@ -133,7 +199,8 @@ to the infrastructure repository:
 - where the SDK archive comes from;
 - secrets (API tokens for openHAB admin operations, if a scenario ever needs them).
 
-Nothing here reads a host path other than `CIQ_SDK_HOST_PATH` (mount) and
-`E2E_REPO_ROOT` (checkout mount). Nothing here contains a site-specific
-hostname: the dedicated host reaches the services as `127.0.0.1` and the app
-settings fixtures resolve their endpoint from the stack environment.
+Nothing here reads a host path other than `CIQ_SDK_HOST_PATH` (mount),
+`CIQ_DEVICES_HOST_PATH` (optional device definitions) and `E2E_REPO_ROOT`
+(checkout mount). Nothing here contains a site-specific hostname: the dedicated
+host reaches the services as `127.0.0.1` and the app settings fixtures resolve
+their endpoint from the stack environment.
