@@ -6,8 +6,9 @@ methods it happened to need fails here instead of producing a run that looks
 successful but asserted nothing.
 
 Run with ``python -m e2e contract-test --driver null`` to check the harness
-itself (works on any machine), or ``--driver wine`` to see exactly which parts
-of the Wine implementation are still missing.
+itself (works on any machine), or ``--driver wine --prg <built.prg>`` on the
+guest to exercise the real simulator. Without ``--prg`` the device-dependent
+cases are reported ``not-implemented`` with that reason.
 """
 
 from __future__ import annotations
@@ -75,11 +76,16 @@ def run_contract(
     *,
     device_id: Optional[str] = None,
     settings_fixture: str = "default",
+    prg: Optional[Path] = None,
+    ready_timeout_s: float = 60.0,
 ) -> List[ContractCase]:
     """Exercise every part of the driver contract against ``driver``.
 
-    The driver is expected to be a fresh, unstarted instance. It is stopped at
-    the end even when a case fails.
+    ``prg`` is a real compiled PRG. A driven simulator can only prove anything
+    with one: the placeholder written here is not a runnable application. When
+    it is omitted, the device-dependent cases are reported ``not-implemented``
+    with that reason instead of passing or failing for the wrong cause. The
+    driver is stopped at the end even when a case fails.
     """
     workdir = Path(workdir)
     workdir.mkdir(parents=True, exist_ok=True)
@@ -90,11 +96,22 @@ def run_contract(
         devices[0],
     )
     settings = load_settings(settings_fixture)
-    prg = workdir / "contract.prg"
-    prg.write_bytes(b"contract")
+    if prg is None:
+        staged_prg = workdir / "contract.prg"
+        staged_prg.write_bytes(b"contract")
+    else:
+        staged_prg = Path(prg)
     shot = workdir / "contract-screenshot.png"
 
     cases: List[ContractCase] = []
+
+    # A driver with a real console or screen can only prove that by launching a
+    # real application; the null driver has neither and never launches.
+    can_launch = prg is not None or not (driver.supports_events or driver.supports_screenshots)
+    no_prg = (
+        f"not exercised: no --prg supplied. {driver.name} launches a real "
+        "application, and the contract placeholder is not one"
+    )
 
     def interface() -> None:
         if not driver.name:
@@ -110,12 +127,33 @@ def run_contract(
         if "language" not in signature.parameters:
             raise AssertionError("start() lost its 'language' parameter")
 
+    def prepare() -> None:
+        driver.prepare(staged_prg)
+
     cases.append(_run_case("interface", interface))
-    cases.append(_run_case("prepare", lambda: driver.prepare(prg)))
+    cases.append(_run_case("prepare", prepare))
+
+    if not can_launch:
+        for name in _launch_cases():
+            cases.append(ContractCase(name, NOT_IMPLEMENTED, no_prg))
+        cases.append(_run_case("stop", driver.stop))
+        return cases
+
+    start = _run_case("start", lambda: driver.start(device, settings, "ble", language="deu"))
+    cases.append(start)
+
+    if start.status != PASS:
+        blocked = f"blocked by start ({start.status}): {start.detail.splitlines()[0]}"
+        for name in _launch_cases():
+            if name == "start":
+                continue
+            cases.append(ContractCase(name, NOT_IMPLEMENTED, blocked))
+        cases.append(_run_case("stop", driver.stop))
+        return cases
+
     cases.append(
-        _run_case("start", lambda: driver.start(device, settings, "ble", language="deu"))
+        _run_case("wait_ready", lambda: driver.wait_ready(ready_timeout_s))
     )
-    cases.append(_run_case("wait_ready", lambda: driver.wait_ready(1.0)))
 
     for button in Button:
         cases.append(
@@ -140,11 +178,33 @@ def run_contract(
         for line in lines:
             if not isinstance(line, str):
                 raise AssertionError(f"event {line!r} is not a string")
+        if not lines:
+            if driver.supports_events:
+                raise AssertionError(
+                    "events() is empty after a real launch; monkeydo streams the app "
+                    "console to stdout, so this means the capture did not start"
+                )
+            return
+        if driver.supports_events and not any(
+            line.strip().startswith("E2E:") for line in lines
+        ):
+            raise AssertionError(
+                "no E2E: trace line in the captured console; the app must be the "
+                "debug build (monkeyc -f ... see tests/docs/sdk.md)"
+            )
 
     cases.append(_run_case("events", events))
     cases.append(_run_case("stop", driver.stop))
 
     return cases
+
+
+def _launch_cases() -> List[str]:
+    """Names of the cases that need a launched application, in order."""
+    names = ["start", "wait_ready"]
+    names.extend(f"press[{button.value}]" for button in Button)
+    names.extend(["tap", "screenshot", "events"])
+    return names
 
 
 def format_report(cases: Sequence[ContractCase]) -> str:

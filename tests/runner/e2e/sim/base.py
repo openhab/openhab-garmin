@@ -5,12 +5,10 @@ smallest set of primitives a scenario needs: launch, wait until the app is up,
 inject input, capture the screen, stop, and (where available) read the app's
 console output.
 
-The interface is the contract. The Wine implementation under ``wine.py`` is a
-skeleton -- the simulator has no supported automation API, so it is driven
-through Wine, Xvfb and xdotool, and that work is deliberately separate from
-this foundation. Contract tests in ``e2e.contract`` exercise every method, so a
-half-implemented driver fails loudly instead of producing a plausible-looking
-empty run.
+The interface is the contract. ``wine.py`` drives the real simulator through
+Wine, Xvfb and ``xdotool``; ``null.py`` is the dry-run driver. Contract tests in
+``e2e.contract`` exercise every method, so a half-implemented driver fails
+loudly instead of producing a plausible-looking empty run.
 """
 
 from __future__ import annotations

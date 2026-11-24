@@ -580,12 +580,26 @@ def _cmd_contract_test(args: argparse.Namespace) -> int:
     layout = None
     if args.driver == "wine":
         layout = load_layout()
-    driver = create_driver(args.driver, layout=layout, log=lambda message: print(message))
     workdir = _artifacts_dir(args) / "contract" / args.driver
-    cases = run_contract(driver, workdir, device_id=args.device)
+    driver = create_driver(
+        args.driver,
+        layout=layout,
+        artifact_dir=workdir,
+        log=lambda message: print(message),
+    )
+    prg = Path(args.prg) if args.prg else None
+    if prg is not None and not prg.is_file():
+        return _fail(f"--prg {prg} is not a file")
+    cases = run_contract(driver, workdir, device_id=args.device, prg=prg)
     print(format_contract_report(cases))
     counts = contract_summary(cases)
     print(f"\n{counts}")
+    if args.driver != "null" and prg is None:
+        print(
+            "\nnote: no --prg was supplied, so the cases that need a launched "
+            "application were not exercised. Pass a PRG built by `python -m e2e "
+            "build` to run them."
+        )
     if args.json:
         _emit_json(
             [{"name": case.name, "status": case.status, "detail": case.detail} for case in cases]
@@ -836,6 +850,13 @@ def build_parser() -> argparse.ArgumentParser:
     contract = subparsers.add_parser("contract-test", help="exercise a simulator driver against its contract")
     contract.add_argument("--driver", choices=DRIVER_NAMES, default="null")
     contract.add_argument("--device")
+    contract.add_argument(
+        "--prg",
+        help=(
+            "compiled PRG to launch; required to exercise start/wait_ready/input/"
+            "screenshot/events on a driven simulator (build one with `e2e build`)"
+        ),
+    )
     contract.add_argument("--artifacts")
     contract.add_argument("--json", action="store_true")
     contract.set_defaults(handler=_cmd_contract_test)

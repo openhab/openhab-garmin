@@ -3,7 +3,7 @@
 These exercise the engine end to end without Docker, openHAB, the shim or the
 Connect IQ SDK: the null driver records the interaction, network-dependent
 steps are skipped, and the reports are written. This is the coverage that keeps
-scenario wiring and reporting honest while the Wine driver is still a skeleton.
+scenario wiring and reporting honest without needing Wine or a display.
 """
 
 from __future__ import annotations

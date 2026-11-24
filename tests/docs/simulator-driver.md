@@ -10,89 +10,201 @@
 | `start(device, settings, mode, language)` | start the simulator into `mode` (`ble`/`wifi`/`offline`) and system `language` (`eng`/`deu`/...), then launch the app |
 | `wait_ready(timeout_s)` | block until the app rendered its first view |
 | `press(button, count)` | press a semantic device button |
-| `tap(x, y, count)` | tap a screen coordinate |
+| `tap(x, y, count)` | tap a device screen coordinate |
 | `screenshot(path)` | capture the simulator window as PNG |
 | `stop()` | terminate and release the device filesystem |
 | `events()` | app console lines, oldest first |
+
+`WineSimulatorDriver` additionally exposes `timed_events()`, which returns
+`(monotonic_timestamp, line)` pairs for the same buffer.
 
 Class attributes state what a driver can actually do: `supports_events` and
 `supports_screenshots`. A driver that cannot provide them must not pretend: the
 engine reports event and golden assertions as **skipped**, never passed.
 
+### Running the contract test
+
 `python -m e2e contract-test --driver <name>` exercises every method and reports
-`pass` / `fail` / `not-implemented` per case. `--driver null` proves the harness
-itself works; `--driver wine` lists exactly what is still missing.
+`pass` / `fail` / `not-implemented` per case.
 
-## Feasibility spike first
+- `--driver null` proves the harness itself works; it runs anywhere.
+- `--driver wine --prg <built.prg>` exercises the real simulator on the guest.
+  A driven simulator can only prove anything with a real application: without
+  `--prg`, the cases that need a launch (`start`, `wait_ready`, input,
+  `screenshot`, `events`) are reported `not-implemented` with that reason, and
+  the command exits `2`. The placeholder PRG the contract writes is not a
+  runnable app.
+- The contract starts with `mode=ble, language=deu`, so a language regression
+  surfaces in `wait_ready` rather than in a scenario.
 
-The contract above is implemented only if the [#370](https://github.com/openhab/openhab-garmin/issues/370)
-feasibility spike passes or partially passes. The spike is a separate package
-under [`spike/`](../spike/README.md); it runs the procedure against the same
-runner image and writes a verdict with one of three recommendations:
+## How the Wine driver works
 
-- **pass** -- implement this driver and continue on Linux only;
-- **partial** -- record the failing capability, waive the affected scenarios and
-  keep the remaining tiers;
-- **fail** -- use a Windows guest with this same contract.
+The simulator is a wxWidgets Windows application with no automation API (the
+investigation is recorded in [#140](https://github.com/openhab/openhab-garmin/issues/140)).
+The driver runs it under Wine on the X display the runner starts and drives it
+from the outside:
 
-The spike deliberately does **not** implement the driver. Its evidence answers
-the open questions this plan leaves: whether native menus are scriptable, whether
-a watch-face-only screenshot is obtainable, and whether the console timestamps
-are tight enough for polling assertions. Implement the driver against this
-contract once the verdict says it is worth it; do not let the spike's helper code
-become a second driver implementation.
+1. **prepare** — check that Wine, `monkeydo`, `xdotool`, `xdpyinfo` and
+   ImageMagick's `import` exist, then copy the PRG to
+   `<artifacts>/launch/app.prg`.
+1. **start** — verify the display answers; rewrite `simulator.ini` for the
+   device, communication state and language; start `wine simulator.exe`; wait
+   until the window title names the device; seed the app properties; launch
+   `monkeydo <prg> <device>` and capture its stdout.
+1. **wait_ready** — wait for `E2E:LANGUAGE` plus the first `E2E:VIEW` (or
+   `E2E:ERRORVIEW`), and compare the reported language with the requested one.
+1. **press / tap** — `xdotool` against the simulator window after focusing it.
+1. **screenshot** — ImageMagick `import -window <id>`, never the root window.
+1. **stop** — terminate the app and the simulator by PID; the X display and the
+   Wine prefix stay alive so the next `start` is quick.
 
-## Why the Wine driver is a skeleton
+Artifacts land under the run's artifacts directory:
 
-The investigation recorded in
-[#140](https://github.com/openhab/openhab-garmin/issues/140) established:
+| Path | Contents |
+| --- | --- |
+| `logs/driver.log` | every driver decision, including the PIDs and the ini/properties files it wrote |
+| `logs/simulator.log` | Wine's stdout/stderr for the simulator |
+| `logs/console.log` | `monkeydo`'s stdout/stderr, i.e. the app console with the `E2E:` lines |
 
-- the simulator is a wxWidgets Windows GUI application with **no headless mode**
-  and no screen or input API;
-- `monkeydo <prg> <device>` launches the app and streams `System.println` output
-  (which is where `E2E:` trace lines come from);
-- startup conditions (`BleState`, `WifiState`, `nightMode`, `SleepMode`,
-  `TouchScreenEnabled`, `LastUsedDevice`, `UseHttpsRequirements`, and the
-  simulator language) are scriptable through `simulator.ini`;
-- runtime controls are native Win32 menus, and device input must be injected as
-  keyboard/mouse events into the simulator window;
-- one simulator instance serves one run, so suites are serial.
+`stop()` never uses `pkill -f <pattern>`: inside `docker exec` such a pattern
+matches the exec's own command line and kills the exec. The driver keeps both
+PIDs instead.
 
-That work is feasible but sizeable, and it depends on the trace events from #364 and
-on the host decision tracked by the infrastructure issue. It is therefore a
-follow-up, not part of the foundation.
+### Environment overrides
 
-## Implementation plan
+| Variable | Effect |
+| --- | --- |
+| `E2E_WINE_BINARY` | Wine binary, when it is not on `PATH` |
+| `DISPLAY` | X display (default `:99`) |
+| `E2E_WINE_STARTUP_TIMEOUT` | seconds to wait for the device window (default `120`) |
+| `E2E_WINE_SETTINGS_FILE` | exact application-properties file to seed; skips discovery |
+| `E2E_WINE_SCREEN_RECT` | `x,y,width,height` of the watch screen inside the window; pin it when taps miss |
+| `E2E_WINE_KEY_<BUTTON>` | X keysym for one button, e.g. `E2E_WINE_KEY_MENU=ctrl+m` |
 
-1. **prepare** – create a throwaway `WINEPREFIX` per run; seed
-   `%TEMP%\com.garmin.connectiq` so no run inherits the previous device state.
-1. **start** – write `simulator.ini` for the requested device, mode and language,
-   start the simulator under Xvfb, launch with `monkeydo`, and pipe its stdout into
-   the event buffer. Verify the language from the `E2E:LANGUAGE` event, not from
-   the configuration that was written.
-1. **wait_ready** – wait for the first `E2E:VIEW` trace event rather than a fixed
-   delay.
-1. **press / tap** – drive the simulator menus and device buttons with `xdotool`
-   against the display. Input coordinates come from `config/devices.yaml`
-   (screen size and shape), never from a scenario.
-1. **screenshot** – prefer the simulator's "Save Screenshot" action; fall back to
-   `xwd`/ImageMagick against the window.
-1. **stop** – terminate the simulator and `wineserver`, remove the prefix.
+## Per-method status
 
-## Failure behaviour today
+| Method | Status | Notes |
+| --- | --- | --- |
+| `prepare` | implemented | Validates the external tools and copies the PRG. Runs before anything touches Wine. |
+| `start` | implemented | Display check, `simulator.ini`, device-title wait, property seeding and `monkeydo` launch. |
+| `wait_ready` | implemented | First view **and** the reported language. A missing device or a dead app fails with the console tail. The first view may be the glance (`category=glance`) on a plain `monkeydo` launch; reaching the sitemap is the app's behaviour and the scenario asserts it, not the driver. |
+| `press` | implemented | Keysym per semantic button; the device definition's `simulator.json` is preferred over the defaults. |
+| `tap` | partial | Requires `xdotool` focus. The screen rectangle is a centred, aspect-preserving fit of the device resolution in the window; if the bezel makes that wrong, pin `E2E_WINE_SCREEN_RECT` from a screenshot. |
+| `screenshot` | implemented | Captures the simulator window. Fails when the capture is not a usable PNG instead of returning a blank image. |
+| `events` | implemented | `monkeydo` stdout/stderr with receipt timestamps; `stdbuf` disables its block buffering when available. |
+| `stop` | implemented | Terminates the app and the simulator by PID; leaks nothing into the next scenario. |
+| mode (`ble`/`wifi`/`offline`) | partial | The startup keys are written and reported. The app always starts in `BLE` and only leaves it after a request fails, so the driver does not claim a runtime mode; the scenario's request-count assertions cover the transition. |
+| language (`eng`/`deu`/...) | implemented, verified | `Language` is written before start and **verified** from `E2E:LANGUAGE`. A mismatch fails the run with the ini file and what was written. |
+| app properties | implemented, verified | See below. Without properties the app shows `UI:CONFIG`, which would make every scenario pass vacuously, so the driver refuses to run unseeded and rejects that error view. |
 
-Every method raises `DriverError` with the next concrete step and a pointer to this
-file. `create_driver("wine", ...)` requires a validated SDK layout, so a missing
-SDK is reported before any simulator work starts.
+## Application properties
 
-Consequences:
+The app reads its settings once at startup from `Properties.getValue`. The
+driver seeds them by rewriting the file the simulator itself created:
 
-- `protocol`-tier scenarios can be developed and reviewed without Wine.
-- `ui`-tier scenarios cannot pass until the driver is implemented; they fail loudly
-  (`WineSimulatorDriver.start is not implemented yet: ...`), which is the intended
-  behaviour.
-- `run --dry-run` exercises scenario wiring with the null driver and marks
-  simulator-dependent assertions as skipped.
+1. Search the Wine prefix for `*.SET` and `settings.*` files under
+   `AppData/Roaming/Garmin/ConnectIQ`, `AppData/Local/Garmin/ConnectIQ` and
+   `Temp/com.garmin.connectiq`.
+1. Prefer the file that already contains the app's property ids, so a stray
+   file is not rewritten.
+1. Keep the file's format — JSON (flat or under a `properties` object) or
+   `key=value` — preserve unrelated keys, and write the fixture's values with
+   their types.
+1. Read the file back and fail when a value did not round-trip.
+
+If no properties file exists yet, the driver performs **one discovery launch**:
+it starts the app, waits up to 25 seconds for the simulator to create the file,
+stops the app, seeds the file and launches again. If the file still does not
+appear, `start` raises and names the patterns it searched, because a run with
+empty settings is worse than no run.
+
+After the launch, `wait_ready` raises when the app reports
+`ERRORVIEW;id=UI:CONFIG` although the fixture configured a URL. That is the
+machine-readable proof that the properties reached the app. A scenario that
+deliberately empties `url_0` (for example
+`extended/localisation-error-config-url`) is unaffected, because the fixture's
+URL is empty.
+
+## Mode and language
+
+`simulator.ini` is rewritten before the simulator starts:
+
+| Requested | Keys written |
+| --- | --- |
+| `ble` | `BleState=true`, `WifiState=false` |
+| `wifi` | `BleState=false`, `WifiState=true` |
+| `offline` | `BleState=false`, `WifiState=false` |
+
+Missing keys are appended under `[Simulator]` and existing keys keep their
+spelling; the driver logs exactly which keys it wrote and appended.
+
+The language is written as `Language=<code>` and is **verified** through
+`E2E:LANGUAGE`, which the app emits from
+`System.getDeviceSettings().systemLanguage`. The configuration that was written
+is never used as evidence.
+
+A mode change at runtime (the simulator's `Simulation` and `Connection` menus)
+is **not implemented**. The driver would have to script native Win32 menus with
+`Alt+S`/`Alt+C` plus arrow keys and confirm the effect from `E2E:CONNECTION`;
+the spike under [`spike/`](../spike/README.md) exercises that path, and its
+verdict decides whether it is reliable enough for the driver. Until then a
+scenario that needs a mode gets it at startup, and the request-count assertions
+prove the app's behaviour.
+
+Night mode, sleep mode and HTTPS requirements are also only available through
+those menus and are not scripted.
+
+## Input
+
+`press` and `tap` first focus the simulator window:
+
+```bash
+xdotool windowactivate --sync <window>   # needs a window manager
+xdotool windowfocus --sync <window>      # works on bare Xvfb
+```
+
+Xvfb runs without a window manager, so `windowactivate` normally fails. That is
+recorded as a note and is not fatal, because `windowfocus` uses `XSetInputFocus`
+and is sufficient for synthetic key and pointer events. If `windowfocus` fails,
+the driver raises: without focus the events would land on another window, and a
+"passing" run would have pressed keys into the void.
+
+Button bindings come from the device definition's `simulator.json` (`keys` as
+Windows virtual-key codes) when the SDK ships one, and otherwise from these
+defaults: `START=ctrl+s`, `UP=Up`, `DOWN=Down`, `ENTER=Return`,
+`BACK=Escape`, `MENU=ctrl+m`. Override any of them with
+`E2E_WINE_KEY_<BUTTON>`. A device whose definition does not confirm the title
+only produces a warning, so a missing definition does not fail a run over a
+name it cannot compare.
+
+`tap(x, y)` takes **device screen pixels**. The driver maps them into the window
+through the watch-screen rectangle. The default rectangle is the centred,
+aspect-preserving fit of the device resolution inside the window; the Connect IQ
+simulator scales the device graphic that way, but a thick bezel can shift it.
+Pin the rectangle from a screenshot when taps land in the wrong place:
+
+```bash
+E2E_WINE_SCREEN_RECT=100,160,416,416 python -m e2e run smoke/toggle-switch --device venu2
+```
+
+Capturing the root window is never an option: on a display without a window
+manager it is a single colour and would silently satisfy a golden assertion.
+
+## Failure modes
+
+Every failure names the stage, the timeout, and the next concrete step, so a log
+is enough to act on it.
+
+| Message | Meaning | Next step |
+| --- | --- | --- |
+| `no X display is answering on ':99'` | the display never came up, or `DISPLAY` names the wrong one | run `xdpyinfo -display :99` in the container; the entrypoint starts Xvfb before staging the SDK |
+| `the simulator opened an error dialog` | the Wine prefix has no device definitions | `python -m e2e link-devices` |
+| `simulator-window did not complete within …` with `last title seen: 'CIQ Simulator'` | the device did not load, so the title stayed generic | check the prefix's `AppData/Roaming/Garmin/ConnectIQ/Devices` |
+| `the simulator loaded a different device` | `LastUsedDevice` or the device argument is wrong | compare the title with `config/devices.yaml` |
+| `monkeydo exited with code …` | wrong PRG or device name | read `logs/console.log` |
+| `the app reported system language …` | `Language` in `simulator.ini` was ignored | see the language section above |
+| `the app showed the configuration error view` | the seeded properties did not reach the app | pin `E2E_WINE_SETTINGS_FILE` |
+| `no application-properties file was found` | the simulator never created one | run the app once, save its settings, pin the file |
 
 ## The Windows `shell.exe` bridge does not work
 
@@ -114,9 +226,33 @@ that has to stop the simulator must use a PID it obtained explicitly - the
 window PID from `xdotool getwindowpid`, or a recorded child PID - or
 `pkill -x wine`, which matches the process name only.
 
+`WineSimulatorDriver.stop()` follows that rule: it keeps the `Popen` handles of
+`simulator.exe` and `monkeydo`, terminates those PIDs (TERM, then KILL after a
+timeout) and never calls `pkill`. It leaves `wineserver` and the X display
+running so the next `start` does not pay for prefix initialisation again.
+
+## What is not verified in this change
+
+The driver was written and reviewed without Wine, a display or the SDK. The
+proof is a driver run on the guest, which the operator performs:
+
+1. Build the debug PRG (`python -m e2e build --device fenix7`; the command prints
+   the path it wrote), which the `E2E:` trace needs.
+1. Run `python -m e2e contract-test --driver wine --prg <built.prg>` inside the
+   runner container and confirm the report is all `pass` with exit `0`.
+1. Run `python -m e2e run smoke/launch-and-poll --driver wine --prg <built.prg>`
+   and confirm the assertions are evaluated, not skipped.
+1. Open `logs/driver.log` and check the `simulator.ini` line names the file and
+   the keys that were written, and that the seeded properties file is the one
+   the simulator wrote.
+1. Run one language scenario (`extended/localisation-sitemap`) and one mode
+   scenario (`extended/wifi-mode`) to confirm the verification paths.
+1. If taps miss, take a screenshot, read the watch-screen rectangle from it and
+   set `E2E_WINE_SCREEN_RECT` for the next run; record the value for the device
+   in this document.
+
 ## Fallback if Wine cannot drive the simulator menus
 
-From #140: restart-based mode transitions with reduced coverage. A driver may
-implement `start()` for each mode and treat transitions as separate launches; the
-scenario schema already expresses the mode per scenario, so no scenario format
-change would be needed.
+From #140: restart-based mode transitions with reduced coverage. `start()`
+already takes the mode per launch, so a scenario can re-launch into another mode
+without a scenario-format change; only the runtime menu path remains unproven.

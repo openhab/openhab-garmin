@@ -23,8 +23,8 @@ def create_driver(
 ) -> SimulatorDriver:
     """Instantiate a driver by name.
 
-    ``null`` is the dry-run driver. ``wine`` needs a validated SDK layout and
-    raises a driver error from every method until it is implemented.
+    ``null`` is the dry-run driver. ``wine`` needs a validated SDK layout and a
+    real PRG before it can launch anything.
     """
     if name == "null":
         return NullDriver(log=log)
@@ -32,7 +32,11 @@ def create_driver(
         if layout is None:
             raise DriverError("the 'wine' driver needs a validated Connect IQ SDK layout")
         return WineSimulatorDriver(
-            layout, wineprefix=wineprefix, display=display, artifact_dir=artifact_dir
+            layout,
+            wineprefix=wineprefix,
+            display=display,
+            artifact_dir=artifact_dir,
+            log=log,
         )
     raise DriverError(f"unknown driver {name!r}; known drivers: {', '.join(DRIVER_NAMES)}")
 
