@@ -96,6 +96,14 @@ device. The same start-up also generates the throwaway developer key that
 The copy costs the size of the SDK in the container's writable layer on each
 start; `preflight` already requires 5 GiB free disk for the stack.
 
+The image build itself also fails when the JRE's `libfontmanager.so` cannot
+resolve a shared library, measured with the loader path the JVM uses
+(`$JAVA_HOME/lib:$JAVA_HOME/lib/server`). The JVM resolves its own `libjvm.so`
+that way, so a plain `ldd` marks a healthy image as broken — which is what the
+first guest build did. The rule lives in `runner/e2e/fontmanager.py` and is
+unit-tested against recorded `ldd` output, because the check itself only runs
+inside the Docker build.
+
 ## Request flow
 
 1. The app polls `GET {shim}/rest/sitemaps/garmin_e2e`.

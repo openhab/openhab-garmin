@@ -43,9 +43,13 @@ def test_font_and_key_packages_are_installed() -> None:
 
 def test_image_fails_when_libfontmanager_cannot_resolve() -> None:
     text = _dockerfile()
-    assert "libfontmanager.so" in text
-    assert 'grep -q "not found"' in text
-    assert "ldd" in text
+    # The check is a script, not an inline `grep`: plain ldd reports libjvm.so
+    # as missing even on a healthy image (the JVM resolves it at run time), so
+    # the decision rule lives in e2e/fontmanager.py and is unit-tested.
+    assert "fontmanager_check.py" in text
+    assert "COPY runner/e2e/fontmanager.py" in text
+    assert "python3 /usr/local/bin/fontmanager_check.py" in text
+    assert 'grep -q "not found"' not in text
 
 
 def test_dockerfile_artifacts_default_matches_compose() -> None:
