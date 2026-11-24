@@ -148,6 +148,17 @@ def test_entrypoint_clears_a_stale_x_socket_before_starting_xvfb() -> None:
     assert 'Xvfb "$DISPLAY"' in text
 
 
+def test_entrypoint_starts_the_display_before_staging_the_sdk() -> None:
+    """Staging copies ~250 MB and validates the SDK.
+
+    Starting Xvfb afterwards makes "container healthy" and "display available"
+    mean different things, and a UI driver launched straight after `up` sees a
+    display failure that is only slow staging.
+    """
+    text = _entrypoint()
+    assert text.index('Xvfb "$DISPLAY"') < text.index("staging the Connect IQ SDK:")
+
+
 def test_entrypoint_fails_when_the_display_never_comes_up() -> None:
     text = _entrypoint()
     marker = 'if [ "$display_ready" != "true" ]; then'
