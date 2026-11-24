@@ -65,15 +65,14 @@ RUN dpkg --add-architecture i386 \
 # Smoke check for the font stack. A real `monkeyc` compile cannot run here,
 # because the SDK must never be baked into the image, but an unresolved shared
 # library is exactly what breaks the compile, and `ldd` sees it at build time.
-RUN java -version \
-    && JAVA_HOME="$(find /usr/lib/jvm -mindepth 1 -maxdepth 1 -type d | head -n 1)" \
-    && ldd "$JAVA_HOME/lib/libfontmanager.so" > /tmp/libfontmanager.ldd \
-    && if grep -q "not found" /tmp/libfontmanager.ldd; then \
-         echo "error: libfontmanager.so has unresolved shared libraries:" >&2; \
-         grep "not found" /tmp/libfontmanager.ldd >&2; \
-         exit 1; \
-       fi \
-    && rm -f /tmp/libfontmanager.ldd
+#
+# The check runs `ldd` with the loader path the JVM itself uses
+# ($JAVA_HOME/lib:$JAVA_HOME/lib/server): plain `ldd` reports the JVM's own
+# libjvm.so as missing, which failed this build on a healthy image in the first
+# live run. Only genuinely unresolved libraries fail it. The decision rule is
+# unit-tested in tests/test_fontmanager_check.py without Docker.
+COPY runner/e2e/fontmanager.py /usr/local/bin/fontmanager_check.py
+RUN java -version && python3 /usr/local/bin/fontmanager_check.py
 
 # Ubuntu 24.04 marks the system Python as externally managed; a venv keeps the
 # harness dependencies out of the distro packages.
