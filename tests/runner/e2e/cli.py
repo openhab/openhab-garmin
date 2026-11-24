@@ -15,6 +15,7 @@ Subcommands:
     network-env       render/verify the generated loopback network block in .env.example
     pin-images        resolve/verify image digests from Docker Hub
     sdk-check         validate the mounted Connect IQ SDK
+    link-devices      stage the Connect IQ device definitions where monkeyc looks
     health-snapshot   record the stack's restart counts and memory before/after a run
     build             compile the PRG for one or more devices
 
@@ -26,6 +27,7 @@ killed during the run, so the results are not attributable to the app).
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import os
 import sys
@@ -36,7 +38,7 @@ from . import compose as compose_module
 from . import health as health_module
 from . import network as network_module
 from . import reporting as reporting_module
-from .build import BuildError, build_prg
+from .build import BuildError, build_prg, ephemeral_developer_key
 from .compose import ComposeError
 from .config import (
     ConfigError,
@@ -65,7 +67,13 @@ from .paths import repo_root, tests_root
 from .preflight import parse_skip, run_preflight
 from .reporting import Report
 from .scenarios import Scenario, ScenarioError, discover_scenarios, find_scenarios
-from .sdk import SdkError, describe_candidates, load_layout
+from .sdk import (
+    SdkError,
+    describe_candidates,
+    device_definition_count,
+    link_devices,
+    load_layout,
+)
 from .settings import SettingsError
 from .shim import ShimClient, ShimError
 from .sim import DRIVER_NAMES, create_driver
@@ -107,6 +115,19 @@ def _artifacts_dir(args: argparse.Namespace) -> Path:
 def _goldens_dir(args: argparse.Namespace) -> Path:
     value = getattr(args, "goldens", None)
     return Path(value) if value else tests_root() / "goldens"
+
+
+def _developer_key(artifacts: Path, args: argparse.Namespace):
+    """An explicit ``--developer-key``, or a fresh ephemeral key for this run.
+
+    The key is throwaway by design: it signs a build for the simulator, it is
+    never reused and never committed. See
+    :func:`e2e.build.ephemeral_developer_key`.
+    """
+    explicit = getattr(args, "developer_key", None)
+    if explicit:
+        return contextlib.nullcontext(Path(explicit))
+    return ephemeral_developer_key(artifacts)
 
 
 def _emit_json(document: Mapping[str, Any]) -> None:
@@ -276,43 +297,56 @@ def _cmd_run(args: argparse.Namespace) -> int:
 
     environment_before, environment_after = _environment_window(dry_run)
 
-    for scenario in scenarios:
-        device = _device_for(scenario, args)
-        prg: Optional[Path] = None
-        if layout is not None:
-            if args.prg:
-                prg = Path(args.prg)
-            else:
-                if device.id not in built:
-                    built_prg = build_prg(layout, device.product, artifacts / "build")
-                    print(f"built {built_prg.prg} in {built_prg.duration_ms:.0f} ms")
-                    built[device.id] = built_prg.prg
-                prg = built[device.id]
+    # A dry run and a pre-built PRG need no key at all, so do not require
+    # openssl for them.
+    if layout is None or args.prg:
+        key_context = contextlib.nullcontext(None)
+    else:
+        key_context = _developer_key(artifacts, args)
 
-        print(f"--- {scenario.scenario_id} ({scenario.tier}) device={device.id}")
-        outcome = run_scenario(
-            scenario,
-            device,
-            openhab_url=_openhab_url(args),
-            shim_url=_shim_url(args),
-            artifacts_dir=artifacts,
-            goldens_dir=goldens,
-            driver_name=driver_name,
-            dry_run=dry_run,
-            update_goldens=args.update_goldens,
-            skip_events=args.skip_events,
-            sdk_layout=layout,
-            prg=prg,
-            log=lambda message: print(f"    {message}"),
-        )
-        report.add(outcome)
-        print(
-            f"--- {scenario.scenario_id}: {outcome.status} "
-            f"({outcome.duration_ms / 1000.0:.1f}s, {outcome.requests} request(s))"
-        )
-        if outcome.failures:
-            for failure in outcome.failures:
-                print(f"    {failure}")
+    with key_context as developer_key:
+        for scenario in scenarios:
+            device = _device_for(scenario, args)
+            prg: Optional[Path] = None
+            if layout is not None:
+                if args.prg:
+                    prg = Path(args.prg)
+                else:
+                    if device.id not in built:
+                        built_prg = build_prg(
+                            layout,
+                            device.product,
+                            artifacts / "build",
+                            developer_key=developer_key,
+                        )
+                        print(f"built {built_prg.prg} in {built_prg.duration_ms:.0f} ms")
+                        built[device.id] = built_prg.prg
+                    prg = built[device.id]
+
+            print(f"--- {scenario.scenario_id} ({scenario.tier}) device={device.id}")
+            outcome = run_scenario(
+                scenario,
+                device,
+                openhab_url=_openhab_url(args),
+                shim_url=_shim_url(args),
+                artifacts_dir=artifacts,
+                goldens_dir=goldens,
+                driver_name=driver_name,
+                dry_run=dry_run,
+                update_goldens=args.update_goldens,
+                skip_events=args.skip_events,
+                sdk_layout=layout,
+                prg=prg,
+                log=lambda message: print(f"    {message}"),
+            )
+            report.add(outcome)
+            print(
+                f"--- {scenario.scenario_id}: {outcome.status} "
+                f"({outcome.duration_ms / 1000.0:.1f}s, {outcome.requests} request(s))"
+            )
+            if outcome.failures:
+                for failure in outcome.failures:
+                    print(f"    {failure}")
 
     if environment_after is None and environment_before.available:
         environment_after, _recording = health_module.capture()
@@ -638,25 +672,50 @@ def _cmd_sdk_check(args: argparse.Namespace) -> int:
         print(f"monkeyc:   {layout.monkeyc}")
         print(f"monkeydo:  {layout.monkeydo or '<not present>'}")
         print(f"simulator: {layout.simulator or '<not present>'}")
+        if layout.devices:
+            print(
+                f"devices:   {layout.devices} "
+                f"({device_definition_count(layout.devices)} definitions)"
+            )
+        else:
+            print("devices:   <not found>")
         for line in describe_candidates():
             print(f"  {line}")
     return EXIT_OK
 
 
+def _cmd_link_devices(args: argparse.Namespace) -> int:
+    """Copy the device definitions where ``monkeyc`` searches for them."""
+    try:
+        layout = load_layout()
+        target = link_devices(layout.root, Path(args.target) if args.target else None)
+    except SdkError as error:
+        print(f"error: {error}", file=sys.stderr)
+        return EXIT_CONFIG
+    if not args.quiet:
+        print(
+            f"devices:   {target} "
+            f"({device_definition_count(target)} definitions)"
+        )
+    return EXIT_OK
+
+
 def _cmd_build(args: argparse.Namespace) -> int:
     layout = load_layout()
-    output = Path(args.output) if args.output else _artifacts_dir(args) / "build"
+    artifacts = _artifacts_dir(args)
+    output = Path(args.output) if args.output else artifacts / "build"
     device_ids = args.device or [default_device_id()]
-    for device_id in device_ids:
-        device = find_device(device_id)
-        result = build_prg(
-            layout,
-            device.product,
-            output,
-            release=args.release,
-            developer_key=Path(args.developer_key) if args.developer_key else None,
-        )
-        print(f"{device.id}: {result.prg} ({result.duration_ms:.0f} ms)")
+    with _developer_key(artifacts, args) as developer_key:
+        for device_id in device_ids:
+            device = find_device(device_id)
+            result = build_prg(
+                layout,
+                device.product,
+                output,
+                release=args.release,
+                developer_key=developer_key,
+            )
+            print(f"{device.id}: {result.prg} ({result.duration_ms:.0f} ms)")
     return EXIT_OK
 
 
@@ -712,6 +771,13 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--update-goldens", action="store_true", help="replace golden images with the current screenshots")
     run.add_argument("--skip-events", action="store_true", help="skip assertions that need the console event stream")
     run.add_argument("--prg", help="use an existing PRG instead of building one")
+    run.add_argument(
+        "--developer-key",
+        help=(
+            "monkeyc signing key; default: a throwaway key generated per run "
+            "under the artifacts directory"
+        ),
+    )
     run.add_argument("--goldens", help="goldens directory (default: tests/goldens)")
     run.set_defaults(handler=_cmd_run)
 
@@ -808,6 +874,23 @@ def build_parser() -> argparse.ArgumentParser:
     sdk.add_argument("--quiet", action="store_true")
     sdk.set_defaults(handler=_cmd_sdk_check)
 
+    devices = subparsers.add_parser(
+        "link-devices",
+        help="stage the Connect IQ device definitions where monkeyc looks for them",
+        description=(
+            "Copy the SDK's device definitions into the user-level Connect IQ "
+            "directory monkeyc searches ($HOME/.Garmin/ConnectIQ/Devices). The "
+            "repository's CI does the same; running it explicitly makes the "
+            "step visible instead of folklore."
+        ),
+    )
+    devices.add_argument(
+        "--target",
+        help="destination directory (default: $HOME/.Garmin/ConnectIQ/Devices)",
+    )
+    devices.add_argument("--quiet", action="store_true")
+    devices.set_defaults(handler=_cmd_link_devices)
+
     snapshot = subparsers.add_parser(
         "health-snapshot",
         help="record stack restart counts and memory for the before/after run window",
@@ -836,7 +919,13 @@ def build_parser() -> argparse.ArgumentParser:
     build.add_argument("--device", nargs="*", help="device ids (default: the matrix default)")
     build.add_argument("--output", help="output directory")
     build.add_argument("--release", action="store_true", help="strip debug annotations (breaks event assertions)")
-    build.add_argument("--developer-key", help="path to a developer key")
+    build.add_argument(
+        "--developer-key",
+        help=(
+            "monkeyc signing key; default: a throwaway key generated per build "
+            "under the artifacts directory"
+        ),
+    )
     build.add_argument("--artifacts")
     build.set_defaults(handler=_cmd_build)
 

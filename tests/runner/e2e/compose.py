@@ -2,9 +2,19 @@
 
 Docker is not required to validate the stack. ``validate_compose`` reads the
 Compose files and checks the properties the harness depends on: the service
-set, profiles, the read-only fixture mount, the dedicated volumes, the shim's
-upstream wiring, the runner's SDK mount, that no image can be pulled without a
-digest, and that every published port is bound to the loopback address.
+set, profiles, the read-only fixture mounts and the staging step that copies
+them into the conf volume, the dedicated volumes, the shim's upstream wiring,
+the runner's SDK mount, the writable artifacts mount, that no image can be
+pulled without a digest, and that every published port is bound to the loopback
+address.
+
+Two rules exist because the first live run on a real host broke on them, and
+neither needs Docker to check:
+
+- no mount target may sit inside a read-only mount of the same service (Docker
+  has to create the mountpoint, which fails with "read-only file system");
+- no read-only mount may sit under ``/openhab`` (the image entrypoint runs
+  ``chown -R openhab:openhab /openhab`` under ``set -e`` and aborts).
 
 There are two deployment profiles:
 
@@ -30,8 +40,9 @@ import json
 import re
 import urllib.error
 import urllib.request
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Mapping, Optional, Sequence
+from typing import Dict, List, Mapping, Optional, Sequence, Tuple
 
 import yaml
 
@@ -52,12 +63,37 @@ ENV_FILE = COMPOSE_DIR / ".env"
 ENV_EXAMPLE = COMPOSE_DIR / ".env.example"
 
 REQUIRED_SERVICES = ("openhab-stable", "openhab-dev", "shim", "runner")
+
+#: One-shot services that stage the fixture tree into an openHAB conf volume.
+#: openHAB's entrypoint runs `chown -R openhab:openhab /openhab` under `set -e`,
+#: so a read-only mount anywhere underneath /openhab aborts the container. The
+#: fixtures therefore have to be copied into the volume, not mounted into it.
+FIXTURE_STAGING = {
+    "openhab-stable": "openhab-stable-init",
+    "openhab-dev": "openhab-dev-init",
+}
+
+#: Marker that identifies a mount source as this repository's fixtures.
+FIXTURE_SOURCE_MARKER = "fixtures/"
+
+#: openHAB's home directory; the image entrypoint chowns it recursively.
+OPENHAB_HOME = "/openhab"
+
+#: Container path the runner writes its artifacts to, and the env var naming it.
+ARTIFACTS_ENV = "E2E_ARTIFACTS"
+ARTIFACTS_VOLUME = "e2e-artifacts"
+
+#: Source of the optional device-definitions mount; an empty named volume when
+#: the operator has not set ``CIQ_DEVICES_HOST_PATH``.
+DEVICES_MOUNT_TARGET = "/opt/ciq-devices"
+
 REQUIRED_VOLUMES = (
     "openhab-stable-conf",
     "openhab-stable-userdata",
     "openhab-dev-conf",
     "openhab-dev-userdata",
-    "e2e-artifacts",
+    ARTIFACTS_VOLUME,
+    "e2e-empty-devices",
 )
 REQUIRED_ENV_KEYS = (
     "COMPOSE_PROFILES",
@@ -66,6 +102,7 @@ REQUIRED_ENV_KEYS = (
     "RUNNER_BASE_IMAGE",
     "SHIM_BASE_IMAGE",
     "CIQ_SDK_HOST_PATH",
+    "CIQ_DEVICES_HOST_PATH",
     ENV_LOOPBACK_HOST,
     *ENV_PORTS.values(),
 )
@@ -200,6 +237,256 @@ def _mounts(service: Mapping[str, object]) -> List[str]:
     return [str(mount) for mount in _as_list(service.get("volumes"))]
 
 
+@dataclass(frozen=True)
+class Mount:
+    """One entry of a service's ``volumes`` list, parsed.
+
+    Docker cannot create a nested mountpoint on a read-only file system, and
+    openHAB's entrypoint cannot chown a read-only bind mount, so the validator
+    needs the source, target and mode of every mount: those two properties are
+    what the live stack failed on.
+    """
+
+    source: str
+    target: str
+    read_only: bool
+
+
+#: ``${VAR}``/``${VAR:-default}``/``${VAR:?message}``; masked before the mount
+#: string is split, because the default itself may contain colons.
+_MOUNT_VARIABLE = re.compile(r"\$\{[^}]*\}")
+
+
+def _split_mount(entry: str) -> Tuple[str, str, str]:
+    """Split ``[SOURCE:]TARGET[:MODE]`` without tripping over interpolation."""
+    masked = _MOUNT_VARIABLE.sub(lambda match: "\x00" * len(match.group(0)), entry)
+    positions = [index for index, character in enumerate(masked) if character == ":"]
+    if not positions:
+        return "", entry, ""
+    if len(positions) == 1:
+        return entry[: positions[0]], entry[positions[0] + 1 :], ""
+    target_start, mode_start = positions[-2], positions[-1]
+    return entry[:target_start], entry[target_start + 1 : mode_start], entry[mode_start + 1 :]
+
+
+def _as_bool(value: object) -> bool:
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().strip('"').lower() in ("true", "1", "yes")
+
+
+def service_mounts(service: Mapping[str, object]) -> List[Mount]:
+    """Parse a service's mounts, both the short and the long syntax."""
+    mounts: List[Mount] = []
+    for raw in _as_list(service.get("volumes")):
+        if isinstance(raw, Mapping):
+            mounts.append(
+                Mount(
+                    source=str(raw.get("source") or ""),
+                    target=str(raw.get("target") or ""),
+                    read_only=_as_bool(raw.get("read_only")),
+                )
+            )
+            continue
+        source, target, mode = _split_mount(str(raw))
+        flags = {flag.strip().lower() for flag in mode.split(",") if flag.strip()}
+        mounts.append(Mount(source=source, target=target, read_only="ro" in flags))
+    return mounts
+
+
+def _normalise_target(path: str) -> str:
+    text = str(path).strip()
+    if not text:
+        return ""
+    if not text.startswith("/"):
+        text = "/" + text
+    stripped = text.rstrip("/")
+    return stripped or "/"
+
+
+def _is_under(path: str, parent: str) -> bool:
+    """True when ``path`` equals ``parent`` or lives below it."""
+    child = _normalise_target(path)
+    root = _normalise_target(parent)
+    if not child or not root:
+        return False
+    if root == "/":
+        return child != "/"
+    return child == root or child.startswith(root + "/")
+
+
+def _is_strictly_under(path: str, parent: str) -> bool:
+    child = _normalise_target(path)
+    root = _normalise_target(parent)
+    return bool(child) and child != root and _is_under(child, root)
+
+
+def mount_problems(
+    services: Mapping[str, object],
+    env: Mapping[str, str],
+) -> List[str]:
+    """Mount rules the live stack broke, checked without Docker.
+
+    - No mount target may sit inside a read-only mount of the same service:
+      Docker has to create the mountpoint, which fails with
+      ``mkdirat ... /work/artifacts: read-only file system``.
+    - Every fixture mount must be read-only: the checkout is never written.
+    - No read-only mount may sit under /openhab: the image entrypoint runs
+      ``chown -R openhab:openhab /openhab`` under ``set -e`` and aborts.
+    """
+    problems: List[str] = []
+    for name, raw in services.items():
+        service = _as_mapping(raw)
+        mounts = service_mounts(service)
+        read_only_targets = [mount.target for mount in mounts if mount.read_only]
+        for mount in mounts:
+            for read_only in read_only_targets:
+                if _is_strictly_under(mount.target, read_only):
+                    problems.append(
+                        f"services.{name}: volume target {mount.target} is inside the "
+                        f"read-only mount {read_only}; Docker cannot create the "
+                        "mountpoint on a read-only file system"
+                    )
+        for mount in mounts:
+            if FIXTURE_SOURCE_MARKER in mount.source and not mount.read_only:
+                problems.append(
+                    f"services.{name}: fixture mount {mount.source} must be read-only "
+                    "(:ro); fixtures are the source of truth and the checkout is never "
+                    "written by the stack"
+                )
+        if name in FIXTURE_STAGING:
+            for mount in mounts:
+                if mount.read_only and _is_under(mount.target, OPENHAB_HOME):
+                    problems.append(
+                        f"services.{name}: {mount.target} is a read-only mount under "
+                        f"{OPENHAB_HOME}; the image's entrypoint runs "
+                        "`chown -R openhab:openhab /openhab` and aborts with "
+                        "\"Read-only file system\". Stage the fixtures into the conf "
+                        f"volume with {FIXTURE_STAGING[name]} instead"
+                    )
+    return problems
+
+
+def artifacts_mount_problems(
+    services: Mapping[str, object],
+    env: Mapping[str, str],
+) -> List[str]:
+    """``E2E_ARTIFACTS`` must point at a writable mount of the runner."""
+    runner = _as_mapping(services.get("runner"))
+    environment = _as_mapping(runner.get("environment"))
+    raw = environment.get(ARTIFACTS_ENV)
+    if raw is None:
+        return [f"services.runner must set {ARTIFACTS_ENV}"]
+
+    problems: List[str] = []
+    try:
+        value = interpolate(str(raw), env).strip()
+    except ComposeError as error:
+        return [f"services.runner.{ARTIFACTS_ENV} cannot be resolved: {error}"]
+    if not value.startswith("/"):
+        return [
+            f"services.runner.{ARTIFACTS_ENV} must be an absolute container path, "
+            f"got {value!r}"
+        ]
+
+    mounts = service_mounts(runner)
+    for mount in mounts:
+        if mount.read_only and _is_under(value, mount.target):
+            problems.append(
+                f"services.runner.{ARTIFACTS_ENV}={value} is inside the read-only "
+                f"mount {mount.target}; the runner cannot write its artifacts there"
+            )
+    writable = [
+        mount.target
+        for mount in mounts
+        if not mount.read_only and _is_under(value, mount.target)
+    ]
+    if not writable:
+        problems.append(
+            f"services.runner.{ARTIFACTS_ENV}={value} is not covered by a writable "
+            "volume; mount the artifacts volume at that path"
+        )
+    if not any(mount.source == ARTIFACTS_VOLUME for mount in mounts):
+        problems.append(
+            f"services.runner must mount the {ARTIFACTS_VOLUME} volume"
+        )
+    return problems
+
+
+def staging_problems(services: Mapping[str, object]) -> List[str]:
+    """Every openHAB instance needs its fixture staging step in front of it."""
+    problems: List[str] = []
+    for openhab, init in FIXTURE_STAGING.items():
+        service = _as_mapping(services.get(openhab))
+        staging = _as_mapping(services.get(init))
+        if not staging:
+            problems.append(
+                f"services.{init} is missing; {openhab} cannot mount the fixture tree "
+                "read-only, so the fixtures have to be staged into its conf volume"
+            )
+            continue
+
+        profiles = [str(profile) for profile in _as_list(service.get("profiles"))]
+        staging_profiles = [str(profile) for profile in _as_list(staging.get("profiles"))]
+        if staging_profiles != profiles:
+            problems.append(
+                f"services.{init}.profiles must match services.{openhab}.profiles "
+                f"{profiles}, got {staging_profiles}"
+            )
+
+        expected_image = (
+            "OPENHAB_STABLE_IMAGE" if openhab == "openhab-stable" else "OPENHAB_DEV_IMAGE"
+        )
+        image = _image(staging)
+        if f"${{{expected_image}" not in image:
+            problems.append(
+                f"services.{init}.image must reference ${{{expected_image}}} so the "
+                f"staging step runs the same pinned image as {openhab}"
+            )
+
+        restart = str(staging.get("restart", "no")).strip().strip('"').lower()
+        if restart not in ("no", "false"):
+            problems.append(
+                f"services.{init}.restart must be \"no\": it is a one-shot step"
+            )
+
+        mounts = service_mounts(staging)
+        conf_volume = f"{openhab}-conf"
+        if not any(
+            mount.source == conf_volume
+            and _normalise_target(mount.target) == "/openhab/conf"
+            for mount in mounts
+        ):
+            problems.append(
+                f"services.{init} must mount the {conf_volume} volume at /openhab/conf"
+            )
+        if not any(
+            FIXTURE_SOURCE_MARKER in mount.source and mount.read_only
+            for mount in mounts
+        ):
+            problems.append(
+                f"services.{init} must mount the fixture tree read-only at /fixtures"
+            )
+        if not any(
+            "seed-openhab-conf" in mount.source and mount.read_only
+            for mount in mounts
+        ):
+            problems.append(
+                f"services.{init} must mount seed-openhab-conf.sh read-only"
+            )
+
+        depends = _as_mapping(service.get("depends_on"))
+        entry = depends.get(init)
+        condition = _as_mapping(entry).get("condition") if entry is not None else None
+        if condition != "service_completed_successfully":
+            problems.append(
+                f"services.{openhab} must depend on services.{init} with "
+                "`condition: service_completed_successfully`; otherwise openHAB starts "
+                "before its fixtures exist and its entrypoint aborts"
+            )
+    return problems
+
+
 def _image(service: Mapping[str, object]) -> str:
     return str(service.get("image", ""))
 
@@ -310,12 +597,12 @@ def validate_compose_document(
             problems.append(f"services.{name} must mount its own userdata volume {userdata_volume}")
         for fixture in ("fixtures/openhab/conf/items", "fixtures/openhab/conf/sitemaps"):
             matching = [mount for mount in mounts if fixture in mount]
-            if not matching:
-                problems.append(f"services.{name} must bind-mount the fixture directory {fixture}")
-            elif not all(mount.rstrip().endswith(":ro") for mount in matching):
+            if matching:
                 problems.append(
-                    f"services.{name} must mount {fixture} read-only (:ro); "
-                    "fixtures are the source of truth"
+                    f"services.{name} must not mount {fixture}: the image's entrypoint "
+                    "runs `chown -R openhab:openhab /openhab` and aborts on a read-only "
+                    f"mount; {FIXTURE_STAGING[name]} stages the fixtures into the conf "
+                    "volume before this service starts"
                 )
         if service.get("network_mode") == "host":
             problems.append(f"services.{name} must not use host networking")
@@ -356,12 +643,29 @@ def validate_compose_document(
         problems.append("services.runner must mount the Connect IQ SDK at /opt/ciq-sdk")
     elif not all(mount.endswith(":ro") for mount in sdk_mounts):
         problems.append("services.runner must mount the Connect IQ SDK read-only (:ro)")
-    if not any("e2e-artifacts" in mount for mount in _mounts(runner)):
-        problems.append("services.runner must mount the artifacts volume")
+    devices_mounts = [
+        mount
+        for mount in service_mounts(runner)
+        if _normalise_target(mount.target) == DEVICES_MOUNT_TARGET
+    ]
+    if not devices_mounts:
+        problems.append(
+            f"services.runner must mount device definitions at {DEVICES_MOUNT_TARGET}; "
+            "the optional CIQ_DEVICES_HOST_PATH mount falls back to an empty volume"
+        )
+    elif not all(mount.read_only for mount in devices_mounts):
+        problems.append(
+            f"services.runner must mount {DEVICES_MOUNT_TARGET} read-only (:ro)"
+        )
+    problems.extend(artifacts_mount_problems(services, env))
     runner_env = _as_mapping(runner.get("environment"))
-    for key in ("CIQ_SDK_ROOT", "E2E_OPENHAB_URL", "E2E_SHIM_URL"):
+    for key in ("CIQ_SDK_MOUNT", "E2E_OPENHAB_URL", "E2E_SHIM_URL"):
         if key not in runner_env:
             problems.append(f"services.runner must set {key}")
+
+    # -- fixtures, staging and mount safety ------------------------------
+    problems.extend(mount_problems(services, env))
+    problems.extend(staging_problems(services))
 
     # -- networking and hygiene ------------------------------------------
     problems.extend(published_port_problems(services, env))

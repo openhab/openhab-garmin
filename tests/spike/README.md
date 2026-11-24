@@ -54,8 +54,11 @@ archives separately, merge them into one directory:
 
 The host path is mounted read-only at `/opt/ciq-sdk`; the checkout is mounted
 read-only at `/work`; only `tests/artifacts/spike` (by default) is writable. The
-SDK is supplied **at run time**, never baked into an image and never copied into
-the repository.
+image's entrypoint copies the SDK to `/tmp/ciq-sdk` before the probe runs,
+because `monkeyc` writes into the SDK, and it stages the device definitions at
+`$HOME/.Garmin/ConnectIQ/Devices` (see [../docs/sdk.md](../docs/sdk.md)). The SDK
+is supplied **at run time**, never baked into an image and never copied into the
+repository.
 
 Set it either way:
 

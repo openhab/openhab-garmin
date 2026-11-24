@@ -4,6 +4,12 @@ name: openhab-garmin-e2e
 #
 #   app (Wine simulator, inside `runner`)  ->  shim  ->  openHAB
 #
+# openhab-stable and openhab-dev do not mount the fixtures themselves: a
+# one-shot openhab-<profile>-init service stages them into the conf volume and
+# the openHAB service starts only after that. A read-only bind mount underneath
+# /openhab cannot work, because the image's entrypoint runs
+# `chown -R openhab:openhab /openhab` under `set -e`.
+#
 # Profiles are exclusive on purpose: exactly one openHAB instance runs at a
 # time, so the shim always has one upstream and the two services cannot fight
 # over the same host port.
@@ -32,22 +38,43 @@ name: openhab-garmin-e2e
 # change them there, not here.
 
 services:
+  openhab-stable-init:
+    # One-shot fixture staging for openhab-stable. It reuses the pinned openHAB
+    # image on purpose: it seeds the same `dist/conf` skeleton the image's
+    # entrypoint would (openHAB then skips that, because the volume is not
+    # empty), it ships `cp`, and its uid/gid is the one openHAB runs as. No
+    # third image has to be pinned and vouched for.
+    profiles: ["stable"]
+    image: ${OPENHAB_STABLE_IMAGE:?run `python -m e2e pin-images --write` in tests/runner and set CIQ_SDK_HOST_PATH in tests/compose/.env}
+    restart: "no"
+    network_mode: none
+    entrypoint: ["/bin/sh", "/seed-conf.sh"]
+    # The image's CMD would otherwise be appended to the seed script.
+    command: []
+    healthcheck:
+      disable: true
+    volumes:
+      - openhab-stable-conf:/openhab/conf
+      - ../fixtures/openhab/conf:/fixtures:ro
+      - ./seed-openhab-conf.sh:/seed-conf.sh:ro
+
   openhab-stable:
     profiles: ["stable"]
     image: ${OPENHAB_STABLE_IMAGE:?run `python -m e2e pin-images --write` in tests/runner and set CIQ_SDK_HOST_PATH in tests/compose/.env}
     restart: "no"
+    depends_on:
+      openhab-stable-init:
+        condition: service_completed_successfully
     ports:
       - "${E2E_LOOPBACK_HOST:?set E2E_LOOPBACK_HOST in tests/compose/.env}:${OPENHAB_STABLE_PORT:?set OPENHAB_STABLE_PORT in tests/compose/.env}:8080"
     volumes:
       # The image ships a conf skeleton (items/, sitemaps/, rules/, ...) that
-      # openHAB expects to be able to write to, so conf itself is a writable
-      # named volume seeded from the image. The two directories that come from
-      # this repository are mounted read-only on top of it: fixtures are the
-      # source of truth, never written by the container, and the working tree
-      # stays clean.
+      # openHAB expects to be able to write to, so conf is a writable named
+      # volume. openhab-stable-init fills it with that skeleton plus the
+      # fixtures from this repository before this service starts; the fixtures
+      # are never mounted read-only underneath /openhab, because the
+      # entrypoint's `chown -R openhab:openhab /openhab` aborts on them.
       - openhab-stable-conf:/openhab/conf
-      - ../fixtures/openhab/conf/items:/openhab/conf/items:ro
-      - ../fixtures/openhab/conf/sitemaps:/openhab/conf/sitemaps:ro
       - openhab-stable-userdata:/openhab/userdata
     environment:
       OPENHAB_HTTP_PORT: "8080"
@@ -66,16 +93,32 @@ services:
       start_period: 60s
     networks: [e2e]
 
+  openhab-dev-init:
+    # One-shot fixture staging for openhab-dev; see openhab-stable-init.
+    profiles: ["dev"]
+    image: ${OPENHAB_DEV_IMAGE:?run `python -m e2e pin-images --write` in tests/runner and set CIQ_SDK_HOST_PATH in tests/compose/.env}
+    restart: "no"
+    network_mode: none
+    entrypoint: ["/bin/sh", "/seed-conf.sh"]
+    command: []
+    healthcheck:
+      disable: true
+    volumes:
+      - openhab-dev-conf:/openhab/conf
+      - ../fixtures/openhab/conf:/fixtures:ro
+      - ./seed-openhab-conf.sh:/seed-conf.sh:ro
+
   openhab-dev:
     profiles: ["dev"]
     image: ${OPENHAB_DEV_IMAGE:?run `python -m e2e pin-images --write` in tests/runner and set CIQ_SDK_HOST_PATH in tests/compose/.env}
     restart: "no"
+    depends_on:
+      openhab-dev-init:
+        condition: service_completed_successfully
     ports:
       - "${E2E_LOOPBACK_HOST:?set E2E_LOOPBACK_HOST in tests/compose/.env}:${OPENHAB_DEV_PORT:?set OPENHAB_DEV_PORT in tests/compose/.env}:8080"
     volumes:
       - openhab-dev-conf:/openhab/conf
-      - ../fixtures/openhab/conf/items:/openhab/conf/items:ro
-      - ../fixtures/openhab/conf/sitemaps:/openhab/conf/sitemaps:ro
       - openhab-dev-userdata:/openhab/userdata
     environment:
       OPENHAB_HTTP_PORT: "8080"
@@ -133,23 +176,36 @@ services:
     stdin_open: true
     init: true
     environment:
-      # CIQ_SDK_ROOT is the path *inside* the container. The host path is
-      # CIQ_SDK_HOST_PATH, used only for the bind mount below.
-      CIQ_SDK_ROOT: /opt/ciq-sdk
+      # The SDK is bind-mounted read-only at CIQ_SDK_MOUNT. `monkeyc` rewrites
+      # `$SDK/bin/default.jungle`, so entrypoint.sh copies the mount to
+      # CIQ_SDK_WORKDIR (writable) and exports CIQ_SDK_ROOT to the copy; the
+      # operator's SDK is never modified. The host path is CIQ_SDK_HOST_PATH,
+      # used only for the bind mount below.
+      CIQ_SDK_MOUNT: /opt/ciq-sdk
+      CIQ_SDK_WORKDIR: /tmp/ciq-sdk
       # These two are also what the app settings fixtures resolve their
       # `${E2E_SHIM_URL}` token from, so the app and the runner always talk to
       # the same endpoint. The host overlay replaces them with loopback URLs.
       E2E_OPENHAB_URL: ${E2E_OPENHAB_URL:-http://openhab-stable:8080}
       E2E_SHIM_URL: ${E2E_SHIM_URL:-http://shim:8080}
-      E2E_ARTIFACTS: /work/artifacts
+      # The artifacts volume must not be nested inside a read-only mount:
+      # Docker has to create the mountpoint, which fails on a read-only tree.
+      # /artifacts is its own top-level mount, outside the read-only checkout.
+      E2E_ARTIFACTS: /artifacts
       DISPLAY: ":99"
       PYTHONUNBUFFERED: "1"
     volumes:
       # The SDK is mounted, never baked into the image: Garmin's agreement
-      # forbids redistribution.
+      # forbids redistribution. It is read-only on purpose; see the copy in
+      # entrypoint.sh.
       - ${CIQ_SDK_HOST_PATH:?set CIQ_SDK_HOST_PATH to the Connect IQ SDK root in tests/compose/.env}:/opt/ciq-sdk:ro
+      # Optional device definitions when the mounted SDK does not ship them.
+      # Unset by default, so the source becomes an empty declared volume
+      # instead of a bind mount; entrypoint.sh links whatever it finds into
+      # $HOME/.Garmin/ConnectIQ/Devices.
+      - ${CIQ_DEVICES_HOST_PATH:-e2e-empty-devices}:/opt/ciq-devices:ro
       - ${E2E_REPO_ROOT:-../..}:/work:ro
-      - e2e-artifacts:/work/artifacts
+      - e2e-artifacts:/artifacts
     healthcheck:
       test: ["CMD", "python", "-c", "import e2e"]
       interval: 10s
@@ -169,3 +225,6 @@ volumes:
   openhab-dev-conf:
   openhab-dev-userdata:
   e2e-artifacts:
+  # Only used as the source of the optional /opt/ciq-devices mount when
+  # CIQ_DEVICES_HOST_PATH is unset: an empty volume keeps the mount harmless.
+  e2e-empty-devices:

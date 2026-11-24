@@ -51,7 +51,9 @@ Nothing here provisions a VM, changes infrastructure, or ships the Connect IQ SD
 - Linux host with Docker and Docker Compose v2 (or a VM/WSL2 guest; macOS works for
   the stack, but the simulator needs Wine and is only supported on Linux).
 - The Connect IQ SDK **mounted, never committed**: `CIQ_SDK_HOST_PATH` points at it.
-  Layout and licence rules: [docs/sdk.md](docs/sdk.md).
+  Layout and licence rules: [docs/sdk.md](docs/sdk.md). The runner copies it to a
+  writable path at container start and links its device definitions where
+  `monkeyc` looks; the mount itself is never written.
 - Python 3.10+ on the host for the unit tests and the CLI (`tests/runner`,
   declared as `requires-python` in `runner/pyproject.toml`; CI uses 3.12).
 
@@ -161,13 +163,34 @@ python -m e2e network-env             # ports in .env.example match config/netwo
 python -m e2e validate-compose        # no Docker needed
 
 cd ../compose
-docker compose up -d                  # openhab-stable, shim, runner (ports on 127.0.0.1)
+docker compose up -d                  # init staging, openhab-stable, shim, runner
 docker compose ps                     # wait for the healthchecks
 
 cd ../runner
 python -m e2e status                  # SDK, openHAB, shim, pins
 python -m e2e setup                   # fixture sanity check over REST
 ```
+
+`docker compose up -d` starts a one-shot `openhab-stable-init` (or
+`openhab-dev-init`) first: it copies `tests/fixtures/openhab/conf/` into the
+conf volume and seeds it with the image's own `dist/conf` skeleton, and openHAB
+starts only after it exits successfully. The fixtures are never mounted
+read-only underneath `/openhab`, because the image's entrypoint runs
+`chown -R openhab:openhab /openhab` under `set -e` and aborts on a read-only
+file system. The checkout is never written by the stack.
+
+Re-asserting the fixture state after a run:
+
+```bash
+docker compose -f ../compose/compose.yaml run --rm --no-deps openhab-stable-init
+docker compose -f ../compose/compose.yaml restart openhab-stable
+```
+
+`docker compose down -v` removes the conf, userdata and artifacts volumes; the
+next `up` seeds them from scratch. Artifacts live in the `e2e-artifacts` volume,
+mounted at `/artifacts` in the runner (never inside the read-only `/work`
+checkout); reports, JUnit XML, screenshots and build output are all written
+there.
 
 Then run a scenario:
 
@@ -204,8 +227,9 @@ those steps as **skipped**. It never reports them as passed.
 | `network-env` | render or verify the generated loopback network block in `compose/.env.example` |
 | `pin-images` | write or verify image digests (`--refresh` re-resolves from Docker Hub) |
 | `sdk-check` | validate the mounted SDK without starting anything |
+| `link-devices` | copy the SDK's device definitions to `$HOME/.Garmin/ConnectIQ/Devices`, where `monkeyc` looks for them; the runner entrypoint runs it at container start |
 | `health-snapshot` | record the stack's restart counts and memory before/after a run; `--phase after --artifacts` classifies the finished run |
-| `build` | compile the PRG for one or more devices with the Linux `monkeyc` |
+| `build` | compile the PRG for one or more devices (`--developer-key` overrides the throwaway key generated per build) |
 
 Exit codes: `0` success, `1` scenario failures, `2` configuration or environment
 error, `3` invalid environment (a container restarted or was killed during the
@@ -216,7 +240,12 @@ run, so the results are not attributable to the app).
 - `--device <id>` overrides the scenario's device (see `config/devices.yaml`).
 - `--driver wine|null`; `--dry-run` implies `null`.
 - `--update-goldens` writes new golden images instead of comparing; review the
-  screenshots before committing them.
+  screenshots before committing them. It needs write access to `tests/goldens`,
+  which the read-only checkout mount does not have, so capture goldens from a
+  checkout on the host, not inside the runner container.
+- `--developer-key <file>` signs the build with a key you provide; without it a
+  throwaway RSA key is generated per invocation under `<artifacts>/keys/` and
+  deleted afterwards. It is never committed and never reused.
 - `--skip-events` skips trace-event assertions (for builds without `(:debug)`).
 - `--prg <file>` reuses a build instead of compiling.
 
@@ -247,7 +276,7 @@ records `unknown` and the window is captured on the host instead:
 cd tests/runner
 python -m e2e health-snapshot --phase before --output health-window.json
 docker compose -f ../compose/compose.yaml exec runner python -m e2e run --all
-docker compose -f ../compose/compose.yaml cp runner:/work/artifacts ./artifacts
+docker compose -f ../compose/compose.yaml cp runner:/artifacts ./artifacts
 python -m e2e health-snapshot --phase after \
   --output health-window.json --artifacts ./artifacts
 ```
@@ -515,6 +544,35 @@ python -m e2e coverage --check          # unchanged
 from `tests/fixtures/health/`, drives the probe's command plan with a scripted
 runner, and asserts each verdict and its rendering. No test starts a container.
 
+### Live-run fixes (#367 follow-up)
+
+The first run of the stack on a real host found five defects that no
+workstation check could reach: the artifacts volume nested inside the read-only
+`/work` mount, openHAB's `chown -R` aborting on read-only fixture mounts, a
+missing `libharfbuzz` in the headless JRE, `monkeyc` writing into the read-only
+SDK mount, and `e2e build` having no developer key. The fixes are verified
+without Docker:
+
+```bash
+cd tests/runner
+python -m pytest -q                            # 513 passed
+python -m e2e pin-images --write
+python -m e2e validate-compose --check-pins     # compose: valid
+python -m e2e run --all --dry-run               # 81 scenarios, artifacts + JUnit written
+python -m e2e coverage --check                  # 65 entries, 36 covered, 29 waived, 0 empty
+```
+
+`tests/test_compose.py` reconstructs both Compose failures as documents (a
+volume nested in a read-only mount, a read-only mount under `/openhab`) and
+asserts they are rejected; `tests/test_runner_image.py` pins the
+Dockerfile/entrypoint contract; `tests/test_build.py` covers the throwaway key;
+and `tests/test_sdk.py` covers device-definition discovery. No test starts a
+container.
+
+The remaining proof is a stack run on the dedicated host: it compiles the PRG,
+starts openHAB and drives a scenario. Nothing here claims that has already
+happened for this change.
+
 ### Not executed (no Docker daemon or SDK on the workstation)
 
 - `docker compose config` and `docker compose build`.
@@ -597,6 +655,12 @@ manual counterpart to `tests/runner/tests/test_compose.py` and
 | Symptom | Cause |
 | --- | --- |
 | `compose: services.runner must mount the Connect IQ SDK` | `CIQ_SDK_HOST_PATH` is unset or empty in `tests/compose/.env` |
+| `compose: services.runner.E2E_ARTIFACTS=... is inside the read-only mount` | the artifacts volume was moved back under `/work`; it must be its own mount (`/artifacts`) |
+| `error: no Connect IQ device definitions were found` | the SDK ships no `Devices/` directory and `CIQ_DEVICES_HOST_PATH` is empty; see [docs/sdk.md](docs/sdk.md) |
+| `UnsatisfiedLinkError: libharfbuzz.so.0` | the runner image is missing the font stack; rebuild it (`docker compose build runner`) |
+| `Read-only file system` while writing into the SDK | the SDK copy in `entrypoint.sh` was bypassed; the mount is read-only on purpose |
+| openHAB `Exited (1)` with `chown: ... Read-only file system` | something is mounted read-only under `/openhab`; the fixtures must be staged by `openhab-<profile>-init` |
+| `The private key was not specified` | `e2e build`/`run` could not generate the throwaway key; install `openssl` or pass `--developer-key` |
 | Container exits with code 78 | SDK missing, unreadable, or its `version.txt` does not match `config/sdk.version` |
 | `pins: OPENHAB_STABLE_IMAGE is not pinned` | run `python -m e2e pin-images --write` |
 | `setup: sitemap ... references item(s) that are not defined` | fixture `.items` file drifted from the sitemap |

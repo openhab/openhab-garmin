@@ -11,11 +11,14 @@ release builds, so the harness builds without ``--release`` by default.
 
 from __future__ import annotations
 
+import os
+import shutil
 import subprocess
 import time
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional, Sequence, Tuple
+from typing import Iterator, Optional, Sequence, Tuple
 
 from .config import jungle_path
 from .sdk import SdkLayout
@@ -37,6 +40,82 @@ class BuildResult:
 
 def prg_name(device: str) -> str:
     return f"openhab-garmin-{device}.prg"
+
+
+def _run_openssl(openssl: str, arguments: Sequence[str]) -> None:
+    try:
+        completed = subprocess.run(  # noqa: S603 - fixed argument list
+            [openssl, *arguments],
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+    except (OSError, subprocess.TimeoutExpired) as error:
+        raise BuildError(f"cannot run openssl: {error}") from None
+    if completed.returncode != 0:
+        detail = (completed.stderr or completed.stdout or "").strip()
+        raise BuildError(
+            f"openssl {arguments[0]} failed (exit {completed.returncode}): {detail}"
+        )
+
+
+@contextmanager
+def ephemeral_developer_key(
+    directory: Path,
+    *,
+    openssl: Optional[str] = None,
+) -> Iterator[Path]:
+    """Yield a throwaway RSA developer key for ``monkeyc -y``.
+
+    ``monkeyc`` refuses to compile without a private key, which made an
+    unattended ``e2e build`` impossible. The key only signs a build for the
+    simulator; it is not the Connect IQ store key and it proves nothing about
+    ownership, but it must not be reused or committed all the same.
+
+    The key is generated with ``openssl`` (RSA 4096, PKCS#8 DER, the format
+    monkeyc wants), stored under the caller's artifacts directory — never in the
+    checkout — with mode ``0600``, and removed when the context exits. Every
+    invocation therefore gets a fresh key. ``--developer-key`` remains the
+    override for callers that have a stable key.
+    """
+    binary = openssl or shutil.which("openssl")
+    if binary is None:
+        raise BuildError(
+            "openssl is required to generate the ephemeral developer key; install "
+            "openssl or pass an explicit --developer-key"
+        )
+
+    keys_dir = Path(directory) / "keys"
+    keys_dir.mkdir(parents=True, exist_ok=True)
+    token = f"{os.getpid()}-{time.time_ns()}"
+    pem = keys_dir / f"developer-key-{token}.pem"
+    der = keys_dir / f"developer-key-{token}.der"
+    try:
+        _run_openssl(binary, ["genrsa", "-out", str(pem), "4096"])
+        _run_openssl(
+            binary,
+            [
+                "pkcs8",
+                "-topk8",
+                "-inform",
+                "PEM",
+                "-outform",
+                "DER",
+                "-in",
+                str(pem),
+                "-out",
+                str(der),
+                "-nocrypt",
+            ],
+        )
+        os.chmod(der, 0o600)
+        yield der
+    finally:
+        for path in (pem, der):
+            try:
+                path.unlink()
+            except FileNotFoundError:
+                pass
 
 
 def build_prg(

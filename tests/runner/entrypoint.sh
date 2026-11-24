@@ -4,6 +4,10 @@
 # Fails fast and loudly when the Connect IQ SDK is missing or has the wrong
 # version: a run against the wrong SDK produces results that cannot be compared
 # with anyone else's, which is worse than no run at all.
+#
+# It also stages everything the compile needs: the SDK is copied out of its
+# read-only mount into a writable path, and its device definitions are linked
+# into the path monkeyc searches.
 set -euo pipefail
 
 sdk_hint() {
@@ -12,10 +16,19 @@ sdk_hint() {
 Connect IQ SDK is not available in the runner container.
 
 The SDK is not redistributable, so it is never part of this repository or of
-this image. Mount it and point CIQ_SDK_ROOT at it on the host:
+this image. Mount it on the host and point CIQ_SDK_HOST_PATH at it:
 
-    export CIQ_SDK_ROOT=/opt/garmin/connectiq-sdk-9.3.0
+    export CIQ_SDK_HOST_PATH=/opt/garmin/connectiq-sdk-9.3.0
     docker compose up -d
+
+Inside the container the mount is CIQ_SDK_MOUNT (/opt/ciq-sdk). It is mounted
+read-only on purpose: monkeyc writes into the SDK, so entrypoint.sh copies it
+to CIQ_SDK_WORKDIR (/tmp/ciq-sdk) and compiles there.
+
+Device definitions are expected under the SDK (a "Devices"/"devices"
+directory) or, when they live elsewhere, mounted read-only at
+/opt/ciq-devices via CIQ_DEVICES_HOST_PATH. They are copied to
+$HOME/.Garmin/ConnectIQ/Devices, which is where monkeyc looks for them.
 
 Expected layout inside the mount:
 
@@ -23,17 +36,37 @@ Expected layout inside the mount:
     linux/bin/monkeyc           (or bin/monkeyc)
     linux/bin/monkeydo          (or bin/monkeydo)
     windows/bin/simulator.exe   (or bin/simulator.exe)
+    devices/<device>/compiler.json  (or bin/devices, Devices, ...)
 
 See tests/docs/sdk.md.
 ========================================================================
 MSG
 }
 
-if [ -z "${CIQ_SDK_ROOT:-}" ] || [ ! -d "${CIQ_SDK_ROOT}" ]; then
-    echo "error: CIQ_SDK_ROOT is not set to a directory (got '${CIQ_SDK_ROOT:-}')" >&2
+sdk_source="${CIQ_SDK_MOUNT:-${CIQ_SDK_ROOT:-}}"
+sdk_workdir="${CIQ_SDK_WORKDIR:-/tmp/ciq-sdk}"
+
+if [ -z "$sdk_source" ] || [ ! -d "$sdk_source" ]; then
+    echo "error: the Connect IQ SDK mount is not a directory (got '${sdk_source:-}')" >&2
     sdk_hint
     exit 78
 fi
+if [ "$sdk_source" = "$sdk_workdir" ]; then
+    echo "error: CIQ_SDK_MOUNT and CIQ_SDK_WORKDIR both resolve to $sdk_source;" \
+         "the SDK has to be copied out of its read-only mount" >&2
+    sdk_hint
+    exit 78
+fi
+
+# monkeyc rewrites $SDK/bin/default.jungle, so a read-only SDK at the path the
+# compiler uses cannot work. The operator's mount is never written: it is
+# copied to a writable path and CIQ_SDK_ROOT points at the copy. A restarted
+# container re-runs this, so a changed SDK is picked up.
+echo "staging the Connect IQ SDK: $sdk_source -> $sdk_workdir"
+mkdir -p "$(dirname "$sdk_workdir")"
+rm -rf "$sdk_workdir"
+cp -a "$sdk_source" "$sdk_workdir"
+export CIQ_SDK_ROOT="$sdk_workdir"
 
 # The harness itself lives on the bind-mounted checkout. If the mount is
 # missing, say so instead of failing later with an import error.
@@ -45,6 +78,25 @@ error: the harness is not importable. Mount the repository at /work:
       - ${E2E_REPO_ROOT:-../..}:/work:ro
 
 and keep PYTHONPATH=/work/tests/runner:/work/tests.
+MSG
+    exit 78
+fi
+
+# monkeyc finds device definitions through the user-level Connect IQ directory,
+# not through the SDK path. Link them before anything compiles: an unknown
+# device otherwise only shows up as a failed build much later.
+if ! python -m e2e link-devices --quiet; then
+    cat >&2 <<'MSG'
+error: no Connect IQ device definitions were found.
+
+monkeyc needs them to resolve -d <device>; without them every build fails with
+"cannot find device". Either use an SDK that ships a Devices/ directory, or
+mount the definitions read-only and name them in tests/compose/.env:
+
+    CIQ_DEVICES_HOST_PATH=/opt/garmin/ConnectIQ/Devices
+
+They are copied to $HOME/.Garmin/ConnectIQ/Devices inside the container.
+See tests/docs/sdk.md.
 MSG
     exit 78
 fi
