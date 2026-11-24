@@ -25,6 +25,7 @@ from e2e.sdk import SdkLayout
 from e2e.variants import jungle_products, parse_jungle, resolve_device
 
 JUNGLE = repo_root() / "monkey.jungle"
+CHECKOUT = JUNGLE.parent.resolve()
 
 #: What ``monkeyc`` prints when the SDK's ``api.db`` lacks a device the jungle
 #: names. The full jungle names edge550 but the vendored CI SDK does not.
@@ -40,6 +41,10 @@ def _generate(tmp_path: Path, device: str):
 
 def _properties(path: Path):
     return parse_jungle(path.read_text(encoding="utf-8"))
+
+
+def _relative_to_checkout(entry: str) -> str:
+    return Path(entry).relative_to(CHECKOUT).as_posix()
 
 
 def _layout(tmp_path: Path) -> SdkLayout:
@@ -91,9 +96,50 @@ def test_generated_jungle_parses_as_a_section_list(tmp_path: Path) -> None:
     generated = _generate(tmp_path, "venu3")
     properties = _properties(generated.path)
     original = parse_jungle(JUNGLE.read_text(encoding="utf-8"))
+    generated_paths = resolve_device(properties, "venu3")
+    original_paths = resolve_device(original, "venu3")
 
     assert jungle_products(properties) == ("approachs50", "venu3")
-    assert resolve_device(properties, "venu3") == resolve_device(original, "venu3")
+    assert generated_paths["excludeAnnotations"] == original_paths["excludeAnnotations"]
+    for prop in ("resourcePath", "sourcePath"):
+        assert [_relative_to_checkout(entry) for entry in generated_paths[prop]] == list(
+            original_paths[prop]
+        )
+
+
+def test_generated_jungle_is_path_independent(tmp_path: Path) -> None:
+    """A jungle outside the checkout must not rely on its own location.
+
+    ``monkeyc`` resolves a relative path in a jungle file against that file's
+    directory, so ``project.manifest = manifest.xml`` in
+    ``<artifacts>/build/<device>.jungle`` made a real compile fail with
+    "The specified manifest file doesn't exist: manifest.xml".
+    """
+    output = tmp_path / "outside-the-checkout" / "venu3.jungle"
+    generated = generate_device_jungle(JUNGLE, "venu3", output)
+    properties = _properties(generated.path)
+
+    manifest = Path(properties["project.manifest"])
+    assert manifest.is_absolute()
+    assert manifest.is_file()
+    assert properties["project.typecheck"] == "3", "non-path settings stay untouched"
+
+    original = parse_jungle(JUNGLE.read_text(encoding="utf-8"))
+    for product in jungle_products(properties):
+        resolved = resolve_device(properties, product)
+        for prop in ("resourcePath", "sourcePath"):
+            for entry in resolved[prop]:
+                assert Path(entry).is_absolute(), (product, prop, entry)
+        assert resolved["excludeAnnotations"] == resolve_device(original, product)[
+            "excludeAnnotations"
+        ], "annotation names are not paths and must not be rewritten"
+
+    for key, value in properties.items():
+        if "." in key or key.startswith("annot"):
+            continue
+        for entry in value.split(";"):
+            if entry and not entry.startswith("$("):
+                assert Path(entry).is_absolute(), (key, entry)
 
 
 def test_unknown_device_is_rejected(tmp_path: Path) -> None:

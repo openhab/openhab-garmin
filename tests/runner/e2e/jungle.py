@@ -18,8 +18,11 @@ semantics, so ``e2e build`` works with any SDK that can compile the device under
 test.
 
 The generated file is written outside the checkout (``<artifacts>/build`` by
-default): the checkout may be mounted read-only, and a build must never mutate
-the app source.
+default) and holds absolute paths rooted at the checkout. The checkout may be
+mounted read-only, so the file cannot live next to ``monkey.jungle``, and
+``monkeyc`` resolves a relative path in a jungle file against *that file's*
+directory — a generated file elsewhere would otherwise look for
+``manifest.xml`` beside itself.
 """
 
 from __future__ import annotations
@@ -27,7 +30,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Sequence, Tuple
+from typing import List, Mapping, Sequence, Set, Tuple
 
 #: ``monkeyc`` rejects a device qualifier that the SDK's ``api.db`` does not
 #: define. The compiler repeats the line for each occurrence; the device name
@@ -43,6 +46,21 @@ _SECTION_PROPERTY = re.compile(
 
 #: A transitive cross reference such as ``$(approachs50.excludeAnnotations)``.
 _REFERENCE = re.compile(r"\$\(([a-z][a-z0-9]*)\.")
+
+#: One ``key = value`` line. ``prefix`` and ``trailing`` keep the original
+#: spacing, so a rewrite changes the value only.
+_ASSIGNMENT = re.compile(
+    r"^(?P<prefix>[A-Za-z_][A-Za-z0-9_.]*\s*=\s*)(?P<value>.*?)(?P<trailing>\s*)$"
+)
+
+#: A ``$(name)`` reference inside a value, such as ``$(resLauncherIcons)``.
+_VARIABLE_REFERENCE = re.compile(r"\$\(([^)]+)\)")
+
+#: Properties whose values are checkout-relative paths.
+_PATH_PROPERTIES = ("resourcePath", "sourcePath")
+
+#: ``project.*`` values that are settings, not paths.
+_NON_PATH_PROJECT_VALUES = frozenset({"true", "false"})
 
 
 class JungleError(RuntimeError):
@@ -61,6 +79,75 @@ class DeviceJungle:
     def transitive(self) -> Tuple[str, ...]:
         """Sections that were added because another section referenced them."""
         return self.sections[2:]
+
+
+def _property(key: str) -> str:
+    """The property part of ``section.property``, or ``""`` for a variable."""
+    return key.partition(".")[2] if "." in key else ""
+
+
+def _path_variable_names(properties: Mapping[str, str]) -> Set[str]:
+    """Variables that hold checkout-relative paths, resolved transitively.
+
+    Only variables reachable from a path property, or whose value contains a
+    path separator, are rewritten: ``annotCiq510Plus`` and friends are
+    annotation names, and prefixing them with the checkout would break
+    ``excludeAnnotations``.
+    """
+    pending: List[str] = []
+    for key, value in properties.items():
+        if _property(key) in _PATH_PROPERTIES or key == "project.manifest":
+            pending.extend(_VARIABLE_REFERENCE.findall(value))
+        elif "." not in key and any(
+            "/" in entry or "\\" in entry for entry in value.split(";")
+        ):
+            # A path variable nothing references yet (a dropped section may be
+            # its only consumer). It is still a path value in the output.
+            pending.append(key)
+    names: Set[str] = set()
+    while pending:
+        name = pending.pop()
+        if name in names:
+            continue
+        names.add(name)
+        pending.extend(_VARIABLE_REFERENCE.findall(properties.get(name, "")))
+    return names
+
+
+def _is_path_key(key: str, value: str, path_variables: Set[str]) -> bool:
+    if _property(key) in _PATH_PROPERTIES or key == "project.manifest":
+        return True
+    if key.startswith("project."):
+        setting = value.strip().lower()
+        return not setting.isdigit() and setting not in _NON_PATH_PROJECT_VALUES
+    return "." not in key and key in path_variables
+
+
+def _absolute_entry(entry: str, root: Path) -> str:
+    """Make one ``;``-separated path entry absolute.
+
+    An entry that starts with ``$(name)`` is left alone: the referenced
+    variable is rewritten instead, and appending a root would corrupt the
+    expansion. A literal suffix after a reference (``$(resLauncherIcons)/40x40``)
+    becomes absolute through that variable.
+    """
+    stripped = entry.strip()
+    if not stripped or stripped.startswith("$(") or Path(stripped).is_absolute():
+        return stripped
+    return str(root / stripped)
+
+
+def _rewrite_paths(line: str, root: Path, path_variables: Set[str]) -> str:
+    """Rewrite a path-valued assignment, preserving everything else verbatim."""
+    match = _ASSIGNMENT.match(line)
+    if match is None:
+        return line
+    key = match.group("prefix").split("=", 1)[0].strip()
+    value = match.group("value")
+    if not _is_path_key(key, value, path_variables):
+        return line
+    entries = ";".join(_absolute_entry(entry, root) for entry in value.split(";"))
+    return f"{match.group('prefix')}{entries}{match.group('trailing')}"
 
 
 def _required_sections(lines: Sequence[str], device: str) -> List[str]:
@@ -88,7 +175,15 @@ def generate_device_jungle(source: Path, device: str, output: Path) -> DeviceJun
     ``base`` is always kept: it carries the defaults every device inherits.
     Device sections that no kept section references are dropped, which is what
     keeps ``monkeyc`` from validating qualifiers the SDK does not define.
-    Comments, blank lines and non-device settings are copied verbatim.
+    Comments, blank lines and non-path settings are copied verbatim.
+
+    The result is portable. ``monkeyc`` resolves relative jungle paths against
+    the jungle file's directory, so a file written outside the checkout would
+    look for ``manifest.xml`` and the resource/source trees beside itself.
+    Every path-valued line is therefore rewritten to an absolute path rooted at
+    ``source``'s directory: ``project.*`` path settings, ``resourcePath`` and
+    ``sourcePath`` entries, and the variables those entries reference.
+    Annotation values are names, not paths, and stay untouched.
     """
     source = Path(source)
     try:
@@ -108,12 +203,25 @@ def generate_device_jungle(source: Path, device: str, output: Path) -> DeviceJun
         )
 
     sections = _required_sections(lines, device)
+
+    # Resolve path variables from the whole source, not only the kept lines:
+    # an unused variable that holds a checkout path is still a path value in
+    # the generated file and must not stay relative.
+    properties: Mapping[str, str] = {}
+    for line in lines:
+        match = _ASSIGNMENT.match(line)
+        if match is not None:
+            key = match.group("prefix").split("=", 1)[0].strip()
+            properties[key] = match.group("value")
+    root = source.resolve().parent
+    path_variables = _path_variable_names(properties)
+
     kept = []
     for line in lines:
         match = _SECTION_PROPERTY.match(line)
         if match is not None and match.group(1) not in sections:
             continue
-        kept.append(line)
+        kept.append(_rewrite_paths(line, root, path_variables))
 
     output = Path(output)
     try:
