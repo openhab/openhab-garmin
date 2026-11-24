@@ -47,10 +47,11 @@ from the outside:
 1. **prepare** — check that Wine, `monkeydo`, `xdotool`, `xdpyinfo` and
    ImageMagick's `import` exist, then copy the PRG to
    `<artifacts>/launch/app.prg`.
-1. **start** — verify the display answers; rewrite `simulator.ini` for the
-   device, communication state and language; start `wine simulator.exe` and
-   wait for its window; seed the app properties; launch
-   `monkeydo <prg> <device>` and capture its stdout.
+1. **start** — verify the display answers; sweep a stray simulator; rewrite
+   `simulator.ini` for the device, communication state and language; start
+   `wine simulator.exe` and wait for its window and transport; launch
+   `monkeydo <prg> <device>` and capture its stdout. The app's property defaults
+   are already in the PRG, so nothing is seeded unless the escape hatch is set.
 1. **wait_ready** — wait for `E2E:LANGUAGE` plus the first `E2E:VIEW` (or
    `E2E:ERRORVIEW`), compare the reported language with the requested one, and
    record what the window title says about the device.
@@ -87,6 +88,24 @@ A launch that produces no `E2E:` line at all is the failure case, and that is
 where the `link-devices` hint is accurate: the app really did not reach the
 simulator.
 
+### Cold starts and the stray-simulator hazard
+
+Measured on the guest: the simulator window takes **36 s** on a cold Wine
+prefix (2-3 s warm), and the first `E2E:` line can take up to ~55 s after
+`monkeydo`. The window wait is therefore 120 s and readiness 90 s; do not shrink
+either to a "reasonable-looking" few seconds.
+
+The simulator is single-instance. A second `simulator.exe` started while one is
+alive exits **silently**, and `monkeydo` then waits forever with empty output —
+which looks exactly like a launch failure and burns the whole readiness budget.
+`prepare()` and `start()` therefore sweep first: `wineserver -k` for this prefix
+(prefix-scoped and name-based, unlike `pkill -f`) plus a bounded wait for the
+old windows to disappear. When a stale simulator was found, the log says so:
+
+```text
+a simulator was already running (window(s) 8388611); stopped it with wineserver -k ...
+```
+
 Artifacts land under the run's artifacts directory:
 
 | Path | Contents |
@@ -106,7 +125,7 @@ PIDs instead.
 | `E2E_WINE_BINARY` | Wine binary, when it is not on `PATH` |
 | `DISPLAY` | X display (default `:99`) |
 | `E2E_WINE_STARTUP_TIMEOUT` | seconds to wait for the simulator window (default `120`); the app's first trace line is bounded by the caller (90 s by default) |
-| `E2E_WINE_SETTINGS_FILE` | exact application-properties file to seed; skips discovery |
+| `E2E_WINE_SETTINGS_FILE` | escape hatch: write this application-properties file before launch; the default path writes nothing because properties come from the build |
 | `E2E_WINE_SCREEN_RECT` | `x,y,width,height` of the watch screen inside the window; pin it when taps miss |
 | `E2E_WINE_KEY_<BUTTON>` | X keysym for one button, e.g. `E2E_WINE_KEY_MENU=ctrl+m` |
 
@@ -118,41 +137,58 @@ PIDs instead.
 | `start` | implemented | Display check, `simulator.ini`, simulator-window wait, property seeding and `monkeydo` launch. The device name is expected to appear only after the launch. |
 | `wait_ready` | implemented | First view **and** the reported language, both from the trace stream. A dead app fails with the console tail. The first view may be the glance (`category=glance`) on a plain `monkeydo` launch; reaching the sitemap is the app's behaviour and the scenario asserts it, not the driver. |
 | `press` | implemented | Keysym per semantic button; the device definition's `simulator.json` is preferred over the defaults. |
-| `tap` | partial | The window is focused first. The screen rectangle is a centred, aspect-preserving fit of the device resolution in the window; if the bezel makes that wrong, pin `E2E_WINE_SCREEN_RECT` from a screenshot. |
+| `tap` | implemented | The window is focused first. The screen rectangle comes from the device definition's `display.location` (`simulator.json`), with `E2E_WINE_SCREEN_RECT` as the override; a centred fit is only the last resort for an SDK without `simulator.json`. |
 | `screenshot` | implemented | Captures the simulator window. Fails when the capture is not a usable PNG instead of returning a blank image. |
 | `events` | implemented | `monkeydo` stdout/stderr with receipt timestamps; `stdbuf` disables its block buffering when available. |
 | `stop` | implemented | Terminates the app and the simulator by PID; leaks nothing into the next scenario. |
 | mode (`ble`/`wifi`/`offline`) | partial | The startup keys are written and reported. The app always starts in `BLE` and only leaves it after a request fails, so the driver does not claim a runtime mode; the scenario's request-count assertions cover the transition. |
 | language (`eng`/`deu`/...) | implemented, verified | `Language` is written before start and **verified** from `E2E:LANGUAGE`. A mismatch fails the run with the ini file and what was written. |
-| app properties | implemented, verified | See below. Without properties the app shows `UI:CONFIG`, which would make every scenario pass vacuously, so the driver refuses to run unseeded and rejects that error view. |
+| app properties | implemented, verified at build | Compiled into the PRG through a `settings.xml` resource override; `e2e build` asserts the defaults `monkeyc` emitted, and `wait_ready` rejects a `UI:CONFIG` error view. See below. |
 
 ## Application properties
 
-The app reads its settings once at startup from `Properties.getValue`. The
-driver seeds them by rewriting the file the simulator itself created:
+An application property is a key and value **built into the app at compile
+time** from its resource defaults, and properties follow the rules of resource
+overrides. The simulator's settings editor is a convenience for interactive
+work; it is not the delivery mechanism, and no settings file is needed.
 
-1. Search the Wine prefix for `*.SET` and `settings.*` files under
-   `AppData/Roaming/Garmin/ConnectIQ`, `AppData/Local/Garmin/ConnectIQ` and
-   `Temp/com.garmin.connectiq`.
-1. Prefer the file that already contains the app's property ids, so a stray
-   file is not rewritten.
-1. Keep the file's format — JSON (flat or under a `properties` object) or
-   `key=value` — preserve unrelated keys, and write the fixture's values with
-   their types.
-1. Read the file back and fail when a value did not round-trip.
+`e2e build` therefore compiles the requested configuration in:
 
-If no properties file exists yet, the driver performs **one discovery launch**:
-it starts the app, waits up to 25 seconds for the simulator to create the file,
-stops the app, seeds the file and launches again. If the file still does not
-appear, `start` raises and names the patterns it searched, because a run with
-empty settings is worse than no run.
+1. A harness-owned copy of `resources/base/settings.xml` is written to
+   `<artifacts>/build/resource-override-<device>/settings.xml`, with the
+   fixture's values as the `<property>` defaults (`${E2E_SHIM_URL}` and the
+   other tokens resolve exactly as they do for the fixtures).
+1. The generated jungle for the device gets that directory appended to
+   `<device>.resourcePath`, immediately after `$(resBase)`, so the override
+   wins over `resources/base` and the launcher-icon directories are untouched.
+1. After compiling, the harness reads the settings JSON `monkeyc` emits next to
+   the PRG and **asserts** that `url_0` and `sitemap_0` equal the requested
+   values. A mismatch, or a missing JSON, fails the build. This runs with no
+   simulator, so a silent override regression cannot reach the guest.
 
-After the launch, `wait_ready` raises when the app reports
-`ERRORVIEW;id=UI:CONFIG` although the fixture configured a URL. That is the
-machine-readable proof that the properties reached the app. A scenario that
-deliberately empties `url_0` (for example
-`extended/localisation-error-config-url`) is unaffected, because the fixture's
+`--jungle` cannot carry the override (a supplied jungle is used verbatim and
+the harness must not edit it), so a run that needs settings uses the generated
+jungle. `--prg` remains the escape hatch for a PRG built elsewhere.
+
+The driver's runtime backstop is unchanged: `wait_ready` raises when the app
+reports `ERRORVIEW;id=UI:CONFIG` although the fixture configured a URL, so a PRG
+built without the override fails the scenario instead of passing vacuously. A
+scenario that deliberately empties `url_0` (for example
+`extended/localisation-error-config-url`) is unaffected, because its fixture
 URL is empty.
+
+`E2E_WINE_SETTINGS_FILE` is only an escape hatch for a hand-made properties
+file; the default path writes nothing.
+
+### What the simulator does with settings (recorded, do not re-investigate)
+
+Measured on the guest with `strace`: at app start `simulator.exe` scans
+`C:\users\<user>\Temp\com.garmin.connectiq\GARMIN\APPS\SETTINGS\` and
+`...\GARMIN\Settings\`, then rewrites `OPENHAB-GARMIN-<DEVICE>.SET` (254 bytes)
+with a property **key table only** — no values. Dropping an
+`<app>-settings.json` into that directory is consumed and deleted at launch and
+no value reaches the `.SET`. The `.SET` binary format is undocumented, so the
+driver neither writes nor parses it.
 
 ## Mode and language
 
@@ -221,15 +257,17 @@ defaults: `START=ctrl+s`, `UP=Up`, `DOWN=Down`, `ENTER=Return`,
 only produces a warning, so a missing definition does not fail a run over a
 name it cannot compare.
 
-`tap(x, y)` takes **device screen pixels**. The driver maps them into the window
-through the watch-screen rectangle. The default rectangle is the centred,
-aspect-preserving fit of the device resolution inside the window; the Connect IQ
-simulator scales the device graphic that way, but a thick bezel can shift it.
-Pin the rectangle from a screenshot when taps land in the wrong place:
+`tap(x, y)` takes **device screen pixels**. The driver maps them into the
+window through the watch-screen rectangle declared by the device definition:
+`simulator.json`'s `display.location` (`x`, `y`, `width`, `height`) is the
+authoritative screen position, so the bezel offset is not guessed. For example
+`fenix847mm` declares `{x: 134, y: 221, width: 454, height: 454}`; the same file
+declares `display.isTouch` and the `tap → onSelect` key, which is how the button
+bindings are resolved too.
 
-```bash
-E2E_WINE_SCREEN_RECT=100,160,416,416 python -m e2e run smoke/toggle-switch --device venu2
-```
+`E2E_WINE_SCREEN_RECT=x,y,width,height` overrides the declared rectangle when a
+build's window differs. A centred, aspect-preserving fit is only the last
+resort, for an SDK whose device definitions ship no `simulator.json`.
 
 Capturing the root window is never an option: on a display without a window
 manager it is a single colour and would silently satisfy a golden assertion.
@@ -242,14 +280,14 @@ is enough to act on it.
 | Message | Meaning | Next step |
 | --- | --- | --- |
 | `no X display is answering on ':99'` | the display never came up, or `DISPLAY` names the wrong one | run `xdpyinfo -display :99` in the container; the entrypoint starts Xvfb before staging the SDK |
+| `a simulator was already running (window(s) …); stopped it` | a stray simulator was swept before start; the run continues | none, unless it repeats: check that nothing else starts a simulator |
 | `the simulator opened an error dialog` | the Wine prefix has no device definitions, or the simulator cannot start | `python -m e2e link-devices`, then check the prefix's `AppData/Roaming/Garmin/ConnectIQ/Devices` |
 | `simulator-window … no window titled 'CIQ Simulator' appeared` | the simulator process never produced a window | read `logs/simulator.log`; the device definitions are only one cause at this point |
 | `device title … does not match` / `does not name a device` | **warning only**; the trace stream already proved the app is running | check `LastUsedDevice` in `simulator.ini` if results look wrong |
 | `monkeydo exited with code …` | wrong PRG or device name | read `logs/console.log` |
 | `app-ready … no console line` | the app started but produced no `E2E:` line | check the PRG is a debug build and the device wiring (`link-devices` is accurate here) |
 | `the app reported system language …` | `Language` in `simulator.ini` was ignored | see the language section above |
-| `the app showed the configuration error view` | the seeded properties did not reach the app | pin `E2E_WINE_SETTINGS_FILE` |
-| `no application-properties file was found` | the simulator never created one | run the app once, save its settings, pin the file |
+| `the app showed the configuration error view` | the PRG was built without the requested properties | rebuild with `e2e build --settings <fixture>`, or pass a PRG built that way |
 
 ## The Windows `shell.exe` bridge does not work
 
@@ -281,20 +319,24 @@ running so the next `start` does not pay for prefix initialisation again.
 The driver was written and reviewed without Wine, a display or the SDK. The
 proof is a driver run on the guest, which the operator performs:
 
-1. Build the debug PRG (`python -m e2e build --device fenix7`; the command prints
-   the path it wrote), which the `E2E:` trace needs.
+1. Build the debug PRG with the contract's fixture:
+   `python -m e2e build --device fenix6pro --settings default` (it prints the
+   PRG path and the compiled properties). `--settings` is what compiles the
+   app's property defaults in, and the build fails if `monkeyc`'s settings JSON
+   does not echo them.
 1. Run `python -m e2e contract-test --driver wine --prg <built.prg>` inside the
    runner container and confirm the report is all `pass` with exit `0`.
-1. Run `python -m e2e run smoke/launch-and-poll --driver wine --prg <built.prg>`
-   and confirm the assertions are evaluated, not skipped.
+1. Run `python -m e2e run smoke/launch-and-poll --driver wine` (or `--prg
+   <built.prg>`; the run command builds per scenario, with that scenario's
+   fixture) and confirm the assertions are evaluated, not skipped.
 1. Open `logs/driver.log` and check the `simulator.ini` line names the file and
-   the keys that were written, and that the seeded properties file is the one
-   the simulator wrote.
+   the keys that were written, that no properties file was needed, and that
+   the device-title line is corroboration rather than a gate.
 1. Run one language scenario (`extended/localisation-sitemap`) and one mode
    scenario (`extended/wifi-mode`) to confirm the verification paths.
-1. If taps miss, take a screenshot, read the watch-screen rectangle from it and
-   set `E2E_WINE_SCREEN_RECT` for the next run; record the value for the device
-   in this document.
+1. If taps miss, compare a screenshot with `display.location` in the device's
+   `simulator.json` and pin `E2E_WINE_SCREEN_RECT` for the next run; record the
+   value for the device in this document.
 
 ## Fallback if Wine cannot drive the simulator menus
 

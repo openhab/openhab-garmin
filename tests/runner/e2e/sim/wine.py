@@ -73,8 +73,10 @@ from .base import Button, DriverError, SimulatorDriver
 WINE_ENV = "E2E_WINE_BINARY"
 #: Display the simulator renders on; the entrypoint starts Xvfb here.
 DEFAULT_DISPLAY = ":99"
-#: Explicit path of the simulator's application-properties file. Set it when
-#: discovery picks the wrong file; the driver then never guesses.
+#: Explicit path of an application-properties file to write before launch. The
+#: harness compiles properties into the PRG (a ``settings.xml`` resource
+#: override), so this is only an escape hatch for a hand-made file; the default
+#: path needs no file at all.
 ENV_SETTINGS_FILE = "E2E_WINE_SETTINGS_FILE"
 #: ``x,y,width,height`` of the watch screen inside the simulator window. The
 #: default is a centred, aspect-preserving fit; pin this when taps miss.
@@ -87,8 +89,6 @@ DEFAULT_STARTUP_TIMEOUT = 120.0
 DEFAULT_READY_TIMEOUT = 90.0
 #: Delay between repeated xdotool events, so the app can process each one.
 DEFAULT_KEY_DELAY_MS = 150
-#: How long a discovery launch may run while looking for the properties file.
-DISCOVERY_LAUNCH_TIMEOUT = 25.0
 #: TCP transport ``monkeydo`` connects to; the simulator listens on it after
 #: start. Waiting for it avoids racing the push against the simulator's start-up.
 SIMULATOR_TCP_HOST = "127.0.0.1"
@@ -166,17 +166,14 @@ MODE_CONNECTION_NAMES: Mapping[str, Tuple[str, ...]] = {
     "offline": ("OFFLINE",),
 }
 
-#: Where the simulator keeps the app-properties file. The exact name and shape
-#: differ per simulator build, so the driver discovers it instead of assuming
-#: one; ``E2E_WINE_SETTINGS_FILE`` pins it when discovery is ambiguous.
-SETTINGS_GLOBS: Tuple[str, ...] = (
-    "drive_c/users/*/AppData/Roaming/Garmin/ConnectIQ/Simulator/**/*.SET",
-    "drive_c/users/*/AppData/Roaming/Garmin/ConnectIQ/Simulator/**/settings.*",
-    "drive_c/users/*/AppData/Roaming/Garmin/ConnectIQ/**/settings.*",
-    "drive_c/users/*/AppData/Local/Garmin/ConnectIQ/**/settings.*",
-    "drive_c/users/*/Temp/com.garmin.connectiq/**/*.SET",
-    "drive_c/users/*/Temp/com.garmin.connectiq/**/settings.*",
-)
+#: Where the simulator keeps app data. Recorded so the documentation and a
+#: future driver do not have to guess: the simulator scans
+#: ``Temp/com.garmin.connectiq/GARMIN/APPS/SETTINGS`` and ``.../GARMIN/Settings``
+#: and rewrites ``<APP>.SET`` there (a property key table, no values). A
+#: ``<app>-settings.json`` dropped into that directory is consumed and deleted
+#: at launch and carries no value into the app, so the driver does not seed one.
+#: Properties come from the build instead; see ``tests/docs/simulator-driver.md``.
+SIMULATOR_APP_DATA = "drive_c/users/{user}/Temp/com.garmin.connectiq"
 
 #: Candidate ``simulator.ini`` locations, relative to the Wine prefix. The
 #: simulator keeps the file at the ``ConnectIQ`` root, not in a ``Simulator``
@@ -540,19 +537,63 @@ def key_bindings(
     return bindings
 
 
-def read_device_keys(devices_root: Optional[Path], product: str) -> Mapping[str, Any]:
-    """The ``keys`` object of ``<devices_root>/<product>/simulator.json``."""
+@dataclass(frozen=True)
+class SimulatorDefinition:
+    """Facts the SDK's ``simulator.json`` declares for one device."""
+
+    keys: Mapping[str, Any] = field(default_factory=dict)
+    display: Optional["ScreenRect"] = None
+    is_touch: bool = True
+
+
+def read_simulator_definition(
+    devices_root: Optional[Path], product: str
+) -> "SimulatorDefinition":
+    """The ``keys``/``display`` facts from ``<devices>/<product>/simulator.json``.
+
+    ``display.location`` is the watch screen's rectangle inside the simulator
+    window and ``display.isTouch`` says whether the screen accepts taps. Both
+    are declared data, so ``tap`` does not have to guess the bezel offset.
+    """
     if devices_root is None:
-        return {}
+        return SimulatorDefinition()
     path = Path(devices_root) / product / "simulator.json"
     try:
         document = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
-        return {}
+        return SimulatorDefinition()
     if not isinstance(document, Mapping):
-        return {}
+        return SimulatorDefinition()
+
     keys = document.get("keys")
-    return keys if isinstance(keys, Mapping) else {}
+    display_rect: Optional[ScreenRect] = None
+    is_touch = True
+    display = document.get("display")
+    if isinstance(display, Mapping):
+        location = display.get("location")
+        if isinstance(location, Mapping):
+            try:
+                display_rect = ScreenRect(
+                    x=int(location["x"]),
+                    y=int(location["y"]),
+                    width=int(location["width"]),
+                    height=int(location["height"]),
+                )
+            except (KeyError, TypeError, ValueError):
+                display_rect = None
+        touch = display.get("isTouch")
+        if isinstance(touch, bool):
+            is_touch = touch
+    return SimulatorDefinition(
+        keys=keys if isinstance(keys, Mapping) else {},
+        display=display_rect,
+        is_touch=is_touch,
+    )
+
+
+def read_device_keys(devices_root: Optional[Path], product: str) -> Mapping[str, Any]:
+    """The ``keys`` object of ``<devices_root>/<product>/simulator.json``."""
+    return read_simulator_definition(devices_root, product).keys
 
 
 # ---------------------------------------------------------------------------
@@ -805,6 +846,7 @@ class WineSimulatorDriver(SimulatorDriver):
         self._settings: Optional[AppSettings] = None
         self._settings_file: Optional[Path] = None
         self._keys: Dict[Button, str] = dict(DEFAULT_KEYS)
+        self._declared_screen: Optional[ScreenRect] = None
         self._mode = "ble"
         self._language = "eng"
         self._display_name = ""
@@ -880,6 +922,7 @@ class WineSimulatorDriver(SimulatorDriver):
             shutil.copyfile(source, target)
         self._prg = target
         self._record(f"staged PRG {source} -> {target}")
+        self._sweep_existing_simulator()
 
     def start(
         self,
@@ -901,13 +944,16 @@ class WineSimulatorDriver(SimulatorDriver):
         self._mode = mode
         self._language = language
         devices_root = find_device_definitions(self.layout.root)
+        definition = read_simulator_definition(devices_root, device.product)
         self._display_name = read_device_display_name(devices_root, device.product)
-        self._keys = key_bindings(read_device_keys(devices_root, device.product))
+        self._keys = key_bindings(definition.keys)
+        self._declared_screen = definition.display
 
         self._ensure_display()
+        self._sweep_existing_simulator()
         self._write_simulator_ini(device, mode, language)
         self._start_simulator()
-        self._seed_settings(device, settings)
+        self._seed_settings(settings)
         self._launch_app(device)
         self._started = True
 
@@ -936,15 +982,15 @@ class WineSimulatorDriver(SimulatorDriver):
                 if event.event == "ERRORVIEW" and event.get("id") == "UI:CONFIG":
                     raise DriverError(
                         "the app showed the configuration error view "
-                        "(`ERRORVIEW;id=UI:CONFIG`) even though the driver seeded "
-                        "a URL.\n"
-                        f"seeded file: {self._settings_file}\n"
-                        f"properties written: {sorted(self._settings.properties)}\n"
-                        "The properties did not reach the app. Check that the file "
-                        "is the one the simulator reads (a stale or different file "
-                        "is ignored), or pin it with "
-                        f"{ENV_SETTINGS_FILE}=<path>.\n"
-                        f"searched: {self._settings_search_note()}"
+                        "(`ERRORVIEW;id=UI:CONFIG`), so the property defaults it "
+                        "was compiled with do not contain the URL.\n"
+                        f"properties requested: {sorted(self._settings.properties)}\n"
+                        f"properties file written: {self._settings_file or '<none>'}\n"
+                        "Properties are built into the PRG by `e2e build` (a "
+                        "settings.xml resource override asserted against monkeyc's "
+                        "settings JSON). Rebuild with the scenario's fixture, or "
+                        f"pass --prg with a PRG built that way, or set "
+                        f"{ENV_SETTINGS_FILE} to an explicit properties file."
                     )
 
         modes = [event.get("mode") for event in parsed if event.event == "CONNECTION"]
@@ -1082,6 +1128,54 @@ class WineSimulatorDriver(SimulatorDriver):
             return tuple(self._events)
 
     # -- display -----------------------------------------------------------
+    def _sweep_existing_simulator(self) -> None:
+        """Stop a simulator left behind by an earlier run.
+
+        The simulator is single-instance: a second ``simulator.exe`` exits
+        silently and ``monkeydo`` then waits forever with empty output, which
+        looks like a launch failure and burns the whole readiness budget.
+        ``wineserver -k`` is used deliberately instead of ``pkill -f <pattern>``,
+        which would also match the ``docker exec`` that runs it; the prefix is
+        this driver's own, so no unrelated process is affected. The sweep is
+        best effort and never fails a run.
+        """
+        stale: List[str] = []
+        try:
+            stale = self._find_windows() + self._error_windows()
+        except DriverError:
+            stale = []
+        wineserver = shutil.which("wineserver")
+        if wineserver is None:
+            if stale:
+                self._record(
+                    f"warning: a simulator is already running (window(s) {stale}) "
+                    "and wineserver is not installed, so it cannot be stopped"
+                )
+            return
+        try:
+            self._run(
+                [wineserver, "-k"], check=False, timeout=30, action="wineserver -k"
+            )
+        except DriverError as error:
+            self._record(
+                f"warning: could not stop a leftover Wine server: "
+                f"{str(error).splitlines()[0]}"
+            )
+            return
+        deadline = time.monotonic() + 15.0
+        while stale and time.monotonic() < deadline:
+            try:
+                if not (self._find_windows() + self._error_windows()):
+                    break
+            except DriverError:
+                break
+            time.sleep(0.25)
+        if stale:
+            self._record(
+                f"a simulator was already running (window(s) {stale}); stopped it "
+                "with wineserver -k before starting a new one"
+            )
+
     def _ensure_display(self) -> None:
         completed = self._run(
             xdpyinfo_command(self.display), check=False, action="xdpyinfo"
@@ -1326,9 +1420,22 @@ class WineSimulatorDriver(SimulatorDriver):
         return geometry
 
     def _resolve_screen_rect(self, window: str, device: Device) -> ScreenRect:
+        """The watch screen inside the simulator window.
+
+        Precedence: ``E2E_WINE_SCREEN_RECT`` (operator pin), the device
+        definition's ``display.location`` (declared data, so the bezel offset is
+        not guessed), then a centred aspect-preserving fit for an SDK that
+        ships no ``simulator.json``.
+        """
         pinned = parse_screen_rect(os.environ.get(ENV_SCREEN_RECT, ""))
         if pinned is not None:
             return pinned
+        if self._declared_screen is not None:
+            return self._declared_screen
+        self._record(
+            "note: no display.location in the device definition; falling back to a "
+            "centred screen rectangle. Pin E2E_WINE_SCREEN_RECT if taps miss."
+        )
         return screen_rect(
             self._geometry(window), (device.screen_width, device.screen_height)
         )
@@ -1434,70 +1541,27 @@ class WineSimulatorDriver(SimulatorDriver):
         )
 
     # -- application properties -------------------------------------------
-    def _settings_candidates(self) -> List[Path]:
+    def _seed_settings(self, settings: AppSettings) -> None:
+        """Write an explicit properties file only when one is requested.
+
+        Application properties are built into the PRG: ``e2e build`` writes a
+        ``settings.xml`` resource override and asserts the defaults ``monkeyc``
+        emitted, so the default path here does nothing. The escape hatch exists
+        for a PRG built by other means, and it must still be read back.
+        """
         override = os.environ.get(ENV_SETTINGS_FILE)
         if override:
-            return [Path(override)]
-        found: List[Path] = []
-        for pattern in SETTINGS_GLOBS:
-            try:
-                for path in sorted(self.prefix.glob(pattern)):
-                    if path.is_file() and path.name != "simulator.ini":
-                        found.append(path)
-            except (OSError, ValueError):
-                continue
-        seen: List[Path] = []
-        for path in found:
-            if path not in seen:
-                seen.append(path)
-        return seen
-
-    def _settings_search_note(self) -> str:
-        patterns = list(SETTINGS_GLOBS)
-        return f"{self.prefix} with {patterns}; pin the file with {ENV_SETTINGS_FILE}"
-
-    def _choose_settings_file(
-        self, candidates: Sequence[Path], settings: AppSettings
-    ) -> Optional[Path]:
-        """Pick the app-properties file, preferring one that already holds the
-        app's keys so a stray file cannot be rewritten."""
-        if not candidates:
-            return None
-        wanted = set(settings.properties)
-
-        def rank(path: Path) -> Tuple[int, int, str]:
-            try:
-                text = path.read_text(encoding="utf-8", errors="replace")
-            except OSError:
-                text = ""
-            document = parse_properties(text)
-            hits = len(wanted & set(document.properties))
-            try:
-                modified = int(path.stat().st_mtime)
-            except OSError:
-                modified = 0
-            return (-hits, -modified, str(path))
-
-        return sorted(candidates, key=rank)[0]
-
-    def _seed_settings(self, device: Device, settings: AppSettings) -> None:
-        path = self._choose_settings_file(self._settings_candidates(), settings)
-        if path is None:
+            self._write_settings(Path(override), settings)
             self._record(
-                "no application-properties file found; running one discovery "
-                "launch so the simulator creates it"
+                f"{ENV_SETTINGS_FILE} is set, so the properties were written to a "
+                "file as well; the compiled defaults are the normal route"
             )
-            self._discovery_launch(device)
-            path = self._choose_settings_file(self._settings_candidates(), settings)
-        if path is None:
-            raise DriverError(
-                "no application-properties file was found, so the app would run "
-                "without a server URL and show the configuration error view.\n"
-                f"searched {self._settings_search_note()}\n"
-                "Run the app once in the simulator, open its settings, save them, "
-                f"and set {ENV_SETTINGS_FILE} to the file the simulator wrote."
-            )
-        self._write_settings(path, settings)
+            return
+        self._settings_file = None
+        self._record(
+            "app properties come from the build (settings.xml resource override); "
+            "no simulator-side properties file is written"
+        )
 
     def _write_settings(self, path: Path, settings: AppSettings) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -1530,25 +1594,6 @@ class WineSimulatorDriver(SimulatorDriver):
         self._record(
             f"seeded {len(settings.properties)} app property/properties into {path} "
             f"({document.fmt}) as fixture {settings.name!r}"
-        )
-
-    def _discovery_launch(self, device: Device) -> None:
-        """Launch once so the simulator creates its app-properties file."""
-        started = time.monotonic()
-        self._launch_app(device)
-        deadline = started + DISCOVERY_LAUNCH_TIMEOUT
-        while time.monotonic() < deadline:
-            if self._settings_candidates():
-                break
-            process = self._app_process
-            if process is not None and process.poll() is not None:
-                break
-            time.sleep(0.5)
-        self._stop_app()
-        self._record(
-            "discovery launch finished after "
-            f"{time.monotonic() - started:.1f}s; "
-            f"candidate count={len(self._settings_candidates())}"
         )
 
     # -- helpers -----------------------------------------------------------

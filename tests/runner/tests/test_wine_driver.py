@@ -47,6 +47,7 @@ from e2e.sim.wine import (
     png_problem,
     read_device_display_name,
     read_device_keys,
+    read_simulator_definition,
     render_properties,
     screen_rect,
     simulator_command,
@@ -211,13 +212,36 @@ def test_device_definition_names_are_read(tmp_path: Path) -> None:
         json.dumps({"displayName": "Forerunner® 965"}), encoding="utf-8"
     )
     (root / "fr965" / "simulator.json").write_text(
-        json.dumps({"keys": {"up": 38, "down": 40, "enter": 13, "back": 27}}),
+        json.dumps(
+            {
+                "keys": {"up": 38, "down": 40, "enter": 13, "back": 27},
+                "display": {
+                    "location": {"x": 134, "y": 221, "width": 454, "height": 454},
+                    "isTouch": True,
+                },
+            }
+        ),
         encoding="utf-8",
     )
     assert read_device_display_name(root, "fr965") == "Forerunner® 965"
     assert read_device_keys(root, "fr965")["up"] == 38
+    definition = read_simulator_definition(root, "fr965")
+    assert definition.display == ScreenRect(x=134, y=221, width=454, height=454)
+    assert definition.is_touch is True
     assert read_device_display_name(root, "missing") == ""
     assert read_device_keys(None, "fr965") == {}
+    assert read_simulator_definition(None, "fr965").display is None
+
+
+def test_device_definition_without_a_display_has_no_rect(tmp_path: Path) -> None:
+    root = tmp_path / "Devices"
+    (root / "fenix7").mkdir(parents=True)
+    (root / "fenix7" / "simulator.json").write_text(
+        json.dumps({"keys": {"up": 38}}), encoding="utf-8"
+    )
+    definition = read_simulator_definition(root, "fenix7")
+    assert definition.display is None
+    assert definition.is_touch is True
 
 
 # ---------------------------------------------------------------------------
@@ -713,24 +737,6 @@ def test_tap_maps_device_coordinates_to_the_window(
     assert click[4:6] == ["208", "208"]
 
 
-def test_seeding_raises_when_no_properties_file_exists(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    driver = _driver(tmp_path)
-    called = {"discovery": False}
-
-    def discovery(device: Device) -> None:
-        called["discovery"] = True
-
-    monkeypatch.delenv(ENV_SETTINGS_FILE, raising=False)
-    driver._discovery_launch = discovery  # type: ignore[method-assign]
-    with pytest.raises(DriverError) as error:
-        driver._seed_settings(_device(), load_settings("default"))
-    assert called["discovery"] is True
-    assert ENV_SETTINGS_FILE in str(error.value)
-    assert "configuration error view" in str(error.value)
-
-
 def test_seeding_writes_and_round_trips_every_property(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -740,7 +746,7 @@ def test_seeding_writes_and_round_trips_every_property(
     target.write_text("custom_0=keep\n", encoding="utf-8")
     monkeypatch.setenv(ENV_SETTINGS_FILE, str(target))
     settings = load_settings("default")
-    driver._seed_settings(_device(), settings)
+    driver._seed_settings(settings)
     document = parse_properties(target.read_text(encoding="utf-8"))
     assert document.properties["custom_0"] == "keep"
     for name, value in settings.properties.items():
@@ -748,14 +754,41 @@ def test_seeding_writes_and_round_trips_every_property(
     assert driver.settings_file == target
 
 
-def test_seeding_prefers_a_file_that_already_holds_the_app_keys(tmp_path: Path) -> None:
+def test_seeding_does_nothing_without_the_escape_hatch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Properties are compiled into the PRG by the build, not seeded here."""
     driver = _driver(tmp_path)
-    unrelated = tmp_path / "unrelated.txt"
-    unrelated.write_text("other_0=1\n", encoding="utf-8")
-    related = tmp_path / "related.txt"
-    related.write_text("url_0=u/\nsitemap_0=s\n", encoding="utf-8")
-    chosen = driver._choose_settings_file([unrelated, related], load_settings("default"))
-    assert chosen == related
+    monkeypatch.delenv(ENV_SETTINGS_FILE, raising=False)
+    driver._seed_settings(load_settings("default"))
+    assert driver.settings_file is None
+    assert list((tmp_path / "prefix").rglob("*.SET")) == []
+    log = _driver_log(driver)
+    assert "settings.xml resource override" in log
+    assert "no simulator-side properties file is written" in log
+
+
+def test_prepare_sweeps_a_stray_simulator(
+    tmp_path: Path, tools: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A second simulator exits silently and monkeydo then hangs forever."""
+    driver = _driver(tmp_path)
+    prg = tmp_path / "app.prg"
+    prg.write_bytes(b"prg")
+    fake = FakeRun()
+    driver._run = fake  # type: ignore[method-assign]
+    windows = {"visible": ["42"]}
+    monkeypatch.setattr(
+        driver,
+        "_find_windows",
+        lambda: windows.pop("visible", []) if windows else [],
+    )
+    monkeypatch.setattr(driver, "_error_windows", lambda: [])
+    driver.prepare(prg)
+    assert ["/usr/bin/wineserver", "-k"] in fake.commands
+    log = _driver_log(driver)
+    assert "a simulator was already running" in log
+    assert "stopped it" in log
 
 
 class _IdleSimulator:

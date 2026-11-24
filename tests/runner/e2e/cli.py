@@ -74,7 +74,7 @@ from .sdk import (
     link_devices,
     load_layout,
 )
-from .settings import SettingsError
+from .settings import SettingsError, load_settings
 from .shim import ShimClient, ShimError
 from .sim import DRIVER_NAMES, create_driver
 from .variants import (
@@ -299,7 +299,7 @@ def _cmd_run(args: argparse.Namespace) -> int:
     artifacts = _artifacts_dir(args)
     goldens = _goldens_dir(args)
     report = Report()
-    built: Dict[str, Path] = {}
+    built: Dict[Tuple[str, Any], Path] = {}
 
     environment_before, environment_after = _environment_window(dry_run)
 
@@ -313,23 +313,34 @@ def _cmd_run(args: argparse.Namespace) -> int:
     with key_context as developer_key:
         for scenario in scenarios:
             device = _device_for(scenario, args)
+            settings = load_settings(scenario.fixture)
+            if scenario.settings:
+                settings = settings.with_overrides(scenario.settings)
             prg: Optional[Path] = None
             if layout is not None:
                 if args.prg:
                     prg = Path(args.prg)
                 else:
-                    if device.id not in built:
+                    # Properties are compiled in, so the cache key is the
+                    # device *and* the effective settings, not just the device.
+                    cache_key = (device.id, _settings_key(settings))
+                    if cache_key not in built:
                         built_prg = build_prg(
                             layout,
                             device.product,
                             artifacts / "build",
                             jungle=_jungle_override(args),
                             developer_key=developer_key,
+                            settings=settings,
                         )
                         print(f"jungle: {built_prg.jungle_note}")
-                        print(f"built {built_prg.prg} in {built_prg.duration_ms:.0f} ms")
-                        built[device.id] = built_prg.prg
-                    prg = built[device.id]
+                        print(
+                            f"built {built_prg.prg} in {built_prg.duration_ms:.0f} ms"
+                        )
+                        if built_prg.settings_json is not None:
+                            print(_describe_compiled_settings(built_prg))
+                        built[cache_key] = built_prg.prg
+                    prg = built[cache_key]
 
             print(f"--- {scenario.scenario_id} ({scenario.tier}) device={device.id}")
             outcome = run_scenario(
@@ -731,6 +742,7 @@ def _cmd_build(args: argparse.Namespace) -> int:
     artifacts = _artifacts_dir(args)
     output = Path(args.output) if args.output else artifacts / "build"
     device_ids = args.device or [default_device_id()]
+    settings = load_settings(args.settings)
     with _developer_key(artifacts, args) as developer_key:
         for device_id in device_ids:
             device = find_device(device_id)
@@ -741,10 +753,29 @@ def _cmd_build(args: argparse.Namespace) -> int:
                 jungle=_jungle_override(args),
                 release=args.release,
                 developer_key=developer_key,
+                settings=settings,
             )
             print(f"{device.id}: {result.jungle_note}")
             print(f"{device.id}: {result.prg} ({result.duration_ms:.0f} ms)")
+            if result.settings_json is not None:
+                print(f"{device.id}: {_describe_compiled_settings(result)}")
     return EXIT_OK
+
+
+def _describe_compiled_settings(result: Any) -> str:
+    """One line naming the compiled property defaults and their evidence."""
+    values = result.settings_values or {}
+    shown = ", ".join(
+        f"{name}={values[name]!r}" for name in ("url_0", "sitemap_0") if name in values
+    )
+    return f"compiled properties: {shown} ({result.settings_json})"
+
+
+def _settings_key(settings: Any) -> Tuple[Tuple[str, str], ...]:
+    """Stable cache key for the property values a build compiles in."""
+    return tuple(
+        sorted((str(name), str(value)) for name, value in settings.properties.items())
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -804,7 +835,9 @@ def build_parser() -> argparse.ArgumentParser:
         help=(
             "use this jungle for the build instead of generating a "
             "device-scoped one; requires an SDK that defines every device the "
-            "file names"
+            "file names. It cannot carry the harness settings override, so a "
+            "run with settings needs the generated jungle (drop --jungle) or a "
+            "pre-built --prg"
         ),
     )
     run.add_argument(
@@ -962,10 +995,21 @@ def build_parser() -> argparse.ArgumentParser:
     build.add_argument("--device", nargs="*", help="device ids (default: the matrix default)")
     build.add_argument("--output", help="output directory")
     build.add_argument(
+        "--settings",
+        default="default",
+        help=(
+            "settings fixture whose property defaults are compiled into the PRG "
+            "(default: default); the values are read back from monkeyc's settings "
+            "JSON and asserted"
+        ),
+    )
+    build.add_argument(
         "--jungle",
         help=(
             "use this jungle instead of generating a device-scoped one; "
-            "requires an SDK that defines every device the file names"
+            "requires an SDK that defines every device the file names. It "
+            "cannot carry the harness settings override, so omit --settings or "
+            "use the generated jungle"
         ),
     )
     build.add_argument("--release", action="store_true", help="strip debug annotations (breaks event assertions)")
