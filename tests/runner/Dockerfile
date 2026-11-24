@@ -92,11 +92,18 @@ RUN sed -i 's/\r$//' /entrypoint.sh && chmod +x /entrypoint.sh
 
 # The repository is bind-mounted at /work by compose; these paths only need to
 # be correct for the CLI to import itself and to find the shared shim grammar.
+#
+# CIQ_SDK_ROOT is declared here and points at the copy, not at the read-only
+# mount: `docker exec` starts a new process from the image environment and never
+# sees an `export` from the entrypoint, so every consumer (exec, a driver, the
+# CLI) would otherwise fail with "Connect IQ SDK not configured". It must equal
+# CIQ_SDK_WORKDIR; tests/test_runner_image.py asserts that they cannot drift.
 ENV PYTHONPATH=/work/tests/runner:/work/tests \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     E2E_ARTIFACTS=/artifacts \
     CIQ_SDK_WORKDIR=/tmp/ciq-sdk \
+    CIQ_SDK_ROOT=/tmp/ciq-sdk \
     DISPLAY=:99
 
 WORKDIR /work
