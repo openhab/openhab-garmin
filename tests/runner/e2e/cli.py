@@ -130,6 +130,12 @@ def _developer_key(artifacts: Path, args: argparse.Namespace):
     return ephemeral_developer_key(artifacts)
 
 
+def _jungle_override(args: argparse.Namespace) -> Optional[Path]:
+    """An explicit ``--jungle``, or ``None`` to generate a device-scoped one."""
+    explicit = getattr(args, "jungle", None)
+    return Path(explicit) if explicit else None
+
+
 def _emit_json(document: Mapping[str, Any]) -> None:
     print(json.dumps(document, indent=2))
 
@@ -317,8 +323,10 @@ def _cmd_run(args: argparse.Namespace) -> int:
                             layout,
                             device.product,
                             artifacts / "build",
+                            jungle=_jungle_override(args),
                             developer_key=developer_key,
                         )
+                        print(f"jungle: {built_prg.jungle_note}")
                         print(f"built {built_prg.prg} in {built_prg.duration_ms:.0f} ms")
                         built[device.id] = built_prg.prg
                     prg = built[device.id]
@@ -712,9 +720,11 @@ def _cmd_build(args: argparse.Namespace) -> int:
                 layout,
                 device.product,
                 output,
+                jungle=_jungle_override(args),
                 release=args.release,
                 developer_key=developer_key,
             )
+            print(f"{device.id}: {result.jungle_note}")
             print(f"{device.id}: {result.prg} ({result.duration_ms:.0f} ms)")
     return EXIT_OK
 
@@ -771,6 +781,14 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--update-goldens", action="store_true", help="replace golden images with the current screenshots")
     run.add_argument("--skip-events", action="store_true", help="skip assertions that need the console event stream")
     run.add_argument("--prg", help="use an existing PRG instead of building one")
+    run.add_argument(
+        "--jungle",
+        help=(
+            "use this jungle for the build instead of generating a "
+            "device-scoped one; requires an SDK that defines every device the "
+            "file names"
+        ),
+    )
     run.add_argument(
         "--developer-key",
         help=(
@@ -918,6 +936,13 @@ def build_parser() -> argparse.ArgumentParser:
     build = subparsers.add_parser("build", help="compile the PRG")
     build.add_argument("--device", nargs="*", help="device ids (default: the matrix default)")
     build.add_argument("--output", help="output directory")
+    build.add_argument(
+        "--jungle",
+        help=(
+            "use this jungle instead of generating a device-scoped one; "
+            "requires an SDK that defines every device the file names"
+        ),
+    )
     build.add_argument("--release", action="store_true", help="strip debug annotations (breaks event assertions)")
     build.add_argument(
         "--developer-key",
