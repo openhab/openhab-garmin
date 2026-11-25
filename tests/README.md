@@ -283,7 +283,7 @@ See [docs/simulator-driver.md](docs/simulator-driver.md#glance-the-build-profile
 | `list-scenarios` | what `run --all` would execute |
 | `variants` | the resolved build-variant table and device coverage; exits non-zero on a gap |
 | `coverage` | map #140 scope entries to scenarios; `--write` regenerates `docs/coverage.md`, `--check` fails on a gap or a stale document |
-| `contract-test` | exercise a simulator driver against the driver contract; `--prg` adds the cases that need a launched application and its name selects the device (a disagreeing `--device` is refused) |
+| `contract-test` | exercise a simulator driver against the driver contract; `--prg` adds the cases that need a launched application and its name selects the device (a disagreeing `--device` is refused). `--key BUTTON=KEYSYM` tries a different input key; `--shim-url` adds the shim requests each measured press caused |
 | `preflight` | read-only host check before the stack starts; `--skip` a group and `--json` for automation |
 | `validate-compose` | static Compose validation; `--check-pins` also requires digests |
 | `network-env` | render or verify the generated loopback network block in `compose/.env.example` |
@@ -301,6 +301,8 @@ run, so the results are not attributable to the app).
 
 - `--device <id>` overrides the scenario's device (see `config/devices.yaml`).
 - `--driver wine|null`; `--dry-run` implies `null`.
+- `--key BUTTON=KEYSYM` (repeatable) sends that X keysym for a button instead of
+  the driver's default path, e.g. `--key ENTER=Return`.
 - `--update-goldens` writes new golden images instead of comparing; review the
   screenshots before committing them. It needs write access to `tests/goldens`,
   which the read-only checkout mount does not have, so capture goldens from a

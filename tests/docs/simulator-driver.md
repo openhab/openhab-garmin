@@ -40,12 +40,14 @@ engine reports event and golden assertions as **skipped**, never passed.
   build as another produced a `Symbol Not Found` and a pointless `tap` failure
   on the guest, which is a false result rather than a test.
 - `app-entry` requires the app to have left the glance: `wait_ready` runs it, and
-  a widget still in glance mode fails with the delegate/memory pointers instead
-  of a generic timeout.
-- `press-effect` proves the input path: it presses ENTER, MENU and DOWN (and
-  taps on touch devices) and requires a new view **or** a change inside the
-  screen rectangle. A pass means the app reacted, not that `xdotool` ran; the
-  simulator's bezel highlight cannot satisfy it.
+  a still-glance app fails with the glance/transition pointers instead of a
+  generic timeout.
+- Every `press[...]` case is **measured**: it reports `mechanism=…`, `effect=…`
+  and, with `--shim-url`, `requests +N`, and fails when the press changed
+  nothing. `--key BUTTON=KEYSYM` (repeatable) tries a different keysym.
+- `press-effect` presses ENTER, MENU and DOWN (and taps on touch devices) and
+  requires a different view or a screen change in the screen rectangle; a repeat
+  of the same view never counts.
 - `input-delivery` presses the declared select once and reports whether the app
   changed a view or its screen area. It does not assume a simulator menu.
 - The contract starts with `mode=ble, language=deu`. The language is reported
@@ -143,7 +145,7 @@ PIDs instead.
 | `E2E_WINE_STARTUP_TIMEOUT` | seconds to wait for the simulator window (default `120`); the app's first trace line is bounded by the caller (90 s by default) |
 | `E2E_WINE_SETTINGS_FILE` | escape hatch: write this application-properties file before launch; the default path writes nothing because properties come from the build |
 | `E2E_WINE_SCREEN_RECT` | `x,y,width,height` of the watch screen inside the window; pin it when taps miss |
-| `E2E_WINE_KEY_<BUTTON>` | X keysym for one button, e.g. `E2E_WINE_KEY_MENU=ctrl+m` |
+| `E2E_WINE_KEY_<BUTTON>` | X keysym for one button, e.g. `E2E_WINE_KEY_ENTER=Return`; `--key BUTTON=KEYSYM` is the CLI spelling |
 
 ## Per-method status
 
@@ -152,7 +154,7 @@ PIDs instead.
 | `prepare` | implemented | Validates the external tools and copies the PRG. Runs before anything touches Wine. |
 | `start` | implemented | Display check, `simulator.ini`, simulator-window wait, property seeding and `monkeydo` launch. The device name is expected to appear only after the launch. |
 | `wait_ready` | implemented | First view **and** the reported language, both from the trace stream. A dead app fails with the console tail. The first view may be the glance (`category=glance`) on a plain `monkeydo` launch; reaching the sitemap is the app's behaviour and the scenario asserts it, not the driver. |
-| `press` | implemented, verified by effect | Clicks the declared `keys[].location` hit area (hold where `isHold`) as real X input; keysym only as an override/fallback. The contract proves delivery (`input-delivery`) and effect (`press-effect`). |
+| `press` | implemented, measured | Proven keyboard bindings first (`UP=Up`, `DOWN=Down`), then the declared hit area (mouse, unproven under this Wine/Xvfb), then a keysym. Every measured press reports mechanism, effect and shim requests; a press with no effect fails. `--key BUTTON=KEYSYM` tries candidates. |
 | `tap` | implemented | The window is focused first. The screen rectangle comes from the device definition's `display.location` (`simulator.json`), with `E2E_WINE_SCREEN_RECT` as the override; a centred fit is only the last resort for an SDK without `simulator.json`. |
 | `screenshot` | implemented | Captures the simulator window. Fails when the capture is not a usable PNG instead of returning a blank image. |
 | `events` | implemented | `monkeydo` stdout/stderr with receipt timestamps; `stdbuf` disables its block buffering when available. |
@@ -413,63 +415,76 @@ the same scale/offset re-anchors the key hit areas, for a window that really is
 showing a different rectangle. `logs/driver.log` records the mechanism for every
 press: the clicked window point and the mapper source, or the keysym.
 
-### Proving that input is delivered
+### Input: keyboard first, mouse kept
 
-A click that lands correctly and a click the simulator never receives look the
-same in a log, so the driver separates the two from the simulator's chrome:
+Guest measurements (fenix7, `watch-app` build, screen rectangle cropped before and
+after, shim `/__requests` polled after every step):
 
-- The pointer moves to **absolute root coordinates** (`window origin + point`)
-  and the click is generated with XTEST; keys go to the **focused** window
-  instead of `xdotool key --window`, because `XSendEvent` is ignored by many
-  toolkits. Both keep the window-targeted form as a fallback if the first
-  command fails.
-- `probe_input_delivery()` presses the declared `onSelect` area once and
-  requires a new `E2E:VIEW`/`ERRORVIEW` **or** a change inside the
-  `display.location` rectangle. The contract case `input-delivery` fails with
-  "delivery to the app or the app not reacting" when neither happens — it does
-  **not** try a simulator menu: the guest's simulator has no menu bar, and no
-  `Alt+F`/`Alt+S`/`Alt+M` opens a window there.
-- `press-effect` accepts a new view or a change in the **screen rectangle** at or
-  above the pixel threshold. The simulator highlights its own bezel buttons, so
-  a whole-window difference would pass while the app never reacted; the screen
-  region is therefore the only area measured. It presses ENTER, MENU and DOWN,
-  and taps the screen centre on a touch device.
+| Input | Screen change | Requests |
+| --- | --- | --- |
+| keys `a`, `b` | 0 | 0 |
+| `Down` (`nextPage`) | 749 / 731 / 638 on repeated presses | 0 |
+| `Up` (`previousPage`) | 638 | 0 |
+| `Return`, `KP_Enter`, `Escape`, `Menu`, `space`, `F5`, `F6` | 0 | 0 |
+| mouse click on the `enter` rect, screen centre, 1.5 s hold, double click | 0 | 0 |
+| the same clicks with `matchbox-window-manager`, `windowactivate --sync` and fullscreen-scaled coordinates | 0 | 0 |
 
-Both cases are red on the guest exactly while the app sits on the glance page:
-the simulator receives the clicks, but the app does not react (see "Opening the
-app from the glance page"). That is the accurate state, not a coordinate bug.
+**The keyboard reaches the simulator; the mouse does not** under this Wine/Xvfb,
+at any coordinate and with or without a window manager. The maintainer reports
+that in their simulator clicking the glance switches into app mode, so the
+difference is ours and the mouse path is kept.
 
-Keystrokes are only a fallback:
+`press` therefore picks its path and records it:
 
-- `E2E_WINE_KEY_<BUTTON>=<keysym>` always wins and sends a key instead;
-- an SDK whose `keys` is a mapping of action → Windows virtual-key code (the
-  older shape) also produces keysyms;
-- the documented defaults (`START=ctrl+s`, `UP=Up`, `DOWN=Down`,
-  `ENTER=Return`, `BACK=Escape`, `MENU=ctrl+m`) are the last resort.
+1. `E2E_WINE_KEY_<BUTTON>=<keysym>` (or `--key BUTTON=KEYSYM`) always wins;
+1. a **proven** keyboard binding (currently `UP=Up`, `DOWN=Down`) is used
+   instead of the declared hit area, because the click path is silent;
+1. otherwise the declared `keys[].location` rectangle is clicked — the right
+   path for select-like buttons once the mouse works, and reported as
+   **unproven** until then;
+1. the last resort is the documented keysym (`START=ctrl+s`, `ENTER=Return`,
+   `BACK=Escape`, `MENU=ctrl+m`).
 
-A keystroke the simulator ignores is indistinguishable from a successful press
-unless the effect is observed, so the contract test does not stop at "the call
-succeeded": `press-effect` presses ENTER, then MENU, then DOWN and requires a
-new `E2E:VIEW` or `E2E:ERRORVIEW` within a few seconds. Without one, input never
-reached the app and the case fails, naming both mechanisms.
+`--key` exists so candidate select keys can be tried without a code change:
+
+```bash
+python -m e2e contract-test --driver wine --prg <prg> --key ENTER=Return
+python -m e2e contract-test --driver wine --prg <prg> --key ENTER=KP_Enter --key MENU=Menu
+python -m e2e run smoke/launch-and-poll --driver wine --key UP=Up --key DOWN=Down
+```
+
+Each measured press reports its path, its effect and (with `--shim-url` or
+`E2E_SHIM_URL`) the shim requests it caused, in the normal contract output:
+
+```text
+press[DOWN]   pass  mechanism=keyboard (keysym Down); effect=screen change 731px; screen=731px; requests +0
+press[ENTER]  fail  mechanism=mouse (window (378,180)); effect=none; screen=0px; requests +0 — the press ran but changed nothing…
+```
+
+A press with no measurable effect is a **failure**, not a pass: `press_measured()`
+returns an empty `effect` and the contract case raises. `press-effect` performs
+the same measurement across ENTER/MENU/DOWN (and a tap on touch devices) and
+requires a different view or a screen change above the threshold; a repeated
+view never counts.
+
+`tap` remains a call-level case because its coordinate is arbitrary; its detail
+says the mouse path is unproven and no effect is asserted there.
 
 ### Why the app stays on the glance page
 
-**This is the cause of every "no request" and every red input case, and it is
-app-side.** Under the simulator the glance is requested **in the app's own
-process**, and `OHApp.getGlanceView()` calls `AppLifecycle.setGlance()`. That
-flag is process-wide and latched, so the lifecycle guards
+The maintainer reports that **clicking the glance in their simulator switches
+into app mode**, so the transition itself works. The open question is why our
+synthetic input does not reproduce it: the keyboard scrolls the glance
+(`Up`/`Down`) but clicks are silent, and the app also latches glance mode in its
+own process:
 
 ```monkeyc
 if( AppLifecycle.isGlance() ) { return; }   // onStart, onActive, ...
+function getGlanceView(...) { AppLifecycle.setGlance(); ... }
 ```
 
-bail out for the rest of the process: `getInitialView()` yields no view and
-`SitemapRequest.start()` is never reached. On hardware the glance really is a
-separate process and the flag only affects that process; the simulator does not
-give it one.
-
-Three builds on the guest confirm it:
+`setGlance()` sets a process-wide flag, and the simulator does not give the
+glance the separate process hardware gives it. Three builds on the guest:
 
 | Build | App source | Result |
 | --- | --- | --- |
@@ -477,17 +492,16 @@ Three builds on the guest confirm it:
 | `watch-app` | `getGlanceView()` returns `null`, `setGlance()` kept | still `LANGUAGE` + `category=glance` |
 | `watch-app` | `getGlanceView()` returns `null` with no `setGlance()` | `LANGUAGE` only, `monkeydo` exits 0: no first view at all |
 
-So no device, manifest type, input event or coordinate change can fix it. The
-harness must **not** patch the latch in a build profile: a test build that
-changes lifecycle semantics would test a different application. The fix belongs
-to the app and is tracked in #396; the `watch-app` profile and the `app-entry`,
-`input-delivery` and `press-effect` cases are already the right shape and should
-start working unchanged once the latch is released.
+So the latch alone does not explain everything (the middle build and the missing
+mouse both matter), and neither the harness nor a build profile may patch it: a
+test build that changes lifecycle semantics would test a different application.
+Both threads are recorded in #396. The `watch-app` profile and the `app-entry`,
+`input-delivery` and `press-effect` cases are the right shape and should start
+working unchanged once the app and the input environment are understood.
 
 `wait_ready` still tries select, the `onMenu` hold, a second select (two taps on
 touch devices) and one PRG relaunch when the first view is the glance. Those are
-defensive: they matter on hardware or after the app-side fix, and each attempt
-plus its mapped window point is logged.
+defensive, and each attempt plus its mapped window point is logged.
 
 Two related measurements, so they are not repeated: replacing the glance with a
 cleared background changed nothing, and `GlanceViewDelegate` is not a candidate
@@ -524,9 +538,10 @@ is enough to act on it.
 | `device title … does not match` / `does not name a device` | **warning only**; the trace stream already proved the app is running | check `LastUsedDevice` in `simulator.ini` if results look wrong |
 | `monkeydo exited with code …` | wrong PRG or device name | read `logs/console.log` |
 | `app-ready … no console line` | the app started but produced no `E2E:` line | check the PRG is a debug build and the device wiring (`link-devices` is accurate here) |
-| `warning: the app is still on the glance page` | a widget in glance mode; `getInitialView()` did not run, so no request is made | an app-side transition question: the glance delegate and the 32 KB glance budget, see below |
-| `app-entry … still showing the glance` | the app latched glance mode in its own process (`AppLifecycle.setGlance()` set by `getGlanceView()`), so `getInitialView()` never runs | app-side, tracked in #396; the harness must not patch lifecycle semantics in a build profile |
-| `press-effect … no different VIEW` | the press produced a repeated view or none; while the app is on the glance, screen changes are not counted | the app is on the glance, so see `app-entry`; otherwise compare the logged point with `keys[].location` |
+| `warning: the app is still on the glance page` | the glance transition did not happen: clicks are silent in this environment and the app latches glance mode | see "Why the app stays on the glance page"; both threads are on #396 |
+| `app-entry … still showing the glance` | `getInitialView()` never ran; the app is on the glance | read the glance section; try `--key ENTER=<keysym>` candidates once the mouse question is settled |
+| `press-effect … no different VIEW` | the press produced a repeated view or none; while the app is on the glance, screen changes are not counted | see `app-entry`; otherwise compare the logged point with `keys[].location` |
+| `press[<button>] … effect=none` | the press ran but changed nothing measurable | try `--key <BUTTON>=<keysym>`; check the mechanism in `logs/driver.log` (keyboard vs mouse) |
 | `the app reported system language …` | `Language` in `simulator.ini` was ignored | see the language section above |
 | `the app showed the configuration error view` | the PRG was built without the requested properties | rebuild with `e2e build --settings <fixture>`, or pass a PRG built that way |
 

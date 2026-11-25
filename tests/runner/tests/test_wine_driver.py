@@ -9,6 +9,7 @@ run on the guest, which is a scenario, not a unit test.
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import time
 from pathlib import Path
@@ -395,6 +396,106 @@ def test_press_uses_the_screen_pin_for_the_hit_area(
     assert ENV_SCREEN_RECT in _driver_log(driver)
 
 
+def test_press_uses_the_proven_keyboard_binding_for_up_and_down(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The guest proved Up/Down are honoured; clicks are silent."""
+    driver = _driver(tmp_path)
+    driver._started = True
+    driver._device = _device("fenix7")
+    driver._window = "42"
+    driver._definition = _definition(tmp_path)  # also declares up/down hit areas
+    monkeypatch.setattr(driver, "_window_name", lambda window: "CIQ Simulator - Fenix 7")
+    fake = FakeRun()
+    driver._run = fake  # type: ignore[method-assign]
+
+    driver.press(Button.DOWN)
+
+    key = [command for command in fake.commands if command[1] == "key"][0]
+    assert key[-1] == "Down"
+    assert not any(command[1] == "mousemove" for command in fake.commands)
+    result = driver.last_press()
+    assert result is not None and result.mechanism == "keyboard"
+    assert "proven keyboard binding" in _driver_log(driver)
+
+
+def test_press_uses_the_mouse_for_a_button_without_a_proven_binding(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    driver = _driver(tmp_path)
+    driver._started = True
+    driver._device = _device("fenix7")
+    driver._window = "42"
+    driver._definition = _definition(tmp_path)
+    monkeypatch.setattr(driver, "_window_name", lambda window: "CIQ Simulator - Fenix 7")
+    monkeypatch.setattr(
+        driver, "_geometry", lambda window: {"x": 0, "y": 0, "width": 409, "height": 600}
+    )
+    fake = FakeRun()
+    driver._run = fake  # type: ignore[method-assign]
+
+    driver.press(Button.ENTER)
+
+    assert any(command[1] == "mousemove" for command in fake.commands)
+    result = driver.last_press()
+    assert result is not None and result.mechanism == "mouse"
+    assert "mouse path is unproven" in _driver_log(driver)
+
+
+def test_press_measured_reports_the_effect_and_requests(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    driver = _driver(tmp_path)
+    driver._started = True
+    driver._device = _device("fenix7")
+    driver._window = "42"
+    driver._definition = _definition(tmp_path)
+    monkeypatch.setattr(driver, "_window_name", lambda window: "CIQ Simulator - Fenix 7")
+    monkeypatch.setattr(
+        driver, "_geometry", lambda window: {"x": 0, "y": 0, "width": 409, "height": 600}
+    )
+    monkeypatch.setattr("e2e.sim.wine.time.sleep", lambda seconds: None)
+    monkeypatch.setattr(
+        driver, "screenshot", lambda path: (Path(path).write_bytes(png_bytes()), Path(path))[1]
+    )
+    monkeypatch.setattr(
+        driver, "region_pixel_difference", lambda before, after, region: 4321
+    )
+    driver._run = FakeRun()  # type: ignore[method-assign]
+
+    counts = iter([3, 5])
+    result = driver.press_measured(Button.DOWN, requests=lambda: next(counts))
+
+    assert result.mechanism == "keyboard"
+    assert result.effect == "screen change 4321px"
+    assert result.screen_delta == 4321
+    assert result.requests == 2
+    assert "screen=4321px" in result.describe()
+    assert "requests +2" in result.describe()
+
+
+def test_press_measured_reports_no_effect_when_nothing_changes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    driver = _driver(tmp_path)
+    driver._started = True
+    driver._device = _device("fenix7")
+    driver._window = "42"
+    driver._definition = _definition(tmp_path)
+    monkeypatch.setattr(driver, "_window_name", lambda window: "CIQ Simulator - Fenix 7")
+    monkeypatch.setattr("e2e.sim.wine.time.sleep", lambda seconds: None)
+    monkeypatch.setattr(
+        driver, "screenshot", lambda path: (Path(path).write_bytes(png_bytes()), Path(path))[1]
+    )
+    monkeypatch.setattr(driver, "region_pixel_difference", lambda before, after, region: 0)
+    driver._run = FakeRun()  # type: ignore[method-assign]
+
+    result = driver.press_measured(Button.DOWN, timeout_s=0.05)
+
+    assert result.effect == ""
+    assert "effect=none" in result.describe()
+
+
 def test_press_holds_a_declared_hold_key(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -438,7 +539,7 @@ def test_press_falls_back_to_a_keysym_without_a_declared_area(
 
     key = [command for command in fake.commands if command[1] == "key"][0]
     assert key[-1] == DEFAULT_KEYS[Button.START]
-    assert "no declared hit area" in _driver_log(driver)
+    assert "no proven binding or hit area" in _driver_log(driver)
 
 
 def test_press_key_override_beats_the_declared_area(
@@ -1552,6 +1653,24 @@ class _FakeDriver(SimulatorDriver):
         else:
             self._lines.append("E2E:VIEW;category=sitemap;view=ActionMenu;depth=3")
 
+    def press_measured(self, button: Button, count: int = 1, **kwargs: object):
+        effect = "" if not self.press_changes_view else "view sitemap/ActionMenu"
+        if self.repeat_view:
+            effect = ""
+
+        class Result:
+            mechanism = "keyboard"
+            requests = 1
+
+            def describe(self) -> str:
+                return (
+                    f"mechanism=keyboard (keysym {button.value}); "
+                    f"effect={effect or 'none'}; requests +1"
+                )
+
+        Result.effect = effect  # type: ignore[attr-defined]
+        return Result()
+
     def tap(self, x: int, y: int, count: int = 1) -> None:
         pass
 
@@ -1689,6 +1808,54 @@ def test_contract_fails_a_press_that_repeats_the_same_view(
     assert by_name["press-effect"].status == FAIL
     assert "no different VIEW" in by_name["press-effect"].detail
     assert "repeated view does not count" in by_name["press-effect"].detail
+
+
+def test_contract_press_cases_report_the_input_path(tmp_path: Path) -> None:
+    prg = tmp_path / "openhab-garmin-fenix7.prg"
+    prg.write_bytes(b"prg")
+    cases = run_contract(_FakeDriver(), tmp_path, prg=prg, device_id=None)
+    by_name = {case.name: case for case in cases}
+    for button in Button:
+        case = by_name[f"press[{button.value}]"]
+        assert case.status == PASS
+        assert "mechanism=keyboard" in case.detail
+        assert "effect=" in case.detail
+        assert "requests +1" in case.detail
+
+
+def test_key_override_option_sets_the_driver_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from e2e.cli import _apply_key_overrides, build_parser
+
+    parser = build_parser()
+    args = parser.parse_args(
+        ["contract-test", "--key", "ENTER=Return", "--key", "menu=shift+F10"]
+    )
+    monkeypatch.delenv(f"{ENV_KEY_PREFIX}ENTER", raising=False)
+    monkeypatch.delenv(f"{ENV_KEY_PREFIX}MENU", raising=False)
+    assert _apply_key_overrides(args) is None
+    assert os.environ[f"{ENV_KEY_PREFIX}ENTER"] == "Return"
+    assert os.environ[f"{ENV_KEY_PREFIX}MENU"] == "shift+F10"
+
+
+def test_key_override_option_rejects_bad_input() -> None:
+    from e2e.cli import _apply_key_overrides, build_parser
+
+    parser = build_parser()
+    for item in ("ENTER", "NOPE=Return", "ENTER="):
+        args = parser.parse_args(["contract-test", "--key", item])
+        message = _apply_key_overrides(args)
+        assert message and "--key" in message, item
+
+
+def test_the_run_command_accepts_key_overrides() -> None:
+    from e2e.cli import build_parser
+
+    args = build_parser().parse_args(
+        ["run", "smoke/launch-and-poll", "--dry-run", "--key", "ENTER=Return"]
+    )
+    assert args.key == ["ENTER=Return"]
 
 
 def test_contract_fails_a_press_that_has_no_effect(

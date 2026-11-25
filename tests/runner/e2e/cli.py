@@ -89,7 +89,8 @@ from .sdk import (
 )
 from .settings import SettingsError, load_settings
 from .shim import ShimClient, ShimError
-from .sim import DRIVER_NAMES, create_driver
+from .sim import DRIVER_NAMES, Button, create_driver
+from .sim.wine import ENV_KEY_PREFIX
 from .variants import (
     check_coverage,
     combinations,
@@ -345,7 +346,40 @@ def _select_scenarios(args: argparse.Namespace) -> List[Scenario]:
     )
 
 
+def _apply_key_overrides(args: argparse.Namespace) -> Optional[str]:
+    """Apply ``--key BUTTON=KEYSYM`` overrides to the driver's environment."""
+    for item in getattr(args, "key", None) or []:
+        name, separator, keysym = item.partition("=")
+        if not separator or not keysym.strip():
+            return f"--key expects BUTTON=KEYSYM, got {item!r}"
+        try:
+            button = Button(name.strip().upper())
+        except ValueError:
+            known = ", ".join(button_.value for button_ in Button)
+            return f"--key {item!r}: unknown button {name!r}; expected one of {known}"
+        os.environ[f"{ENV_KEY_PREFIX}{button.value}"] = keysym.strip()
+    return None
+
+
+def _shim_request_probe(url: Optional[str]):  # type: ignore[no-untyped-def]
+    """A callable returning the shim's request count, or ``None`` when unreachable."""
+    if not url:
+        return None
+    client = ShimClient(url)
+
+    def probe() -> Optional[int]:
+        try:
+            return len(client.requests())
+        except ShimError:
+            return None
+
+    return probe
+
+
 def _cmd_run(args: argparse.Namespace) -> int:
+    invalid = _apply_key_overrides(args)
+    if invalid:
+        return _fail(invalid)
     scenarios = _select_scenarios(args)
     if not scenarios:
         return _fail("no scenarios matched")
@@ -676,6 +710,9 @@ def _cmd_list_scenarios(args: argparse.Namespace) -> int:
 
 
 def _cmd_contract_test(args: argparse.Namespace) -> int:
+    invalid = _apply_key_overrides(args)
+    if invalid:
+        return _fail(invalid)
     layout = None
     if args.driver == "wine":
         layout = load_layout()
@@ -694,7 +731,13 @@ def _cmd_contract_test(args: argparse.Namespace) -> int:
         if derived is not None:
             print(f"device: {derived.id} (from {prg.name})")
     try:
-        cases = run_contract(driver, workdir, device_id=args.device, prg=prg)
+        cases = run_contract(
+            driver,
+            workdir,
+            device_id=args.device,
+            prg=prg,
+            requests=_shim_request_probe(args.shim_url),
+        )
     except ContractError as error:
         driver.stop()
         return _fail(str(error))
@@ -1029,6 +1072,15 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--skip-events", action="store_true", help="skip assertions that need the console event stream")
     run.add_argument("--prg", help="use an existing PRG instead of building one")
     run.add_argument(
+        "--key",
+        action="append",
+        metavar="BUTTON=KEYSYM",
+        help=(
+            "send this X keysym for a semantic button instead of the driver's "
+            "default path, e.g. --key ENTER=Return; repeatable"
+        ),
+    )
+    run.add_argument(
         "--jungle",
         help=(
             "use this jungle for the build instead of generating a "
@@ -1096,6 +1148,23 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     contract.add_argument("--artifacts")
+    contract.add_argument(
+        "--shim-url",
+        default=os.environ.get("E2E_SHIM_URL"),
+        help=(
+            "shim base URL; when reachable, each measured press reports the shim "
+            "requests it caused (default: E2E_SHIM_URL)"
+        ),
+    )
+    contract.add_argument(
+        "--key",
+        action="append",
+        metavar="BUTTON=KEYSYM",
+        help=(
+            "send this X keysym for a semantic button instead of the driver's "
+            "default path, e.g. --key ENTER=Return; repeatable"
+        ),
+    )
     contract.add_argument("--json", action="store_true")
     contract.set_defaults(handler=_cmd_contract_test)
 

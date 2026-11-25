@@ -100,6 +100,16 @@ INPUT_PROBE_KEYS: Tuple[str, ...] = ("alt+s", "alt+c")
 #: A glance clock ticking changes a few hundred; an opened menu or a new view
 #: changes thousands.
 PIXEL_CHANGE_THRESHOLD = 2000
+
+#: Keyboard keysyms the guest has **proven** this simulator honours. Mouse
+#: clicks are silent under this Wine/Xvfb (measured at every point, with and
+#: without a window manager), so a proven keyboard binding is preferred over a
+#: click. The select key is still unknown: `Return`, `KP_Enter`, `Escape`,
+#: `Menu`, `space`, `F5`, `F6` and clicks all produced no screen change.
+PROVEN_KEYSYMS: Mapping[Button, str] = {
+    Button.UP: "Up",
+    Button.DOWN: "Down",
+}
 #: TCP transport ``monkeydo`` connects to; the simulator listens on it after
 #: start. Waiting for it avoids racing the push against the simulator's start-up.
 SIMULATOR_TCP_HOST = "127.0.0.1"
@@ -217,6 +227,36 @@ INI_HINTS: Tuple[str, ...] = (
     "drive_c/users/{user}/AppData/Local/Garmin/ConnectIQ/simulator.ini",
     "drive_c/users/{user}/Temp/com.garmin.connectiq/simulator.ini",
 )
+
+
+@dataclass(frozen=True)
+class PressResult:
+    """What one ``press`` did, and whether it changed anything.
+
+    ``mechanism`` is ``keyboard``, ``mouse`` or ``keyboard (override)``;
+    ``detail`` names the keysym or the window point. ``effect`` is filled in by
+    :meth:`WineSimulatorDriver.press_measured` and is empty when the press
+    produced no observable change, so a no-op can never be reported as success.
+    """
+
+    button: str
+    mechanism: str
+    detail: str
+    effect: str = ""
+    screen_delta: Optional[int] = None
+    views: Tuple[str, ...] = ()
+    requests: Optional[int] = None
+
+    def describe(self) -> str:
+        parts = [f"mechanism={self.mechanism} ({self.detail})"]
+        parts.append(f"effect={self.effect or 'none'}")
+        if self.screen_delta is not None:
+            parts.append(f"screen={self.screen_delta}px")
+        if self.views:
+            parts.append("views=" + ",".join(self.views))
+        if self.requests is not None:
+            parts.append(f"requests +{self.requests}")
+        return "; ".join(parts)
 
 
 # ---------------------------------------------------------------------------
@@ -1249,6 +1289,7 @@ class WineSimulatorDriver(SimulatorDriver):
         self._settings_file: Optional[Path] = None
         self._keys: Dict[Button, str] = dict(DEFAULT_KEYS)
         self._definition = SimulatorDefinition()
+        self._last_press: Optional[PressResult] = None
         self._mode = "ble"
         self._language = "eng"
         self._display_name = ""
@@ -1586,6 +1627,88 @@ class WineSimulatorDriver(SimulatorDriver):
         """Classified simulator runtime errors from the last collected log."""
         return tuple(self._ciq_errors)
 
+    def last_press(self) -> Optional[PressResult]:
+        """What the last ``press`` used and, if measured, what it changed."""
+        return self._last_press
+
+    def press_measured(
+        self,
+        button: Button,
+        count: int = 1,
+        *,
+        timeout_s: float = 3.0,
+        requests: Optional[Callable[[], Optional[int]]] = None,
+    ) -> PressResult:
+        """Press a button and measure whether anything changed.
+
+        A no-op is reported as an empty ``effect``, never as success. The
+        measurement is a new, different view/ERRORVIEW or a change inside the
+        screen rectangle; ``requests``, when given, is a callable returning the
+        shim's request count for the report.
+        """
+        window = self._require_window()
+        region = self.screen_region(window)
+        shots = self.artifact_dir / "logs"
+        shots.mkdir(parents=True, exist_ok=True)
+        before = shots / f"press-{button.value.lower()}-before.png"
+        if region is not None:
+            self.screenshot(before)
+        parsed = parse_lines(list(self.events()))
+        known = {
+            (event.get("category"), event.get("view"))
+            for event in parsed
+            if event.event == "VIEW"
+        }
+        requests_before = requests() if requests is not None else None
+        mark = len(self.events())
+        self.press(button, count)
+        base = self._last_press or PressResult(button.value, "unknown", "")
+
+        deadline = time.monotonic() + timeout_s
+        difference: Optional[int] = None
+        views: List[str] = []
+        effect = ""
+        while time.monotonic() < deadline:
+            for event in parse_lines(list(self.events())[mark:]):
+                if event.event == "ERRORVIEW":
+                    views.append("ERRORVIEW")
+                    effect = f"ERRORVIEW {event.get('id')}"
+                    break
+                if event.event != "VIEW":
+                    continue
+                signature = (event.get("category"), event.get("view"))
+                if signature not in known and event.get("category") != "glance":
+                    views.append(f"{signature[0]}/{signature[1]}")
+                    effect = f"view {signature[0]}/{signature[1]}"
+                    break
+            if effect:
+                break
+            if region is not None:
+                after = shots / f"press-{button.value.lower()}-after.png"
+                self.screenshot(after)
+                difference = self.region_pixel_difference(before, after, region)
+                if difference is not None and difference >= PIXEL_CHANGE_THRESHOLD:
+                    effect = f"screen change {difference}px"
+                    break
+            time.sleep(0.25)
+
+        requests_after = requests() if requests is not None else None
+        self._last_press = PressResult(
+            button=base.button,
+            mechanism=base.mechanism,
+            detail=base.detail,
+            effect=effect,
+            screen_delta=difference,
+            views=tuple(views),
+            requests=(
+                None
+                if requests_before is None or requests_after is None
+                else max(0, requests_after - requests_before)
+            ),
+        )
+        self._record(f"press measurement: {self._last_press.describe()}")
+        return self._last_press
+
     @property
     def ciq_header(self) -> Mapping[str, str]:
         """The ``CIQ_LOG.YML`` header, e.g. ``Language-Code`` and
@@ -1622,6 +1745,13 @@ class WineSimulatorDriver(SimulatorDriver):
             self._send_keys(window, button, override.strip(), count, "environment override")
             return
 
+        proven = PROVEN_KEYSYMS.get(button)
+        if proven:
+            # The guest proved the simulator honours these keys; mouse clicks
+            # are silent under this Wine/Xvfb, so the keyboard path wins.
+            self._send_keys(window, button, proven, count, "proven keyboard binding")
+            return
+
         declared = self._definition.key_for(button)
         if declared is not None:
             self._click_declared_key(window, declared, count)
@@ -1630,10 +1760,10 @@ class WineSimulatorDriver(SimulatorDriver):
         keysym = self._keys.get(button)
         if not keysym:
             raise DriverError(
-                f"no declared hit area and no key binding for {button.value}; set "
-                f"{ENV_KEY_PREFIX}{button.value}=<keysym>"
+                f"no proven keysym, no declared hit area and no key binding for "
+                f"{button.value}; set {ENV_KEY_PREFIX}{button.value}=<keysym>"
             )
-        self._send_keys(window, button, keysym, count, "no declared hit area")
+        self._send_keys(window, button, keysym, count, "no proven binding or hit area")
 
     def _send_keys(
         self, window: str, button: Button, keysym: str, count: int, why: str
@@ -1644,17 +1774,23 @@ class WineSimulatorDriver(SimulatorDriver):
                 check=True,
                 action=f"press {button.value}",
             )
-            mechanism = "XTEST key to the focused window"
+            transport = "XTEST key to the focused window"
         except DriverError:
             self._run(
                 xdotool_key_to_window_command(window, keysym, count),
                 check=True,
                 action=f"press {button.value} (window-targeted fallback)",
             )
-            mechanism = "window-targeted key (XSendEvent)"
+            transport = "window-targeted key (XSendEvent)"
+        mechanism = (
+            "keyboard (override)" if why == "environment override" else "keyboard"
+        )
+        self._last_press = PressResult(
+            button=button.value, mechanism=mechanism, detail=f"keysym {keysym}"
+        )
         self._record(
-            f"press {button.value} x{count} -> keysym {keysym!r} ({mechanism}; "
-            f"{why}); the simulator may ignore keyboard input"
+            f"press {button.value} x{count} -> keysym {keysym!r} ({transport}; "
+            f"{why})"
         )
 
     def _click_declared_key(
@@ -1679,9 +1815,15 @@ class WineSimulatorDriver(SimulatorDriver):
             else:
                 self._click_at(window, x, y, action=f"press {key.button.value}")
             time.sleep(DEFAULT_KEY_DELAY_MS / 1000.0)
+        self._last_press = PressResult(
+            button=key.button.value,
+            mechanism="mouse",
+            detail=f"window ({x},{y})",
+        )
         self._record(
             f"press {key.button.value} x{count} -> clicked {key.describe()} at "
-            f"window ({x},{y}) ({mapper.source})"
+            f"window ({x},{y}) ({mapper.source}); the mouse path is unproven "
+            "under this Wine/Xvfb"
         )
 
     def _mapper(self) -> CoordinateMapper:

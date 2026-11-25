@@ -100,14 +100,15 @@ def _png_is_valid(path: Path) -> str:
     return ""
 
 
-def _run_case(name: str, fn: Callable[[], None]) -> ContractCase:
+def _run_case(name: str, fn: Callable[[], object]) -> ContractCase:
     try:
-        fn()
+        result = fn()
     except NotImplementedError as error:
         return ContractCase(name, NOT_IMPLEMENTED, str(error))
     except Exception as error:  # noqa: BLE001 - a contract failure is a result
         return ContractCase(name, FAIL, f"{type(error).__name__}: {error}")
-    return ContractCase(name, PASS)
+    detail = result if isinstance(result, str) else ""
+    return ContractCase(name, PASS, detail)
 
 
 def run_contract(
@@ -118,6 +119,7 @@ def run_contract(
     settings_fixture: str = "default",
     prg: Optional[Path] = None,
     ready_timeout_s: float = 90.0,
+    requests: Optional[Callable[[], Optional[int]]] = None,
 ) -> List[ContractCase]:
     """Exercise every part of the driver contract against ``driver``.
 
@@ -364,10 +366,33 @@ def run_contract(
         cases.append(_run_case("press-effect", press_effect))
 
     for button in Button:
-        cases.append(
-            _run_case(f"press[{button.value}]", lambda button=button: driver.press(button, 1))
+        def press_case(button: Button = button) -> object:
+            measured = getattr(driver, "press_measured", None)
+            if measured is None:
+                driver.press(button, 1)
+                return "mechanism not measured by this driver"
+            result = measured(
+                button, 1, timeout_s=PRESS_EFFECT_TIMEOUT, requests=requests
+            )
+            if not result.effect:
+                raise AssertionError(
+                    f"{result.describe()} — the press ran but changed nothing, so "
+                    "it is not a pass. logs/driver.log has the mechanism and point; "
+                    "try another keysym with `--key "
+                    f"{button.value}=<keysym>` if the simulator ignores this one."
+                )
+            return result.describe()
+
+        cases.append(_run_case(f"press[{button.value}]", press_case))
+
+    def tap() -> object:
+        driver.tap(1, 1, 1)
+        return (
+            "mechanism=mouse (window point logged); effect not asserted at an "
+            "arbitrary coordinate"
         )
-    cases.append(_run_case("tap", lambda: driver.tap(1, 1, 1)))
+
+    cases.append(_run_case("tap", tap))
 
     def screenshot() -> None:
         result = driver.screenshot(shot)
