@@ -39,6 +39,8 @@ engine reports event and golden assertions as **skipped**, never passed.
   an unrecognised PRG name needs an explicit `--device`: launching one device's
   build as another produced a `Symbol Not Found` and a pointless `tap` failure
   on the guest, which is a false result rather than a test.
+- `press-effect` proves the input path: it presses ENTER, MENU and DOWN and
+  requires a new view. A pass means the app reacted, not that `xdotool` ran.
 - The contract starts with `mode=ble, language=deu`. The language is reported
   and compared, never forced (see "Language cannot be provisioned").
 
@@ -143,7 +145,7 @@ PIDs instead.
 | `prepare` | implemented | Validates the external tools and copies the PRG. Runs before anything touches Wine. |
 | `start` | implemented | Display check, `simulator.ini`, simulator-window wait, property seeding and `monkeydo` launch. The device name is expected to appear only after the launch. |
 | `wait_ready` | implemented | First view **and** the reported language, both from the trace stream. A dead app fails with the console tail. The first view may be the glance (`category=glance`) on a plain `monkeydo` launch; reaching the sitemap is the app's behaviour and the scenario asserts it, not the driver. |
-| `press` | implemented | Keysym per semantic button; the device definition's `simulator.json` is preferred over the defaults. |
+| `press` | implemented, verified by effect | Clicks the declared `keys[].location` hit area (hold where `isHold`), scaled with the window; keysym only as an override/fallback. The contract's `press-effect` case fails when a press changes nothing. |
 | `tap` | implemented | The window is focused first. The screen rectangle comes from the device definition's `display.location` (`simulator.json`), with `E2E_WINE_SCREEN_RECT` as the override; a centred fit is only the last resort for an SDK without `simulator.json`. |
 | `screenshot` | implemented | Captures the simulator window. Fails when the capture is not a usable PNG instead of returning a blank image. |
 | `events` | implemented | `monkeydo` stdout/stderr with receipt timestamps; `stdbuf` disables its block buffering when available. |
@@ -359,21 +361,64 @@ and is sufficient for synthetic key and pointer events. If `windowfocus` fails,
 the driver raises: without focus the events would land on another window, and a
 "passing" run would have pressed keys into the void.
 
-Button bindings come from the device definition's `simulator.json` (`keys` as
-Windows virtual-key codes) when the SDK ships one, and otherwise from these
-defaults: `START=ctrl+s`, `UP=Up`, `DOWN=Down`, `ENTER=Return`,
-`BACK=Escape`, `MENU=ctrl+m`. Override any of them with
-`E2E_WINE_KEY_<BUTTON>`. A device whose definition does not confirm the title
-only produces a warning, so a missing definition does not fail a run over a
-name it cannot compare.
+Button definitions are **hit areas, not keyboard keys**. `simulator.json`
+declares each physical button as a rectangle with a behaviour, for example
+`fenix7`:
+
+```json
+"keys": [
+  {"behavior": "onSelect",     "id": "enter", "location": {"x": 356, "y": 145, "width": 44, "height": 69}},
+  {"behavior": "previousPage", "id": "up",    "location": {"x": 1,   "y": 244, "width": 44, "height": 69}},
+  {"behavior": "onMenu",       "id": "menu",  "isHold": true, "location": {"x": 1, "y": 244, "width": 44, "height": 69}},
+  {"behavior": "nextPage",     "id": "down",  "location": {"x": 21,  "y": 336, "width": 44, "height": 69}},
+  {"behavior": "onBack",       "id": "esc",   "location": {"x": 356, "y": 336, "width": 44, "height": 69}}
+]
+```
+
+`press` maps the semantic button (`onSelect` → `ENTER`, `previousPage` → `UP`,
+`nextPage` → `DOWN`, `onBack` → `BACK`, `onMenu` → `MENU`) and **clicks the
+declared rectangle**, with `isHold` producing a press-and-hold (mouse down,
+`HOLD_MS`, mouse up). The coordinates live in the device graphic's native space,
+so they are scaled by the window width when the window is not 1:1 (a difference
+under 2% is rounding and ignored). `E2E_WINE_SCREEN_RECT` pins the screen
+rectangle, and the same scale and offset then place the key hit areas, so one
+pin corrects taps and buttons together. `logs/driver.log` records the mechanism
+for every press: the clicked window point and the transform source, or the
+keysym.
+
+Keystrokes are only a fallback:
+
+- `E2E_WINE_KEY_<BUTTON>=<keysym>` always wins and sends a key instead;
+- an SDK whose `keys` is a mapping of action → Windows virtual-key code (the
+  older shape) also produces keysyms;
+- the documented defaults (`START=ctrl+s`, `UP=Up`, `DOWN=Down`,
+  `ENTER=Return`, `BACK=Escape`, `MENU=ctrl+m`) are the last resort.
+
+A keystroke the simulator ignores is indistinguishable from a successful press
+unless the effect is observed, so the contract test does not stop at "the call
+succeeded": `press-effect` presses ENTER, then MENU, then DOWN and requires a
+new `E2E:VIEW` or `E2E:ERRORVIEW` within a few seconds. Without one, input never
+reached the app and the case fails, naming both mechanisms.
+
+### Opening the app from the glance page
+
+`monkeydo` can leave the device on the glance carousel: only
+`E2E:VIEW;category=glance` appears, `getInitialView()` never runs and no request
+is made. `wait_ready` therefore checks the first view and, when it is the
+glance, presses the declared `onSelect` hit area, then the `onMenu` hold, then
+`onSelect` again; on a touch-only device it taps the screen centre twice
+instead. All of that is bounded by the readiness budget. Every attempt and its
+mapped window point is in `logs/driver.log`; if the app is still on the glance,
+the log says so and the scenario's first view assertion fails with that
+context. Scenarios must not paper over it with a request assertion — the
+assertion stays, and a glance-only run must fail it.
 
 `tap(x, y)` takes **device screen pixels**. The driver maps them into the
 window through the watch-screen rectangle declared by the device definition:
 `simulator.json`'s `display.location` (`x`, `y`, `width`, `height`) is the
 authoritative screen position, so the bezel offset is not guessed. For example
-`fenix847mm` declares `{x: 134, y: 221, width: 454, height: 454}`; the same file
-declares `display.isTouch` and the `tap → onSelect` key, which is how the button
-bindings are resolved too.
+`fenix847mm` declares `{x: 134, y: 221, width: 454, height: 454}`. The same
+rectangle is scaled with the window, exactly like the key hit areas.
 
 `E2E_WINE_SCREEN_RECT=x,y,width,height` overrides the declared rectangle when a
 build's window differs. A centred, aspect-preserving fit is only the last
@@ -396,6 +441,8 @@ is enough to act on it.
 | `device title … does not match` / `does not name a device` | **warning only**; the trace stream already proved the app is running | check `LastUsedDevice` in `simulator.ini` if results look wrong |
 | `monkeydo exited with code …` | wrong PRG or device name | read `logs/console.log` |
 | `app-ready … no console line` | the app started but produced no `E2E:` line | check the PRG is a debug build and the device wiring (`link-devices` is accurate here) |
+| `warning: the app is still on the glance page` | the simulator never left the glance carousel, so `getInitialView()` did not run and no request is made | read the preceding click lines (window points and scale); check the glance crash fix and the simulator's own app entry |
+| `press-effect … no new VIEW or ERRORVIEW` | the press reached nothing: a keysym the simulator ignored, or a click outside the declared hit area | the log names the mechanism and the point; compare it with `keys[].location` and the window size |
 | `the app reported system language …` | `Language` in `simulator.ini` was ignored | see the language section above |
 | `the app showed the configuration error view` | the PRG was built without the requested properties | rebuild with `e2e build --settings <fixture>`, or pass a PRG built that way |
 
@@ -448,6 +495,15 @@ proof is a driver run on the guest, which the operator performs:
    classified errors.
 1. Run one language scenario (`extended/localisation-sitemap`) and one mode
    scenario (`extended/wifi-mode`) to confirm the verification paths.
+1. With the app open, check a press reaches it: the contract's `press-effect`
+   case does this for ENTER/MENU/DOWN, and `logs/driver.log` shows the clicked
+   window point. If it fails, compare that point with `keys[].location` and the
+   window size before assuming an app defect.
+1. If the log says the app stayed on the glance page, the simulator never
+   reached `getInitialView()`: try the declared `enter` hit area by hand with
+   `xdotool` at the logged point, and check whether the simulator's own
+   Simulation menu has an app-entry/reset action. Record what worked here so
+   the launch path can stop guessing.
 1. If taps miss, compare a screenshot with `display.location` in the device's
    `simulator.json` and pin `E2E_WINE_SCREEN_RECT` for the next run; record the
    value for the device in this document.

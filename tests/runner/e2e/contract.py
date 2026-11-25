@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import inspect
 import re
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Sequence
@@ -22,11 +23,15 @@ from typing import Callable, Dict, List, Optional, Sequence
 from .config import Device, load_devices
 from .settings import load_settings
 from .sim.base import Button, SimulatorDriver
+from .trace import parse_line
 
 PASS = "pass"
 FAIL = "fail"
 SKIPPED = "skipped"
 NOT_IMPLEMENTED = "not-implemented"
+
+#: How long one press may take to show a new view, in the `press-effect` case.
+PRESS_EFFECT_TIMEOUT = 4.0
 
 
 class ContractError(RuntimeError):
@@ -211,6 +216,36 @@ def run_contract(
         _run_case("wait_ready", lambda: driver.wait_ready(ready_timeout_s))
     )
 
+    def press_effect() -> None:
+        """A press must change what the app does, not just call xdotool.
+
+        A keystroke the simulator ignores and a click that misses its hit area
+        both look like success unless the effect is observed. Any new view is
+        enough: opening the first menu item, an action menu or the app itself.
+        """
+        for button in (Button.ENTER, Button.MENU, Button.DOWN):
+            mark = len(driver.events())
+            driver.press(button, 1)
+            deadline = time.monotonic() + PRESS_EFFECT_TIMEOUT
+            while time.monotonic() < deadline:
+                for line in list(driver.events())[mark:]:
+                    event = parse_line(line)
+                    if event is not None and event.event in ("VIEW", "ERRORVIEW"):
+                        return
+                time.sleep(0.2)
+        raise AssertionError(
+            "pressing ENTER, MENU and DOWN produced no new VIEW or ERRORVIEW, so "
+            "input did not reach the app.\n"
+            "logs/driver.log names the mechanism used for each press (a declared "
+            "hit area with its window point, or a keysym) and the window scale. If "
+            "it clicked, compare that point with the device definition's "
+            "keys[].location; if it sent a keysym, the simulator ignored keyboard "
+            "input and the definition's hit areas must be used."
+        )
+
+    if driver.supports_events:
+        cases.append(_run_case("press-effect", press_effect))
+
     for button in Button:
         cases.append(
             _run_case(f"press[{button.value}]", lambda button=button: driver.press(button, 1))
@@ -257,7 +292,7 @@ def run_contract(
 
 def _launch_cases() -> List[str]:
     """Names of the cases that need a launched application, in order."""
-    names = ["start", "wait_ready"]
+    names = ["start", "wait_ready", "press-effect"]
     names.extend(f"press[{button.value}]" for button in Button)
     names.extend(["tap", "screenshot", "events"])
     return names

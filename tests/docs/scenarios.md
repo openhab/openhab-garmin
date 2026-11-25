@@ -159,7 +159,7 @@ a run.
 
 | Action | Parameters | Notes |
 | --- | --- | --- |
-| `launch` | `wait_ready` (bool, default true) | exactly one, first |
+| `launch` | `wait_ready` (bool, default true) | exactly one, first; `wait_ready` also opens the app when the simulator left it on the glance page (see [simulator-driver.md](simulator-driver.md#opening-the-app-from-the-glance-page)) |
 | `stop` | – | stops the simulator, keeps artifacts |
 | `wait` | `ms` | clamped to the remaining scenario budget |
 | `reset_shim` | – | clears the request trace only |
