@@ -8,7 +8,8 @@ for the tier; the tests themselves live in `source/test/` and are run by
 
 Related: [#140](https://github.com/openhab/openhab-garmin/issues/140) (regression
 tests), [#396](https://github.com/openhab/openhab-garmin/issues/396) (why the E2E
-harness cannot drive the app today).
+harness cannot drive the app today), and this tier's pull request
+[#401](https://github.com/openhab/openhab-garmin/pull/401).
 
 ## Why this tier exists
 
@@ -137,10 +138,21 @@ like the E2E driver: `DISPLAY` (default `:99`) plus Wine. Whether the whole
 sequence succeeds on the E2E guest is the first thing the operator run
 answers; it was **not** executed here (see [Executed and not executed](#executed-and-not-executed)).
 
+On the **runner container**, everything except one detail is already in place:
+it has the SDK, Java, Wine and the Xvfb display. The blocker is the generated
+jungle: `monkeyc` resolves `project.manifest` relative to the jungle file, so
+`tests/unit/run` writes `unit.generated.jungle` to the project root, and the
+container mounts the checkout read-only. Either run the script on the host (what
+the operator section does), or make it write the jungle to an artifacts
+directory with absolute paths — which is what `e2e/jungle.py` already does and
+would be the natural follow-up if a containerised or scheduled run is wanted.
+
 ### Network from inside a unit test
 
 The simulator can reach HTTP: the E2E harness records real requests from the app,
-so TCP is not the obstacle. The obstacle is the shape of a unit test:
+so TCP is not the obstacle. In this tier there is no shim and no openHAB at all —
+the tests run on the host, not in the Compose stack — and the obstacle is the
+shape of a unit test:
 
 - `Test` functions are synchronous. They take a `Test.Logger` and return a
   `Boolean`; there is no wait, promise or event-loop hook.
