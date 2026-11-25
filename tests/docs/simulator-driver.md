@@ -512,9 +512,22 @@ in this environment**.
 
 The consequence, stated plainly for the next reader:
 
-> No coordinate, keysym, focus or window-manager change can fix this. If you
-> need UI assertions, run the simulator on Windows or fix Wine input; the
-> harness cannot.
+> No coordinate, keysym, focus or window-manager change has fixed this. If you
+> need UI assertions, either find an injection path the simulator accepts or
+> accept that this host cannot assert input-driven behaviour; the harness
+> cannot.
+
+**The measurements stand, and the question is now closed by measurement.**
+Wine 9.0 and xorg-server source show that XTEST is an ordinary XI2 slave and
+that `WM_INPUT` is built from the same hardware message as
+`WM_LBUTTONDOWN`/`WM_KEYDOWN`, so the old raw-input explanation was wrong. The
+follow-up then attached a real uinput evdev pointer to Xorg and moved it to an
+exact declared coordinate: clicks on the declared hit area and on the screen
+centre still produced no view change and no request. The verdict, the measured
+table and the ruled-out candidates are in
+[simulator-input.md](simulator-input.md): UI-level assertions are not available
+on this host. Nothing in this section is weakened: every press still measures
+0 px, and `press-sequence` is still the accurate record.
 
 The `press`/`tap` machinery is kept because it is correct and cheap, and because
 it is what proves the environment: `app-entry`, `input-delivery`, `press-effect`
@@ -686,13 +699,13 @@ is enough to act on it.
 | `device title … does not match` / `does not name a device` | **warning only**; the trace stream already proved the app is running | check `LastUsedDevice` in `simulator.ini` if results look wrong |
 | `monkeydo exited with code …` | wrong PRG or device name | read `logs/console.log` |
 | `app-ready … no console line` | the app started but produced no `E2E:` line | check the PRG is a debug build and the device wiring (`link-devices` is accurate here) |
-| `warning: the app is still on the glance page` | the glance transition did not happen; in this environment no synthetic input arrives, so it cannot | see "Input: no synthetic input reaches the simulator under Wine"; run on Windows for UI assertions |
-| `app-entry … still showing the glance` | `getInitialView()` never ran; the app never left the glance because input does not arrive | environmental: run the simulator on Windows, or fix Wine input. `--key` will not help |
+| `warning: the app is still on the glance page` | the glance transition did not happen; in this environment no synthetic input arrives, so it cannot | see "Input: no synthetic input reaches the simulator under Wine"; the question is closed by measurement in [simulator-input.md](simulator-input.md) |
+| `app-entry … still showing the glance` | `getInitialView()` never ran; the app never left the glance because input does not arrive | environmental: no input arrives; closed by measurement in [simulator-input.md](simulator-input.md). `--key` will not help |
 | `app-ready … no console output at all` | the app never started: `monkeydo` produced nothing, so this is launch/packaging for that device, not the glance | read `logs/console.log` and the build log; confirm the PRG is the device's build and fits its memory; launch `monkeydo <prg> <device>` by hand |
 | `app-ready … output but no 'E2E:' line` | something ran, but not this E2E build | pass the debug PRG built by `e2e build`; a release build prints no trace |
 | `press-effect … no E2E: console output at all` | the app was not running, so no pixel change is attributable to input | same as `app-ready`: fix the launch first |
 | `press-effect … beat that` | the screen changes on its own by at least the idle baseline, so the press is indistinguishable | freeze the animated region or assert a view instead of pixels |
-| `press-effect … no different VIEW` | the press produced a repeated view or none; the idle baseline shows no input arrived | environmental: no coordinate, keysym or window manager fixes it; run on Windows for UI assertions |
+| `press-effect … no different VIEW` | the press produced a repeated view or none; the idle baseline shows no input arrived | environmental: no coordinate, keysym, window manager or device injection fixes it; closed by measurement in [simulator-input.md](simulator-input.md) |
 | `press[<button>] … effect=none` | the press ran but changed nothing measurable, which is every press in this environment. Reported as evidence (`skipped`); the verdict is `press-sequence` | check the mechanism and verified pointer in `logs/driver.log`; if the pointer is verified, stop — it is the environment |
 | `press-sequence … DOWN, DOWN, UP produced no effect` | no press in the sequence reached the app by any mechanism, which is the accurate state here | read the three mechanisms; this is not a regression to chase, it is the environment |
 | `the pointer never reached the simulator window` | the click would have gone to the root window or another client, so it was refused | the window moved or is not mapped on this display; re-run, and confirm `xdotool getmouselocation` names the simulator window. This is the failure mode behind every "the mouse is silent" measurement |
@@ -754,9 +767,12 @@ index 7) and the input limitation below.
    languages should execute (no `skipped` runs) and each should confirm its
    reported language. Run one mode scenario (`extended/wifi-mode`) to confirm
    the mode verification path.
-1. Do **not** spend time on input paths in this environment. The pointer is
-   verified, the window manager does not matter, and no click or key reaches the
-   simulator; use Windows, or fix Wine input, if UI assertions are needed.
+1. Do **not** re-try input paths on this host. Coordinates, keysyms, window
+   managers and a device-backed evdev pointer have all been measured without a
+   single view change; the verdict and the ruled-out candidates are in
+   [simulator-input.md](simulator-input.md). Input-driven assertions are
+   unavailable here, and no scenario or driver change should try to work around
+   it.
 1. If taps miss on a device, compare a screenshot with `display.location` in
    the device's `simulator.json` and pin `E2E_WINE_SCREEN_RECT` for the next run.
    The `wait_ready` window-fit check already refuses a window that cannot contain
