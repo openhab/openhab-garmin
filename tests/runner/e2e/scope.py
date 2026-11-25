@@ -68,6 +68,20 @@ class ScopeWaiver:
 
 
 @dataclass(frozen=True)
+class ScopeBlocked:
+    """An entry the environment cannot exercise until a tracked issue is fixed.
+
+    Unlike a waiver (a reviewed decision not to automate), a blocked entry is
+    expected to become coverable: the harness is not the reason it is missing.
+    ``issue`` points at the limitation, so the rendered document links to it.
+    """
+
+    id: str
+    reason: str
+    issue: int
+
+
+@dataclass(frozen=True)
 class Scope:
     """The validated scope document."""
 
@@ -77,6 +91,7 @@ class Scope:
     sections: Tuple[ScopeSection, ...]
     entries: Tuple[ScopeEntry, ...]
     waivers: Tuple[ScopeWaiver, ...]
+    blocked: Tuple[ScopeBlocked, ...] = ()
 
     @property
     def entry_ids(self) -> Tuple[str, ...]:
@@ -87,6 +102,11 @@ class Scope:
             if section.id == section_id:
                 return section
         raise KeyError(section_id)
+
+    def issue_url(self, number: int) -> str:
+        """The URL of a related issue, derived from this document's source."""
+        base = self.source.rsplit("/issues/", 1)[0]
+        return f"{base}/issues/{number}"
 
 
 # ---------------------------------------------------------------------------
@@ -128,7 +148,11 @@ def _list(value: Any, where: str) -> Sequence[Any]:
 
 def _parse(document: Any, source: Path) -> Scope:
     mapping = _mapping(document, str(source))
-    _unknown(mapping, ("version", "issue", "source", "sections", "entries", "waivers"), str(source))
+    _unknown(
+        mapping,
+        ("version", "issue", "source", "sections", "entries", "waivers", "blocked"),
+        str(source),
+    )
 
     version = mapping.get("version")
     if version != 1:
@@ -218,6 +242,36 @@ def _parse(document: Any, source: Path) -> Scope:
             )
         )
 
+    raw_blocked = mapping.get("blocked", [])
+    if raw_blocked is None:
+        raw_blocked = []
+    blocked = []
+    blocked_ids = set()
+    for index, raw in enumerate(_list(raw_blocked, f"{source}: blocked")):
+        where = f"{source}: blocked[{index}]"
+        item = _mapping(raw, where)
+        _unknown(item, ("id", "reason", "issue"), where)
+        entry_id = _text(item.get("id"), f"{where}.id")
+        if entry_id not in entry_ids:
+            raise ScopeError(f"{where}.id: unknown scope id {entry_id!r}")
+        if entry_id in blocked_ids:
+            raise ScopeError(f"{where}.id: duplicate blocked entry for {entry_id!r}")
+        if entry_id in waived:
+            raise ScopeError(
+                f"{where}.id: {entry_id!r} cannot be both blocked and waived"
+            )
+        number = item.get("issue")
+        if isinstance(number, bool) or not isinstance(number, int) or number <= 0:
+            raise ScopeError(f"{where}.issue: expected a positive issue number")
+        blocked_ids.add(entry_id)
+        blocked.append(
+            ScopeBlocked(
+                id=entry_id,
+                reason=_text(item.get("reason"), f"{where}.reason"),
+                issue=number,
+            )
+        )
+
     return Scope(
         version=version,
         issue=issue,
@@ -225,6 +279,7 @@ def _parse(document: Any, source: Path) -> Scope:
         sections=tuple(sections),
         entries=tuple(entries),
         waivers=tuple(waivers),
+        blocked=tuple(blocked),
     )
 
 

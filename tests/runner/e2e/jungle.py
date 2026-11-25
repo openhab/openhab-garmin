@@ -140,8 +140,35 @@ def _is_path_key(key: str, value: str, path_variables: Set[str]) -> bool:
     return "." not in key and key in path_variables
 
 
-def _absolute_entry(entry: str, root: Path) -> str:
-    """Make one ``;``-separated path entry absolute.
+def _rebase_entry(entry: str, rebase: Optional[Mapping[Path, Path]]) -> str:
+    """Replace a checkout path prefix, e.g. ``source`` with a generated overlay.
+
+    Only absolute entries are considered: a ``$(variable)`` reference is
+    rebased through the variable's own line. The longest matching prefix wins,
+    so a mapping for ``<root>/source/main`` can coexist with ``<root>/source``.
+    """
+    if not rebase:
+        return entry
+    candidate = Path(entry)
+    if not candidate.is_absolute():
+        return entry
+    for original in sorted(
+        rebase, key=lambda path: len(Path(path).parts), reverse=True
+    ):
+        try:
+            relative = candidate.relative_to(original)
+        except ValueError:
+            continue
+        return str(Path(rebase[original]) / relative)
+    return entry
+
+
+def _absolute_entry(
+    entry: str,
+    root: Path,
+    rebase: Optional[Mapping[Path, Path]] = None,
+) -> str:
+    """Make one ``;``-separated path entry absolute and apply any rebase.
 
     An entry that starts with ``$(name)`` is left alone: the referenced
     variable is rewritten instead, and appending a root would corrupt the
@@ -149,12 +176,21 @@ def _absolute_entry(entry: str, root: Path) -> str:
     becomes absolute through that variable.
     """
     stripped = entry.strip()
-    if not stripped or stripped.startswith("$(") or Path(stripped).is_absolute():
+    if not stripped:
         return stripped
-    return str(root / stripped)
+    if stripped.startswith("$("):
+        return stripped
+    if Path(stripped).is_absolute():
+        return _rebase_entry(stripped, rebase)
+    return _rebase_entry(str(root / stripped), rebase)
 
 
-def _rewrite_paths(line: str, root: Path, path_variables: Set[str]) -> str:
+def _rewrite_paths(
+    line: str,
+    root: Path,
+    path_variables: Set[str],
+    rebase: Optional[Mapping[Path, Path]] = None,
+) -> str:
     """Rewrite a path-valued assignment, preserving everything else verbatim."""
     match = _ASSIGNMENT.match(line)
     if match is None:
@@ -163,7 +199,9 @@ def _rewrite_paths(line: str, root: Path, path_variables: Set[str]) -> str:
     value = match.group("value")
     if not _is_path_key(key, value, path_variables):
         return line
-    entries = ";".join(_absolute_entry(entry, root) for entry in value.split(";"))
+    entries = ";".join(
+        _absolute_entry(entry, root, rebase) for entry in value.split(";")
+    )
     return f"{match.group('prefix')}{entries}{match.group('trailing')}"
 
 
@@ -310,6 +348,7 @@ def generate_device_jungle(
     settings: Optional[AppSettings] = None,
     settings_source: Optional[Path] = None,
     environ: Optional[Mapping[str, str]] = None,
+    rebase: Optional[Mapping[Path, Path]] = None,
 ) -> DeviceJungle:
     """Write ``output`` with only the sections ``device`` needs.
 
@@ -323,6 +362,11 @@ def generate_device_jungle(
     after ``$(resBase)``. That is how the app's compiled property defaults are
     set: properties are built into the app at compile time and follow resource
     overrides, so no simulator-side settings file is involved.
+
+    ``rebase`` replaces checkout path prefixes with generated ones (for example
+    a copied ``source/`` tree whose glance view is stubbed out). It is applied
+    after the paths are made absolute, and only to path-valued entries, so
+    ``manifest.xml`` and ``resources/`` keep pointing at the checkout.
 
     The result is portable. ``monkeyc`` resolves relative jungle paths against
     the jungle file's directory, so a file written outside the checkout would
@@ -368,7 +412,7 @@ def generate_device_jungle(
         match = _SECTION_PROPERTY.match(line)
         if match is not None and match.group(1) not in sections:
             continue
-        kept.append(_rewrite_paths(line, root, path_variables))
+        kept.append(_rewrite_paths(line, root, path_variables, rebase))
 
     output = Path(output)
     resource_override: Optional[Path] = None

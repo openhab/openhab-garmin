@@ -26,7 +26,7 @@ from .config import (
     load_devices,
 )
 from .scenarios import Scenario, discover_scenarios
-from .scope import Scope, ScopeEntry, ScopeWaiver, load_scope
+from .scope import Scope, ScopeBlocked, ScopeEntry, ScopeWaiver, load_scope
 from .sim.base import RUNNABLE_LANGUAGES
 from .variants import matrix_problems
 
@@ -105,11 +105,14 @@ class EntryCoverage:
     scenarios: Tuple[Scenario, ...]
     groups: Tuple[ScenarioGroup, ...]
     waiver: Optional[ScopeWaiver]
+    blocked: Optional[ScopeBlocked] = None
 
     @property
     def status(self) -> str:
         if self.scenarios:
             return "covered"
+        if self.blocked is not None:
+            return "blocked"
         if self.waiver is not None:
             return "waived"
         return "empty"
@@ -131,6 +134,10 @@ class CoverageReport:
     @property
     def waived(self) -> Tuple[EntryCoverage, ...]:
         return tuple(entry for entry in self.entries if entry.status == "waived")
+
+    @property
+    def blocked(self) -> Tuple[EntryCoverage, ...]:
+        return tuple(entry for entry in self.entries if entry.status == "blocked")
 
     @property
     def empty(self) -> Tuple[EntryCoverage, ...]:
@@ -215,10 +222,12 @@ def build_report(
             by_entry[entry_id].append(scenario)
 
     waiver_by_id = {waiver.id: waiver for waiver in scope.waivers}
+    blocked_by_id = {blocked.id: blocked for blocked in scope.blocked}
     entries: List[EntryCoverage] = []
     for entry in scope.entries:
         covering = tuple(by_entry[entry.id])
         waiver = waiver_by_id.get(entry.id)
+        blocked = blocked_by_id.get(entry.id)
         if covering and waiver is not None:
             problems.append(
                 CoverageProblem(
@@ -228,7 +237,17 @@ def build_report(
                     "and also has a waiver",
                 )
             )
-        if not covering and waiver is None:
+        if covering and blocked is not None:
+            problems.append(
+                CoverageProblem(
+                    "redundant-blocked",
+                    f"{entry.id} is covered by "
+                    f"{', '.join(scenario.scenario_id for scenario in covering)} "
+                    f"and is also marked blocked by #{blocked.issue}; remove the "
+                    "blocked entry once a scenario proves it",
+                )
+            )
+        if not covering and waiver is None and blocked is None:
             problems.append(
                 CoverageProblem(
                     "uncovered",
@@ -241,6 +260,7 @@ def build_report(
                 scenarios=covering,
                 groups=_group_scenarios(covering),
                 waiver=waiver,
+                blocked=blocked,
             )
         )
 
@@ -275,6 +295,14 @@ def _waiver_cell(waiver: ScopeWaiver) -> str:
     return cell
 
 
+def _blocked_cell(blocked: ScopeBlocked, scope: Scope) -> str:
+    """A blocked entry names the limitation and links to its tracked issue."""
+    return (
+        f"**Blocked:** {_cell(blocked.reason)} "
+        f"([#{blocked.issue}]({scope.issue_url(blocked.issue)}))"
+    )
+
+
 def _manual_cell(groups: Sequence[ScenarioGroup]) -> str:
     parts: List[str] = []
     for group in groups:
@@ -299,6 +327,7 @@ def render_markdown(
     total = len(report.entries)
     covered = len(report.covered)
     waived = len(report.waived)
+    blocked = len(report.blocked)
     empty = len(report.empty)
 
     lines: List[str] = [
@@ -315,6 +344,7 @@ def render_markdown(
         f"| Scope entries | {total} |",
         f"| Covered by at least one scenario | {covered} |",
         f"| Waived with a reason | {waived} |",
+        f"| Blocked by a tracked issue | {blocked} |",
         f"| Empty (must be 0) | {empty} |",
         f"| Scenario files | {report.scenario_files} |",
         f"| Expanded scenario runs | {len(report.scenarios)} |",
@@ -325,6 +355,16 @@ def render_markdown(
         "> validates the scenario schema, the dry run and this mapping; it never",
         "> executes a scenario. Nothing in this table has been run against the stack",
         "> yet, and a waiver is a deliberate gap rather than a passing test.",
+        ">",
+        "> **The glance is excluded from E2E builds.** The app crashes the simulator",
+        "> on its first glance draw (`Invalid Font Specified` in",
+        "> `GlanceSitemapView.onUpdate`), so every scenario builds with the",
+        "> `without-glance` profile: the glance view is replaced by an empty stub and",
+        "> draws nothing. Glance-related entries are **blocked**, not waived, and no",
+        "> green run is glance coverage. Re-enable it with",
+        "> `python -m e2e run --with-glance` (or `e2e build --with-glance`) once",
+        "> [#396](https://github.com/openhab/openhab-garmin/issues/396) is resolved;",
+        "> see [simulator-driver.md](simulator-driver.md#glance-the-profile-that-keeps-runs-alive).",
         ">",
         "> **Language provisioning is blocked.** The simulator's device language is",
         "> set from its own UI; the harness cannot apply it (`Language` in",
@@ -357,6 +397,8 @@ def render_markdown(
                 scenarios = "<br>".join(
                     group.describe(default_id) for group in entry.groups
                 )
+            elif entry.blocked is not None:
+                scenarios = _blocked_cell(entry.blocked, report.scope)
             else:
                 scenarios = _waiver_cell(entry.waiver) if entry.waiver else ""
             lines.append(
@@ -427,6 +469,7 @@ def report_document(report: CoverageReport) -> Mapping[str, object]:
             "entries": len(report.entries),
             "covered": len(report.covered),
             "waived": len(report.waived),
+            "blocked": len(report.blocked),
             "empty": len(report.empty),
             "scenario_files": report.scenario_files,
             "scenario_runs": len(report.scenarios),
@@ -457,6 +500,15 @@ def report_document(report: CoverageReport) -> Mapping[str, object]:
                     else {
                         "reason": entry.waiver.reason,
                         "verified_by": entry.waiver.verified_by,
+                    }
+                ),
+                "blocked": (
+                    None
+                    if entry.blocked is None
+                    else {
+                        "reason": entry.blocked.reason,
+                        "issue": entry.blocked.issue,
+                        "url": report.scope.issue_url(entry.blocked.issue),
                     }
                 ),
             }
