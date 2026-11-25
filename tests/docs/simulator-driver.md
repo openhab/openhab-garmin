@@ -302,11 +302,47 @@ Two cases seen on the guest, recorded so neither is filed as an app bug:
   overload, which belongs in a `fenix847mm` build and is excluded for
   `fenix6pro`. It appeared only because a `fenix847mm` PRG was launched as
   `fenix6pro` — the mismatch the contract test now refuses.
-- `Invalid Font Specified` at `GlanceSitemapView.mc:99` (`_textArea.draw`) on
-  `fenix6pro` / CIQ 3.4.5 with `UI_GLANCE_FONTS = [FONT_SMALL, FONT_TINY,
-  FONT_GLANCE]`. The build used the SDK's own `api.db` (no `-a` subset), so this
-  is a device-definition limitation until a second device shows it. The
-  `fenix847mm` repeat (CIQ 6.0.4) distinguishes the two.
+- `Invalid Font Specified` at `GlanceSitemapView.mc:99` (`_textArea.draw`). It
+  is not a device-definition gap: it reproduces with `TextArea` and with a
+  plain `dc.drawText`, with `[FONT_SMALL, FONT_TINY, FONT_GLANCE]`,
+  `[FONT_GLANCE]` and `[FONT_SMALL]`, on `fenix6pro` (CIQ 3.4.5), `fenix7`
+  (5.2.0) and `fenix847mm` (6.0.x), with both the generated jungle and the full
+  `monkey.jungle`. See the next section and
+  [#396](https://github.com/openhab/openhab-garmin/issues/396).
+
+### Glance: the profile that keeps runs alive
+
+The crash happens before the app can poll, so the glance is **excluded from
+E2E builds by default**. The driver always launches a PRG that draws no glance
+text:
+
+- `run` and `build` use the `without-glance` profile unless `--with-glance` is
+  passed. The generated jungle's `sourcePath` is rebased onto
+  `<artifacts>/build/source-no-glance/source`, a copy of the checkout's
+  `source/` in which `source/main/user-interface/features/glance/GlanceSitemapView.mc`
+  is replaced by an empty stub. Nothing in the checkout changes, and
+  `OHApp.getGlanceView()` still returns a valid (but blank) view, so the app
+  proceeds to its normal initial view.
+- The profile and the full `monkeyc` command are printed for every build, so a
+  run is explainable from its log. There is no `-x` in that command:
+  `monkeyc -x` is rejected together with `-f` (`The -f command line option is
+  incompatible with the options -x, -m, -z`), and the jungle's
+  `excludeAnnotations = glance` removes `OHApp` — the manifest entry class —
+  and shared classes such as `SitemapStore`, `E2ETrace` and `AppLifecycle`,
+  which are annotated `(:glance)` too. The build then fails with
+  `Cannot find entry point class '$.OHApp'`.
+- A green run therefore says **nothing** about the glance. The glance-related
+  scope entries are marked **blocked** in
+  [coverage.md](coverage.md#summary) with a link to #396, not waived.
+- Re-enable it when the hardware question is answered:
+
+  ```bash
+  python -m e2e run smoke/launch-and-poll --with-glance
+  python -m e2e build --device fenix847mm --with-glance
+  ```
+
+  If it still crashes there, the evidence belongs in #396; do not "fix" the
+  glance to make the suite green.
 
 ## Input
 

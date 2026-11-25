@@ -282,3 +282,88 @@ def test_markdown_shows_waiver_reason_and_manual_checks(tmp_path: Path) -> None:
     assert "Needs a physical device." in text
     assert "Review the toast by hand." in text
     assert "`smoke/launch-and-poll`" in text
+
+# ---------------------------------------------------------------------------
+# blocked entries (an external limitation, not a reviewed waiver)
+# ---------------------------------------------------------------------------
+
+
+def test_scope_rejects_a_blocked_entry_for_an_unknown_id(tmp_path: Path) -> None:
+    document = _scope_document(
+        blocked=[{"id": "errors.nope", "reason": "Crashes.", "issue": 396}]
+    )
+    with pytest.raises(ScopeError) as error:
+        load_scope(_write_scope(tmp_path, document))
+    assert "unknown scope id" in str(error.value)
+
+
+def test_scope_rejects_a_blocked_entry_without_an_issue(tmp_path: Path) -> None:
+    document = _scope_document(
+        blocked=[{"id": "errors.critical", "reason": "Crashes."}]
+    )
+    with pytest.raises(ScopeError) as error:
+        load_scope(_write_scope(tmp_path, document))
+    assert "issue" in str(error.value)
+
+
+def test_scope_rejects_an_entry_that_is_both_blocked_and_waived(
+    tmp_path: Path,
+) -> None:
+    document = _scope_document(
+        waivers=[{"id": "errors.critical", "reason": "Not needed."}],
+        blocked=[{"id": "errors.critical", "reason": "Crashes.", "issue": 396}],
+    )
+    with pytest.raises(ScopeError) as error:
+        load_scope(_write_scope(tmp_path, document))
+    assert "both blocked and waived" in str(error.value)
+
+
+def test_report_counts_a_blocked_entry_as_accounted_for(tmp_path: Path) -> None:
+    document = _scope_document(
+        blocked=[{"id": "errors.critical", "reason": "Crashes.", "issue": 396}]
+    )
+    scope = load_scope(_write_scope(tmp_path, document))
+    scenario = find_scenario("smoke/launch-and-poll")
+    report = build_report(
+        scenarios=[replace(scenario, covers=("errors.temporary",))],
+        scope=scope,
+        check_device_matrix=False,
+    )
+    assert report.problems == ()
+    assert [entry.entry.id for entry in report.blocked] == ["errors.critical"]
+    assert report.empty == ()
+
+
+def test_report_flags_a_blocked_entry_that_a_scenario_covers(
+    tmp_path: Path,
+) -> None:
+    document = _scope_document(
+        blocked=[{"id": "errors.critical", "reason": "Crashes.", "issue": 396}]
+    )
+    scope = load_scope(_write_scope(tmp_path, document))
+    scenario = find_scenario("smoke/launch-and-poll")
+    report = build_report(
+        scenarios=[
+            replace(scenario, covers=("errors.temporary", "errors.critical"))
+        ],
+        scope=scope,
+        check_device_matrix=False,
+    )
+    assert [problem.kind for problem in report.problems] == ["redundant-blocked"]
+
+
+def test_markdown_links_a_blocked_entry_to_its_issue(tmp_path: Path) -> None:
+    document = _scope_document(
+        blocked=[{"id": "errors.critical", "reason": "Crashes.", "issue": 396}]
+    )
+    scope = load_scope(_write_scope(tmp_path, document))
+    scenario = find_scenario("smoke/launch-and-poll")
+    report = build_report(
+        scenarios=[replace(scenario, covers=("errors.temporary",))],
+        scope=scope,
+        check_device_matrix=False,
+    )
+    text = render_markdown(report)
+    assert "**Blocked:** Crashes." in text
+    assert "[#396](https://github.com/openhab/openhab-garmin/issues/396)" in text
+    assert "Blocked by a tracked issue" in text

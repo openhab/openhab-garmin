@@ -40,7 +40,13 @@ from . import fixtures as fixtures_module
 from . import health as health_module
 from . import network as network_module
 from . import reporting as reporting_module
-from .build import BuildError, build_prg, ephemeral_developer_key
+from .build import (
+    BuildError,
+    PROFILE_WITHOUT_GLANCE,
+    build_prg,
+    describe_profile,
+    ephemeral_developer_key,
+)
 from .compose import ComposeError
 from .config import (
     ConfigError,
@@ -338,6 +344,15 @@ def _cmd_run(args: argparse.Namespace) -> int:
     if driver_name not in DRIVER_NAMES:
         return _fail(f"unknown driver {driver_name!r}; known: {', '.join(DRIVER_NAMES)}")
 
+    if args.prg:
+        print(
+            "profile: supplied PRG; the build profile is not applied, so its "
+            f"glance state is unknown (#396). Build with --{PROFILE_WITHOUT_GLANCE} "
+            "or --with-glance instead to record it."
+        )
+    else:
+        print(f"profile: {describe_profile(args.glance)}")
+
     layout = None
     if not dry_run:
         layout = load_layout()
@@ -378,8 +393,11 @@ def _cmd_run(args: argparse.Namespace) -> int:
                             jungle=_jungle_override(args),
                             developer_key=developer_key,
                             settings=settings,
+                            include_glance=args.glance,
                         )
                         print(f"jungle: {built_prg.jungle_note}")
+                        print(f"profile: {built_prg.profile_note}")
+                        print(f"command: {' '.join(built_prg.command)}")
                         print(
                             f"built {built_prg.prg} in {built_prg.duration_ms:.0f} ms"
                         )
@@ -426,8 +444,23 @@ def _cmd_run(args: argparse.Namespace) -> int:
         print(f"{name}: {path}")
 
     if args.json:
+        profile_name = (
+            "supplied-prg"
+            if args.prg
+            else ("with-glance" if args.glance else "without-glance")
+        )
+        profile_note = (
+            "the PRG was supplied with --prg, so the build profile was not applied"
+            if args.prg
+            else describe_profile(args.glance)
+        )
         _emit_json(
             {
+                "profile": {
+                    "name": profile_name,
+                    "glance": bool(args.glance) and not args.prg,
+                    "note": profile_note,
+                },
                 "counts": report.counts(),
                 "environment": report.environment_document(),
                 "exit_code": report.exit_code,
@@ -590,6 +623,7 @@ def _cmd_coverage(args: argparse.Namespace) -> int:
         print(f"scope entries: {len(report.entries)}")
         print(f"covered:       {len(report.covered)}")
         print(f"waived:        {len(report.waived)}")
+        print(f"blocked:       {len(report.blocked)}")
         print(f"empty:         {len(report.empty)}")
         print(f"scenarios:     {report.scenario_files} file(s), {len(report.scenarios)} run(s)")
         if args.check:
@@ -808,7 +842,10 @@ def _cmd_build(args: argparse.Namespace) -> int:
                 release=args.release,
                 developer_key=developer_key,
                 settings=settings,
+                include_glance=args.glance,
             )
+            print(f"{device.id}: profile {result.profile_note}")
+            print(f"{device.id}: command {' '.join(result.command)}")
             print(f"{device.id}: {result.jungle_note}")
             print(f"{device.id}: {result.prg} ({result.duration_ms:.0f} ms)")
             if result.settings_json is not None:
@@ -857,6 +894,36 @@ def build_parser() -> argparse.ArgumentParser:
         sub.add_argument("--shim-url", help="shim base URL (default: E2E_SHIM_URL or %s)" % DEFAULT_SHIM_URL)
         sub.add_argument("--artifacts", help="artifacts directory (default: E2E_ARTIFACTS or tests/artifacts)")
         sub.add_argument("--json", action="store_true", help="emit machine-readable JSON")
+
+    def add_glance_profile(sub: argparse.ArgumentParser) -> None:
+        """The build profile, defaulting to the one that lets scenarios run.
+
+        ``monkeyc -x glance`` cannot be used here: ``-x`` is incompatible with
+        ``-f``, and the manifest entry class ``OHApp`` carries ``(:glance)``
+        too, so excluding the annotation removes the entry point. The
+        ``without-glance`` profile therefore stubs only the glance view in a
+        generated copy of ``source/`` (issue #396).
+        """
+        group = sub.add_mutually_exclusive_group()
+        group.add_argument(
+            "--without-glance",
+            dest="glance",
+            action="store_false",
+            help=(
+                "build with the glance view replaced by an empty stub "
+                "(default); the glance is not covered, see issue #396"
+            ),
+        )
+        group.add_argument(
+            "--with-glance",
+            dest="glance",
+            action="store_true",
+            help=(
+                "compile the app's real glance view instead; the simulator "
+                "crashes on its first glance draw until #396 is resolved"
+            ),
+        )
+        sub.set_defaults(glance=False)
 
     status = subparsers.add_parser("status", help="show the health of every component")
     add_common(status)
@@ -944,6 +1011,7 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     run.add_argument("--goldens", help="goldens directory (default: tests/goldens)")
+    add_glance_profile(run)
     run.set_defaults(handler=_cmd_run)
 
     listing = subparsers.add_parser("list-scenarios", help="list scenarios")
@@ -1123,6 +1191,7 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     build.add_argument("--artifacts")
+    add_glance_profile(build)
     build.set_defaults(handler=_cmd_build)
 
     return parser

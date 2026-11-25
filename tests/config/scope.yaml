@@ -270,6 +270,29 @@ entries:
     section: devices
     title: Capability variants such as Wi-Fi and glance
 
+# A blocked entry is different: the harness cannot exercise it until the
+# tracked issue is resolved. It renders as "Blocked" and links to that issue,
+# the same way unsupported languages are reported. Blocked and waived are
+# mutually exclusive, and an entry that a scenario covers must not stay blocked.
+blocked:
+  - id: lifecycle.glance-widget
+    issue: 396
+    reason: >-
+      The app crashes the simulator on its first glance draw (`Invalid Font
+      Specified` in `GlanceSitemapView.onUpdate`), before any HTTP request. E2E
+      builds therefore use the `without-glance` profile, which replaces the
+      glance view with an empty stub, so no glance content or refresh can be
+      inspected or asserted. Re-enable with `--with-glance` once #396 is
+      resolved.
+  - id: devices.capabilities
+    issue: 396
+    reason: >-
+      The matrix records no capability dimension, so capability variants are
+      not asserted per device (a known #366 gap), and its glance half is
+      additionally unverifiable: the glance crashes the simulator and is
+      excluded from E2E builds. The Wi-Fi mode itself is covered by the
+      dedicated scenarios; only the glance capability is blocked.
+
 # A waiver is a deliberate decision not to cover an entry with a scenario.
 # The reason must say why, and `verified_by` may name a separate automated
 # check. A waiver for an entry that a scenario covers is an error.
@@ -332,10 +355,6 @@ waivers:
     reason: >-
       A scenario has exactly one launch step, so stop/start and termination
       after inactivity cannot be expressed in one scenario.
-  - id: lifecycle.glance-widget
-    reason: >-
-      No scenario opens the glance or widget surface; the driver contract has
-      no glance navigation.
   - id: lifecycle.connection-return
     reason: >-
       Returning to the phone or network is a mid-run mode transition, which the
@@ -401,10 +420,9 @@ waivers:
     reason: The matrix includes ActionMenu and full-menu implementations.
     verified_by: python -m e2e variants
   - id: devices.source-variants
-    reason: Every source/config variant is assigned to a matrix device.
-    verified_by: python -m e2e variants
-  - id: devices.capabilities
     reason: >-
-      The matrix has no capability dimension, so Wi-Fi and glance capabilities
-      are not recorded per device. This is a known gap in #366, not something a
-      scenario can assert.
+      Every source/config variant is assigned to a matrix device; the
+      GlanceConfig variants still compile in the `without-glance` profile (only
+      the glance view itself is stubbed), and `e2e variants` proves the
+      assignment.
+    verified_by: python -m e2e variants

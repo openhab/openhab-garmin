@@ -33,7 +33,7 @@ This directory is the foundation tracked by
 | Protocol-tier scenarios (shim trace + `E2E:` trace events) | ready; need the debug trace build from [#364](https://github.com/openhab/openhab-garmin/issues/364) |
 | Wine simulator driver | implemented against the contract, with the compiled-properties model and the guest-measured start order; the proof is a driver run on the guest with `--prg` (see [docs/simulator-driver.md](docs/simulator-driver.md)) |
 | Wine feasibility spike | ready to run on an approved Linux host with Docker and the SDK (see [spike/README.md](spike/README.md), issue [#370](https://github.com/openhab/openhab-garmin/issues/370)) |
-| #140 scope coverage map | checked in as `config/scope.yaml` and `docs/coverage.md`; enforced by `python -m e2e coverage --check` |
+| #140 scope coverage map | checked in as `config/scope.yaml` and `docs/coverage.md`; enforced by `python -m e2e coverage --check`. The glance entries are **blocked** by [#396](https://github.com/openhab/openhab-garmin/issues/396) and E2E builds exclude the glance by default (`--with-glance` re-enables it). |
 | Stack health in every run | complete: restart counts, working set and OOM evidence are classified as `valid`/`invalid`/`unknown`; see [docs/diagnostics.md](docs/diagnostics.md) |
 | Host preflight (`python -m e2e preflight`) | complete: Docker, Compose, SDK, ports, pins, layout and resources; the static groups run in CI |
 
@@ -235,6 +235,35 @@ python -m e2e run smoke/launch-and-poll --dry-run
 
 A dry run uses the null driver, skips every network-dependent step, and reports
 those steps as **skipped**. It never reports them as passed.
+
+### Build profile: the glance is excluded by default
+
+The app crashes the simulator on its first glance draw
+(`Invalid Font Specified` in `GlanceSitemapView.onUpdate`, tracked as
+[#396](https://github.com/openhab/openhab-garmin/issues/396)). Every `run` and
+`build` therefore uses the **`without-glance`** profile unless told otherwise:
+the generated jungle is rebased onto a copy of `source/` in which
+`GlanceSitemapView` is replaced by an empty stub. The checkout is never
+modified, and the app's normal initial view (and polling) is unaffected.
+
+Each run prints the profile, so a green result cannot be mistaken for glance
+coverage:
+
+```text
+profile: without-glance: the glance view is replaced by an empty stub and draws nothing; the glance is NOT covered (issue #396)
+```
+
+Re-include the real glance on hardware, or once the issue is resolved:
+
+```bash
+python -m e2e run smoke/launch-and-poll --with-glance
+python -m e2e build --device fenix847mm --with-glance
+```
+
+`monkeyc -x glance` is not an alternative: `-x` is rejected together with `-f`,
+and `OHApp` (the manifest entry) plus shared classes are annotated `(:glance)`
+too, so excluding the annotation removes the entry point and fails the build.
+See [docs/simulator-driver.md](docs/simulator-driver.md#glance-the-profile-that-keeps-runs-alive).
 
 ## CLI
 
