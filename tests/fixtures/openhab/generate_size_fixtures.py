@@ -23,7 +23,7 @@ from __future__ import annotations
 from pathlib import Path
 
 SITEMAPS = Path(__file__).parent / "conf" / "sitemaps"
-NEAR_COUNT = 80
+NEAR_COUNT = 71
 OVER_COUNT = 100
 PADDING = 40
 

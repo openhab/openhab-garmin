@@ -72,3 +72,12 @@ max_sitemap_bytes: 12288
 budget_exempt:
   - garmin_limit_near
   - garmin_limit_over
+
+# Measured on Connect IQ 9.3.0: 16384 bytes is accepted, 16385 returns -402.
+# The guard checks that the generated fixtures still straddle this boundary, so
+# a generator change cannot silently turn the near-limit scenario into a -402
+# case or the over-limit scenario into a passing one.
+simulator_json_limit_bytes: 16384
+limit_fixtures:
+  near: garmin_limit_near
+  over: garmin_limit_over

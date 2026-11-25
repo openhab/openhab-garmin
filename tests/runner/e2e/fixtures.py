@@ -53,6 +53,12 @@ LOG_CONTEXT_LINES = 12
 DEFAULT_WAIT_S = 30.0
 DEFAULT_INTERVAL_S = 2.0
 
+#: Measured on Connect IQ 9.3.0: a 16384-byte JSON response is accepted and a
+#: 16385-byte response returns Communications.NETWORK_RESPONSE_TOO_LARGE
+#: (-402). See tests/docs/fixture-limits.md. The manifest may override this for
+#: a future SDK, but the limit fixtures are checked against it in CI.
+SIMULATOR_JSON_LIMIT_BYTES = 16384
+
 #: The declarations this repository's fixtures use. The guard only needs the
 #: names, not a full DSL parser; anything it cannot recognise is caught by the
 #: expected-set comparison in the other direction.
@@ -82,6 +88,9 @@ class ExpectedFixtures:
     staged_root: Path
     max_sitemap_bytes: Optional[int] = None
     budget_exempt: frozenset[str] = frozenset()
+    simulator_json_limit_bytes: int = SIMULATOR_JSON_LIMIT_BYTES
+    near_limit_sitemap: Optional[str] = None
+    over_limit_sitemap: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -300,6 +309,31 @@ def load_expected(
                 f"sitemaps.{profile}: {_join(unknown_exempt)}"
             )
 
+    simulator_limit = document.get(
+        "simulator_json_limit_bytes", SIMULATOR_JSON_LIMIT_BYTES
+    )
+    if not isinstance(simulator_limit, int) or simulator_limit <= 0:
+        raise FixtureError(
+            f"{source}: simulator_json_limit_bytes must be a positive integer, "
+            f"got {simulator_limit!r}"
+        )
+    near_limit: Optional[str] = None
+    over_limit: Optional[str] = None
+    limit_fixtures = document.get("limit_fixtures")
+    if limit_fixtures is not None:
+        if not isinstance(limit_fixtures, dict):
+            raise FixtureError(f"{source}: limit_fixtures must be a mapping")
+        near_limit = limit_fixtures.get("near")
+        over_limit = limit_fixtures.get("over")
+        for role, value in (("near", near_limit), ("over", over_limit)):
+            if value is None:
+                continue
+            if not isinstance(value, str) or value not in sitemaps:
+                raise FixtureError(
+                    f"{source}: limit_fixtures.{role} must name a sitemap in "
+                    f"sitemaps.{profile}, got {value!r}"
+                )
+
     declared_items, declared_sitemaps = declared_sets(staged, profile)
     if declared_items != set(items):
         raise FixtureError(
@@ -324,6 +358,9 @@ def load_expected(
         staged_root=staged,
         max_sitemap_bytes=max_sitemap_bytes,
         budget_exempt=budget_exempt,
+        simulator_json_limit_bytes=simulator_limit,
+        near_limit_sitemap=near_limit,
+        over_limit_sitemap=over_limit,
     )
 
 
@@ -469,6 +506,7 @@ def verify(
     log_dir: Optional[Path] = None,
     strict: bool = False,
     check_sizes: bool = False,
+    dump_dir: Optional[Path] = None,
     wait_s: float = DEFAULT_WAIT_S,
     interval_s: float = DEFAULT_INTERVAL_S,
 ) -> FixtureReport:
@@ -538,11 +576,42 @@ def verify(
                 )
             sitemap_bytes: Tuple[Tuple[str, int], ...] = ()
             if check_sizes:
-                measured = [
-                    (name, len(openhab.sitemap_raw(name)))
-                    for name in sorted(expected.sitemaps)
-                ]
+                measured = []
+                if dump_dir is not None:
+                    dump_dir.mkdir(parents=True, exist_ok=True)
+                for name in sorted(expected.sitemaps):
+                    raw = openhab.sitemap_raw(name)
+                    measured.append((name, len(raw)))
+                    if dump_dir is not None:
+                        (dump_dir / f"{name}.json").write_bytes(raw)
                 sitemap_bytes = tuple(measured)
+                by_name = dict(measured)
+                limit = expected.simulator_json_limit_bytes
+                boundary_problems: List[str] = []
+                if expected.near_limit_sitemap is not None:
+                    size = by_name.get(expected.near_limit_sitemap, 0)
+                    if size > limit:
+                        boundary_problems.append(
+                            f"{expected.near_limit_sitemap}={size} is above the "
+                            f"{limit}-byte simulator limit, so the near-limit "
+                            "scenario would receive -402"
+                        )
+                if expected.over_limit_sitemap is not None:
+                    size = by_name.get(expected.over_limit_sitemap, 0)
+                    if size <= limit:
+                        boundary_problems.append(
+                            f"{expected.over_limit_sitemap}={size} is not above "
+                            f"the {limit}-byte simulator limit, so the over-limit "
+                            "scenario would render instead of showing S:-402"
+                        )
+                if boundary_problems:
+                    raise FixtureError(
+                        "the size-limit fixtures do not straddle the measured "
+                        f"simulator limit: {'; '.join(boundary_problems)}. "
+                        "Regenerate them with "
+                        "tests/fixtures/openhab/generate_size_fixtures.py and "
+                        "record the new sizes in tests/docs/fixture-limits.md."
+                    )
                 budget = expected.max_sitemap_bytes
                 if budget is not None:
                     over = [

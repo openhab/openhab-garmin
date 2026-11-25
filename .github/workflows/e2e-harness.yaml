@@ -165,6 +165,7 @@ jobs:
             --log ../compose/openhab.log \
             --strict \
             --sizes \
+            --dump-dir ../compose/sitemaps \
             --wait 180
 
       - name: Upload openHAB log
@@ -172,7 +173,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: openhab-${{ matrix.profile }}-log
-          path: tests/compose/openhab.log
+          path: |
+            tests/compose/openhab.log
+            tests/compose/sitemaps
           if-no-files-found: ignore
 
       - name: Stop the stack

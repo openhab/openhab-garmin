@@ -272,6 +272,8 @@ def _cmd_setup(args: argparse.Namespace) -> int:
 
 
 def _cmd_verify_fixtures(args: argparse.Namespace) -> int:
+    if args.dump_dir and not args.sizes:
+        return _fail("--dump-dir requires --sizes")
     openhab = OpenHabClient(_openhab_url(args))
     try:
         openhab.wait_ready(args.timeout)
@@ -283,6 +285,7 @@ def _cmd_verify_fixtures(args: argparse.Namespace) -> int:
             log_dir=Path(args.log_dir) if args.log_dir else None,
             strict=args.strict,
             check_sizes=args.sizes,
+            dump_dir=Path(args.dump_dir) if args.dump_dir else None,
             wait_s=args.wait,
         )
     except (FixtureError, OpenHabError) as error:
@@ -993,6 +996,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--sizes",
         action="store_true",
         help="fetch each sitemap and report its REST body size; enforces max_sitemap_bytes from the manifest",
+    )
+    verify_fixtures.add_argument(
+        "--dump-dir",
+        help="write each fetched sitemap payload to <dump-dir>/<name>.json (requires --sizes)",
     )
     verify_fixtures.add_argument(
         "--timeout", type=float, default=180.0, help="readiness timeout in seconds"
