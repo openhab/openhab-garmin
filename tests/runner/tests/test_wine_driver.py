@@ -42,7 +42,8 @@ from e2e.sim.wine import (
     SimulatorKey,
     WindowTitle,
     classify_ciq_message,
-    coordinates_for,
+    compare_command,
+    coordinate_mapper,
     import_command,
     ini_updates,
     key_bindings,
@@ -56,10 +57,7 @@ from e2e.sim.wine import (
     read_device_display_name,
     read_device_keys,
     read_simulator_definition,
-    reference_size,
     render_properties,
-    scaled_point,
-    scaled_rect,
     screen_rect,
     simulator_command,
     tail,
@@ -68,12 +66,13 @@ from e2e.sim.wine import (
     update_ini,
     vk_to_keysym,
     window_point,
-    window_scale,
     WineSimulatorDriver,
     xdotool_click_command,
+    xdotool_click_to_window_command,
     xdotool_focus_commands,
     xdotool_geometry_command,
     xdotool_key_command,
+    xdotool_key_to_window_command,
     xdotool_search_command,
     xdpyinfo_command,
 )
@@ -317,48 +316,36 @@ def test_declared_key_areas_are_parsed_by_behaviour(tmp_path: Path) -> None:
     assert "onSelect" in enter.describe()
 
 
-def test_reference_size_and_window_scale() -> None:
-    display = ScreenRect(70, 70, 260, 260)
-    keys = (
-        SimulatorKey(Button.ENTER, ScreenRect(356, 145, 44, 69), source="onSelect"),
-        SimulatorKey(Button.DOWN, ScreenRect(21, 336, 44, 69), source="nextPage"),
-    )
-    assert reference_size(display, keys) == (400, 405)
-    assert window_scale({"width": 400, "height": 405}, (400, 405)) == 1.0
-    assert window_scale({"width": 404, "height": 409}, (400, 405)) == 1.0
-    assert window_scale({"width": 800, "height": 810}, (400, 405)) == 2.0
-    assert window_scale({"width": 400, "height": 405}, None) == 1.0
+def test_mapper_is_one_to_one_with_the_declared_space() -> None:
+    """The SDK's simulator.json is already in window client coordinates."""
+    display = ScreenRect(79, 149, 266, 266)
+    mapper = coordinate_mapper(display, None)
+    assert (mapper.scale, mapper.offset_x, mapper.offset_y) == (1.0, 0, 0)
+    assert "declared" in mapper.source
+    key = SimulatorKey(Button.ENTER, ScreenRect(356, 145, 44, 69), source="onSelect")
+    assert mapper.point(key.location) == (378, 180)
+    assert mapper.rect(display) == display
 
 
-def test_scaled_point_and_rect() -> None:
-    rect = ScreenRect(10, 20, 100, 40)
-    assert scaled_point(rect, 1.0) == (60, 40)
-    assert scaled_point(rect, 2.0) == (120, 80)
-    assert scaled_point(rect, 2.0, (5, -5)) == (125, 75)
-    assert scaled_rect(rect, 2.0) == ScreenRect(20, 40, 200, 80)
-    assert scaled_rect(rect, 2.0, (5, -5)) == ScreenRect(25, 35, 200, 80)
+def test_press_and_tap_agree_on_a_shared_declared_point() -> None:
+    """A key centred on the display's top-left maps where tap(0,0) maps."""
+    display = ScreenRect(79, 149, 266, 266)
+    shared = ScreenRect(78, 148, 2, 2)  # centred on (79,149)
+    mapper = coordinate_mapper(display, None)
+    assert mapper.point(shared) == mapper.screen_point(0, 0, (260, 260)) == (79, 149)
 
 
-def test_pinned_screen_rect_places_the_key_areas(tmp_path: Path) -> None:
+def test_pinned_screen_rect_places_the_key_areas() -> None:
     """The same E2E_WINE_SCREEN_RECT pin moves the keys with the screen."""
     display = ScreenRect(70, 70, 260, 260)
-    keys = (
-        SimulatorKey(Button.ENTER, ScreenRect(356, 145, 44, 69), source="onSelect"),
-    )
+    key = SimulatorKey(Button.ENTER, ScreenRect(356, 145, 44, 69), source="onSelect")
     pinned = ScreenRect(100, 120, 520, 520)  # 2x, shifted
-    scale, offset, source = coordinates_for(
-        {"x": 0, "y": 0, "width": 800, "height": 810}, display, keys, pinned
-    )
-    assert (scale, offset) == (2.0, (-40, -20))
-    assert source == ENV_SCREEN_RECT
-    assert scaled_point(keys[0].location, scale, offset) == (716, 339)
-    assert scaled_rect(display, scale, offset) == pinned
-
-    scale, offset, source = coordinates_for(
-        {"x": 0, "y": 0, "width": 800, "height": 810}, display, keys, None
-    )
-    assert (scale, offset) == (2.0, (0, 0))
-    assert "window" in source
+    mapper = coordinate_mapper(display, pinned)
+    assert (mapper.scale, mapper.offset_x, mapper.offset_y) == (2.0, -40, -20)
+    assert mapper.source == ENV_SCREEN_RECT
+    assert mapper.point(key.location) == (716, 339)
+    assert mapper.rect(display) == pinned
+    assert mapper.screen_point(0, 0, (260, 260)) == (100, 120)
 
 
 def test_press_clicks_the_declared_hit_area(
@@ -379,7 +366,7 @@ def test_press_clicks_the_declared_hit_area(
     driver.press(Button.ENTER)
 
     click = [command for command in fake.commands if command[1] == "mousemove"][0]
-    assert click[4:6] == ["378", "180"]
+    assert click[2:4] == ["378", "180"]
     assert not any(command[1] == "key" for command in fake.commands), "no keystroke"
     log = _driver_log(driver)
     assert "clicked ENTER via onSelect" in log
@@ -404,7 +391,7 @@ def test_press_uses_the_screen_pin_for_the_hit_area(
     driver.press(Button.ENTER)
 
     click = [command for command in fake.commands if command[1] == "mousemove"][0]
-    assert click[4:6] == ["716", "339"]
+    assert click[2:4] == ["716", "339"]
     assert ENV_SCREEN_RECT in _driver_log(driver)
 
 
@@ -473,18 +460,18 @@ def test_press_key_override_beats_the_declared_area(
     assert not any(command[1] == "mousemove" for command in fake.commands)
 
 
-def test_tap_scales_the_declared_screen_rect(
+def test_tap_uses_the_declared_one_to_one_mapping(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """display.location is already in window coordinates: no scaling."""
     driver = _driver(tmp_path)
     driver._started = True
     driver._device = _device("fenix7")  # 260x260, touch+button
     driver._window = "42"
     driver._definition = _definition(tmp_path)
     monkeypatch.setattr(driver, "_window_name", lambda window: "CIQ Simulator - Fenix 7")
-    # 2x zoom: the declared 260x260 screen occupies 140,140..660,660.
     monkeypatch.setattr(
-        driver, "_geometry", lambda window: {"x": 0, "y": 0, "width": 800, "height": 810}
+        driver, "_geometry", lambda window: {"x": 0, "y": 0, "width": 409, "height": 600}
     )
     monkeypatch.delenv(ENV_SCREEN_RECT, raising=False)
     fake = FakeRun()
@@ -493,7 +480,8 @@ def test_tap_scales_the_declared_screen_rect(
     driver.tap(130, 130)  # centre of the device screen
 
     click = [command for command in fake.commands if command[1] == "mousemove"][0]
-    assert click[4:6] == ["400", "400"]
+    assert click[2:4] == ["200", "200"]
+    assert "screen=70,70,260,260" in _driver_log(driver)
 
 
 def test_open_app_presses_select_when_the_first_view_is_the_glance(
@@ -648,11 +636,9 @@ def test_xdotool_and_capture_commands() -> None:
         "--shell",
         "42",
     ]
-    assert xdotool_key_command("42", "Down", 2) == [
+    assert xdotool_key_command("Down", 2) == [
         "xdotool",
         "key",
-        "--window",
-        "42",
         "--clearmodifiers",
         "--repeat",
         "2",
@@ -660,14 +646,29 @@ def test_xdotool_and_capture_commands() -> None:
         "150",
         "Down",
     ]
-    assert xdotool_click_command("42", 10, 20, 3)[:7] == [
+    assert xdotool_key_to_window_command("42", "Down", 2)[:4] == [
+        "xdotool",
+        "key",
+        "--window",
+        "42",
+    ]
+    assert xdotool_click_command(10, 20, 3) == [
+        "xdotool",
+        "mousemove",
+        "10",
+        "20",
+        "click",
+        "--repeat",
+        "3",
+        "--delay",
+        "150",
+        "1",
+    ]
+    assert xdotool_click_to_window_command("42", 10, 20, 3)[:4] == [
         "xdotool",
         "mousemove",
         "--window",
         "42",
-        "10",
-        "20",
-        "click",
     ]
     assert import_command(":99", "42", Path("/shots/a.png")) == [
         "import",
@@ -679,11 +680,19 @@ def test_xdotool_and_capture_commands() -> None:
         str(Path("/shots/a.png")),
     ]
     assert xdpyinfo_command(":99") == ["xdpyinfo", "-display", ":99"]
+    assert compare_command(Path("/a.png"), Path("/b.png")) == [
+        "compare",
+        "-metric",
+        "AE",
+        str(Path("/a.png")),
+        str(Path("/b.png")),
+        "null:",
+    ]
 
 
 def test_count_and_delay_are_clamped() -> None:
-    assert xdotool_key_command("1", "Up", 0)[6] == "1"
-    assert xdotool_key_command("1", "Up", 1, delay_ms=-5)[8] == "0"
+    assert xdotool_key_command("Up", 0)[4] == "1"
+    assert xdotool_key_command("Up", 1, delay_ms=-5)[6] == "0"
 
 
 def test_focus_commands_activate_then_focus() -> None:
@@ -1039,8 +1048,9 @@ def test_press_sends_the_bound_key_to_the_window(
     monkeypatch.setattr(driver, "_window_name", lambda window: "CIQ Simulator - Fenix 7")
     driver.press(Button.DOWN, 2)
     key = [command for command in fake.commands if command[1] == "key"][0]
-    assert key[3] == "42"
-    assert key[-2:] == ["2", "Down"] or key[-1] == "Down"
+    assert "--window" not in key, "XTEST goes to the focused window, not XSendEvent"
+    assert key[-1] == "Down"
+    assert "XTEST" in _driver_log(driver)
 
 
 def test_tap_maps_device_coordinates_to_the_window(
@@ -1061,7 +1071,7 @@ def test_tap_maps_device_coordinates_to_the_window(
     monkeypatch.delenv(ENV_SCREEN_RECT, raising=False)
     driver.tap(208, 208)
     click = [command for command in fake.commands if command[1] == "mousemove"][0]
-    assert click[4:6] == ["208", "208"]
+    assert click[2:4] == ["208", "208"]
 
 
 def test_seeding_writes_and_round_trips_every_property(
@@ -1304,6 +1314,46 @@ def test_ciq_log_absent_is_not_an_error(tmp_path: Path) -> None:
     assert driver.ciq_log is None
 
 
+def _probe_driver(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, difference: int):
+    driver = _driver(tmp_path)
+    driver._window = "42"
+    monkeypatch.setattr(driver, "_window_name", lambda window: "CIQ Simulator - Fenix 7")
+    monkeypatch.setattr(
+        "e2e.sim.wine.shutil.which", lambda name: f"/usr/bin/{name}"
+    )
+    monkeypatch.setattr("e2e.sim.wine.time.sleep", lambda seconds: None)
+
+    def fake_screenshot(path: Path) -> Path:
+        Path(path).parent.mkdir(parents=True, exist_ok=True)
+        Path(path).write_bytes(png_bytes(4, 4))
+        return Path(path)
+
+    monkeypatch.setattr(driver, "screenshot", fake_screenshot)
+    monkeypatch.setattr(driver, "pixel_difference", lambda before, after: difference)
+    driver._run = FakeRun()  # type: ignore[method-assign]
+    return driver
+
+
+def test_input_delivery_probe_reports_a_changed_window(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    driver = _probe_driver(tmp_path, monkeypatch, difference=5000)
+    detail = driver.probe_input_delivery()
+    assert "alt+s" in detail and "5000" in detail
+    assert "input reaches it" in detail
+
+
+def test_input_delivery_probe_calls_a_dead_window_a_delivery_problem(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    driver = _probe_driver(tmp_path, monkeypatch, difference=0)
+    with pytest.raises(DriverError) as error:
+        driver.probe_input_delivery()
+    message = str(error.value)
+    assert "delivery problem" in message
+    assert "coordinate problem" in message
+
+
 def test_only_the_wine_driver_cannot_provision_a_language() -> None:
     assert WineSimulatorDriver.provisions_language is False
     assert SimulatorDriver.provisions_language is True
@@ -1358,7 +1408,7 @@ def test_wait_ready_warns_when_the_title_never_names_the_device(
     driver = _ready_driver(tmp_path, language="deu", title="CIQ Simulator")
     driver._events = [
         (0.0, "E2E:LANGUAGE;code=deu"),
-        (0.0, "E2E:VIEW;category=glance;view=GlanceSitemapView;depth=1"),
+        (0.0, "E2E:VIEW;category=sitemap;view=HomepageMenu;depth=2"),
     ]
     driver.wait_ready(5.0)
     log = _driver_log(driver)
@@ -1489,6 +1539,12 @@ class _FakeDriver(SimulatorDriver):
         Path(path).write_bytes(png_bytes(4, 4))
         return Path(path)
 
+    def pixel_difference(self, before: Path, after: Path) -> int:
+        return 0
+
+    def probe_input_delivery(self, timeout_s: float = 8.0) -> str:
+        return "the fake simulator menu opened"
+
     def events(self) -> Sequence[str]:
         return tuple(self._lines)
 
@@ -1579,5 +1635,6 @@ def test_contract_fails_a_press_that_has_no_effect(
     )
     by_name = {case.name: case for case in cases}
     assert by_name["press-effect"].status == FAIL
-    assert "did not reach the app" in by_name["press-effect"].detail
+    assert "no new VIEW or ERRORVIEW" in by_name["press-effect"].detail
+    assert "input-delivery" in by_name["press-effect"].detail
     assert exit_code(cases) == 1

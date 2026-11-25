@@ -32,6 +32,8 @@ NOT_IMPLEMENTED = "not-implemented"
 
 #: How long one press may take to show a new view, in the `press-effect` case.
 PRESS_EFFECT_TIMEOUT = 4.0
+#: Window pixels that must change for a press to count as having had an effect.
+PRESS_PIXEL_THRESHOLD = 2000
 
 
 class ContractError(RuntimeError):
@@ -216,31 +218,82 @@ def run_contract(
         _run_case("wait_ready", lambda: driver.wait_ready(ready_timeout_s))
     )
 
+    def input_delivery() -> None:
+        """Prove synthetic input reaches the simulator, independently of the app.
+
+        The driver opens one of the simulator's own menus and looks for a large
+        window change. This separates "input is not delivered" from "the device
+        coordinates are wrong": a coordinate fix cannot help the former.
+        """
+        probe = getattr(driver, "probe_input_delivery", None)
+        if probe is None:
+            raise NotImplementedError(
+                f"{driver.name} cannot probe input delivery (no simulator menu "
+                "accelerator or no pixel comparison)"
+            )
+        probe()
+
+    if driver.supports_screenshots:
+        cases.append(_run_case("input-delivery", input_delivery))
+
     def press_effect() -> None:
         """A press must change what the app does, not just call xdotool.
 
         A keystroke the simulator ignores and a click that misses its hit area
-        both look like success unless the effect is observed. Any new view is
-        enough: opening the first menu item, an action menu or the app itself.
+        both look like success unless the effect is observed. A new view or a
+        substantial screen change (a focus/selection change) counts; a ticking
+        clock does not.
         """
-        for button in (Button.ENTER, Button.MENU, Button.DOWN):
+        pixel = getattr(driver, "pixel_difference", None)
+        actions: List[tuple] = [
+            ("ENTER", lambda: driver.press(Button.ENTER, 1)),
+            ("MENU", lambda: driver.press(Button.MENU, 1)),
+            ("DOWN", lambda: driver.press(Button.DOWN, 1)),
+        ]
+        if device.supports_touch:
+            actions.append(
+                (
+                    "tap",
+                    lambda: driver.tap(
+                        device.screen_width // 2, device.screen_height // 2, 1
+                    ),
+                )
+            )
+        shots = workdir / "input"
+        shots.mkdir(parents=True, exist_ok=True)
+        attempts: List[str] = []
+        for label, action in actions:
+            before = None
+            if driver.supports_screenshots:
+                before = shots / f"{label}-before.png"
+                driver.screenshot(before)
             mark = len(driver.events())
-            driver.press(button, 1)
+            action()
             deadline = time.monotonic() + PRESS_EFFECT_TIMEOUT
+            changed = None
             while time.monotonic() < deadline:
                 for line in list(driver.events())[mark:]:
                     event = parse_line(line)
                     if event is not None and event.event in ("VIEW", "ERRORVIEW"):
                         return
-                time.sleep(0.2)
+                if before is not None and pixel is not None:
+                    after = shots / f"{label}-after.png"
+                    driver.screenshot(after)
+                    changed = pixel(before, after)
+                    if changed is not None and changed >= PRESS_PIXEL_THRESHOLD:
+                        return
+                time.sleep(0.25)
+            attempts.append(f"{label} ({changed!r} px)")
         raise AssertionError(
-            "pressing ENTER, MENU and DOWN produced no new VIEW or ERRORVIEW, so "
-            "input did not reach the app.\n"
-            "logs/driver.log names the mechanism used for each press (a declared "
-            "hit area with its window point, or a keysym) and the window scale. If "
-            "it clicked, compare that point with the device definition's "
-            "keys[].location; if it sent a keysym, the simulator ignored keyboard "
-            "input and the definition's hit areas must be used."
+            "pressing ENTER, MENU and DOWN"
+            + (" and tapping the screen" if device.supports_touch else "")
+            + " produced no new VIEW or ERRORVIEW and no screen change at or above "
+            f"{PRESS_PIXEL_THRESHOLD} px: {'; '.join(attempts)}.\n"
+            "logs/driver.log names the mechanism and window point for each press. "
+            "If the input-delivery case also failed, input never reached the "
+            "simulator (focus/delivery), which no coordinate fix can solve; if it "
+            "passed, compare the logged point with the device definition's "
+            "keys[].location and the window's client origin."
         )
 
     if driver.supports_events:
@@ -292,7 +345,7 @@ def run_contract(
 
 def _launch_cases() -> List[str]:
     """Names of the cases that need a launched application, in order."""
-    names = ["start", "wait_ready", "press-effect"]
+    names = ["start", "wait_ready", "input-delivery", "press-effect"]
     names.extend(f"press[{button.value}]" for button in Button)
     names.extend(["tap", "screenshot", "events"])
     return names

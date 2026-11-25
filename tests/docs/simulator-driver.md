@@ -39,8 +39,12 @@ engine reports event and golden assertions as **skipped**, never passed.
   an unrecognised PRG name needs an explicit `--device`: launching one device's
   build as another produced a `Symbol Not Found` and a pointless `tap` failure
   on the guest, which is a false result rather than a test.
-- `press-effect` proves the input path: it presses ENTER, MENU and DOWN and
-  requires a new view. A pass means the app reacted, not that `xdotool` ran.
+- `press-effect` proves the input path: it presses ENTER, MENU and DOWN (and
+  taps on touch devices) and requires a new view **or** a screen change above the
+  pixel threshold. A pass means the app reacted, not that `xdotool` ran.
+- `input-delivery` proves synthetic input reaches the simulator at all, by
+  opening one of its own menus and measuring the window change. If it fails, no
+  device-coordinate change can help.
 - The contract starts with `mode=ble, language=deu`. The language is reported
   and compared, never forced (see "Language cannot be provisioned").
 
@@ -145,7 +149,7 @@ PIDs instead.
 | `prepare` | implemented | Validates the external tools and copies the PRG. Runs before anything touches Wine. |
 | `start` | implemented | Display check, `simulator.ini`, simulator-window wait, property seeding and `monkeydo` launch. The device name is expected to appear only after the launch. |
 | `wait_ready` | implemented | First view **and** the reported language, both from the trace stream. A dead app fails with the console tail. The first view may be the glance (`category=glance`) on a plain `monkeydo` launch; reaching the sitemap is the app's behaviour and the scenario asserts it, not the driver. |
-| `press` | implemented, verified by effect | Clicks the declared `keys[].location` hit area (hold where `isHold`), scaled with the window; keysym only as an override/fallback. The contract's `press-effect` case fails when a press changes nothing. |
+| `press` | implemented, verified by effect | Clicks the declared `keys[].location` hit area (hold where `isHold`) as real X input; keysym only as an override/fallback. The contract proves delivery (`input-delivery`) and effect (`press-effect`). |
 | `tap` | implemented | The window is focused first. The screen rectangle comes from the device definition's `display.location` (`simulator.json`), with `E2E_WINE_SCREEN_RECT` as the override; a centred fit is only the last resort for an SDK without `simulator.json`. |
 | `screenshot` | implemented | Captures the simulator window. Fails when the capture is not a usable PNG instead of returning a blank image. |
 | `events` | implemented | `monkeydo` stdout/stderr with receipt timestamps; `stdbuf` disables its block buffering when available. |
@@ -378,13 +382,41 @@ declares each physical button as a rectangle with a behaviour, for example
 `press` maps the semantic button (`onSelect` → `ENTER`, `previousPage` → `UP`,
 `nextPage` → `DOWN`, `onBack` → `BACK`, `onMenu` → `MENU`) and **clicks the
 declared rectangle**, with `isHold` producing a press-and-hold (mouse down,
-`HOLD_MS`, mouse up). The coordinates live in the device graphic's native space,
-so they are scaled by the window width when the window is not 1:1 (a difference
-under 2% is rounding and ignored). `E2E_WINE_SCREEN_RECT` pins the screen
-rectangle, and the same scale and offset then place the key hit areas, so one
-pin corrects taps and buttons together. `logs/driver.log` records the mechanism
-for every press: the clicked window point and the transform source, or the
-keysym.
+`HOLD_MS`, mouse up).
+
+The declared rectangles are already in the window's **client space**, so there
+is no window-size scaling. Measured on the guest: the client area is
+`409x600`, and `fenix7` declares `display.location = {79,149,266,266}` — the
+260 px screen drawn at 266 px by the simulator itself, inside a 409-wide client
+area. Multiplying those numbers by `window/declared` was wrong and moved a
+click off the bezel; `press` and `tap` now share one `CoordinateMapper`, so a
+tap and a click of the same declared point land on the same pixel. A test
+asserts exactly that agreement.
+
+`E2E_WINE_SCREEN_RECT` is the only transform: it pins the screen rectangle and
+the same scale/offset re-anchors the key hit areas, for a window that really is
+showing a different rectangle. `logs/driver.log` records the mechanism for every
+press: the clicked window point and the mapper source, or the keysym.
+
+### Proving that input is delivered
+
+A click that lands correctly and a click the simulator never receives look the
+same in a log, so the driver proves delivery separately from the coordinates:
+
+- The pointer moves to **absolute root coordinates** (`window origin + point`)
+  and the click is generated with XTEST; keys go to the **focused** window
+  instead of `xdotool key --window`, because `XSendEvent` is ignored by many
+  toolkits. Both keep the window-targeted form as a fallback if the first
+  command fails.
+- `probe_input_delivery()` opens the simulator's own `Alt+S`/`Alt+C` menu and
+  looks for a substantial window change (ImageMagick `compare -metric AE`,
+  threshold `PIXEL_CHANGE_THRESHOLD`). The contract case `input-delivery` fails
+  with "this is a delivery problem, not a coordinate problem" when no menu
+  appears — that is the case to fix before touching coordinates.
+- `press-effect` accepts a new `E2E:VIEW`/`ERRORVIEW` **or** a screen change at
+  or above the threshold (a focus/selection change); a glance clock ticking does
+  not reach it. It presses ENTER, MENU and DOWN, and taps the screen centre on a
+  touch device.
 
 Keystrokes are only a fallback:
 
@@ -407,18 +439,29 @@ reached the app and the case fails, naming both mechanisms.
 is made. `wait_ready` therefore checks the first view and, when it is the
 glance, presses the declared `onSelect` hit area, then the `onMenu` hold, then
 `onSelect` again; on a touch-only device it taps the screen centre twice
-instead. All of that is bounded by the readiness budget. Every attempt and its
-mapped window point is in `logs/driver.log`; if the app is still on the glance,
-the log says so and the scenario's first view assertion fails with that
+instead. If none of that changes the view, it **relaunches the PRG once** (the
+`monkeydo` console log is appended, not replaced) — the guest evidence suggests
+the simulator may be running only the glance entry point, in which case input
+cannot reach the app at all. Everything is bounded by the readiness budget and
+every attempt plus its mapped window point is in `logs/driver.log`.
+
+If the app is still on the glance afterwards, the log says the initial view
+never ran, and the scenario's first view/request assertion fails with that
 context. Scenarios must not paper over it with a request assertion — the
-assertion stays, and a glance-only run must fail it.
+assertion stays, and a glance-only run must fail it. Two measurements narrow the
+cause: replacing the glance with a cleared background changed nothing, and the
+glance runs "in a separate process" by design. Check, in this order: whether the
+menu input probe reaches the window at all, whether the relaunch starts another
+process, and whether the PRG's manifest app types include the watch app the
+simulator should be running.
 
 `tap(x, y)` takes **device screen pixels**. The driver maps them into the
 window through the watch-screen rectangle declared by the device definition:
 `simulator.json`'s `display.location` (`x`, `y`, `width`, `height`) is the
-authoritative screen position, so the bezel offset is not guessed. For example
+authoritative screen position, already in window client space. For example
 `fenix847mm` declares `{x: 134, y: 221, width: 454, height: 454}`. The same
-rectangle is scaled with the window, exactly like the key hit areas.
+mapper and the same optional pin are used as for the key hit areas, so a tap and
+a press cannot disagree about where the window is.
 
 `E2E_WINE_SCREEN_RECT=x,y,width,height` overrides the declared rectangle when a
 build's window differs. A centred, aspect-preserving fit is only the last
@@ -442,7 +485,8 @@ is enough to act on it.
 | `monkeydo exited with code …` | wrong PRG or device name | read `logs/console.log` |
 | `app-ready … no console line` | the app started but produced no `E2E:` line | check the PRG is a debug build and the device wiring (`link-devices` is accurate here) |
 | `warning: the app is still on the glance page` | the simulator never left the glance carousel, so `getInitialView()` did not run and no request is made | read the preceding click lines (window points and scale); check the glance crash fix and the simulator's own app entry |
-| `press-effect … no new VIEW or ERRORVIEW` | the press reached nothing: a keysym the simulator ignored, or a click outside the declared hit area | the log names the mechanism and the point; compare it with `keys[].location` and the window size |
+| `press-effect … no new VIEW or ERRORVIEW` | the press reached nothing: a keysym the simulator ignored, or a click outside the declared hit area | the log names the mechanism and the point; compare it with `keys[].location`. If `input-delivery` also failed, fix delivery first |
+| `no simulator menu opened: … synthetic input did not reach the simulator` | `Alt+S`/`Alt+C` left the window unchanged | delivery problem: check focus, Xvfb grabs, and whether Wine needs a window manager; coordinates are not the cause |
 | `the app reported system language …` | `Language` in `simulator.ini` was ignored | see the language section above |
 | `the app showed the configuration error view` | the PRG was built without the requested properties | rebuild with `e2e build --settings <fixture>`, or pass a PRG built that way |
 
@@ -495,15 +539,16 @@ proof is a driver run on the guest, which the operator performs:
    classified errors.
 1. Run one language scenario (`extended/localisation-sitemap`) and one mode
    scenario (`extended/wifi-mode`) to confirm the verification paths.
-1. With the app open, check a press reaches it: the contract's `press-effect`
-   case does this for ENTER/MENU/DOWN, and `logs/driver.log` shows the clicked
-   window point. If it fails, compare that point with `keys[].location` and the
-   window size before assuming an app defect.
+1. With the app open, check a press reaches it: the contract's `input-delivery`
+   case proves synthetic input changes the simulator at all, and `press-effect`
+   proves a press changes the app. `logs/driver.log` shows the clicked window
+   point. If either fails, treat it as a delivery/coordinate question in that
+   order before assuming an app defect.
 1. If the log says the app stayed on the glance page, the simulator never
-   reached `getInitialView()`: try the declared `enter` hit area by hand with
-   `xdotool` at the logged point, and check whether the simulator's own
-   Simulation menu has an app-entry/reset action. Record what worked here so
-   the launch path can stop guessing.
+   reached `getInitialView()`. The driver tried the declared select, the menu
+   hold, a tap and one relaunch. Next, check whether a second `monkeydo` starts
+   another process, and whether the PRG's manifest app types include the watch
+   app. Record what worked here so the launch path can stop guessing.
 1. If taps miss, compare a screenshot with `display.location` in the device's
    `simulator.json` and pin `E2E_WINE_SCREEN_RECT` for the next run; record the
    value for the device in this document.
