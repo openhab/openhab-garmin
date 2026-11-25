@@ -1,25 +1,40 @@
 #!/usr/bin/env python3
 """Classify the Run No Evil RESULTS block printed by ``monkeydo -t``.
 
-The SDK does not document an exit code for a failing test, so the console
-output decides. The documented shape of a passing run is::
+``monkeydo`` does not document an exit code for a failing test, and it was
+measured on the guest to exit **non-zero on a fully passing run** (18/18 PASS,
+exit 1). The console output is therefore the only trustworthy signal, and this
+module is the single place that decides.
+
+The documented shape of a passing run is::
 
     ------------------------------------------------------------------------------
-    Executing test homepageTitleAndWidgetTypes...
-    DEBUG (14:16): homepage title=My Home widgets=5
+    Executing test ErrorClassificationTests.sizeLimitIsCritical...
+    DEBUG (14:16): toast=S:-402 code=-402
     PASS
     ==============================================================================
     RESULTS
     Test:              Status:
-    homepageTitleAndWidgetTypes   PASS
+    ErrorClassificationTests.sizeLimitIsCritical   PASS
     Ran 1 test
-    PASSED (failures=0, errors=0)
+    PASSED (passed=1, failed=0, errors=0)
 
 A failing assertion is reported as ``FAIL`` (the function returned false) or
 ``ERROR`` (an exception, including ``Test.assert*``). Both must fail the run.
 
-Usage: ``parse_results.py <monkeydo log>``. Prints one line per test and exits
-0 when the run passed, 1 when it failed or could not be classified.
+Precedence:
+
+- a ``RESULTS`` block that classifies as a pass wins, whatever the exit status;
+- a timeout (``--status 124``) fails, even if the block looks complete, because
+  the run did not finish on its own;
+- otherwise the run fails, and a non-zero status is added to the report.
+
+The tests execute inside the app process, so the app's ``E2E:`` trace lines
+appear in the same log. They are ignored: only the ``RESULTS`` block counts.
+
+Usage: ``parse_results.py [--status N] <monkeydo log>``. Prints one line per
+test and exits 0 when the run passed, 1 when it failed or could not be
+classified, 2 on a usage error.
 """
 
 from __future__ import annotations
@@ -30,6 +45,9 @@ import sys
 TEST_LINE = re.compile(r"^(?P<name>\S+)\s+(?P<status>PASS|FAIL|ERROR)$", re.IGNORECASE)
 SUMMARY_LINE = re.compile(r"^(PASSED|FAILED)\b", re.IGNORECASE)
 RAN_LINE = re.compile(r"^Ran\s+(?P<count>\d+)", re.IGNORECASE)
+
+#: Exit status of ``timeout`` when it had to kill the command.
+TIMEOUT_STATUS = 124
 
 
 def classify(text: str) -> tuple[bool, list[str]]:
@@ -84,18 +102,52 @@ def classify(text: str) -> tuple[bool, list[str]]:
     return True, report
 
 
+def evaluate(text: str, status: int = 0) -> tuple[bool, list[str]]:
+    """Decide the run from the console output and the exit status together.
+
+    ``status`` is monkeydo's exit code (or 124 from ``timeout``). A passing
+    RESULTS block is authoritative: monkeydo exits non-zero on a good run, so
+    treating its status as a failure would turn every green run red.
+    """
+    if status == TIMEOUT_STATUS:
+        _, report = classify(text)
+        report.append(f"FAILED: monkeydo timed out (exit {status}); the run did not finish.")
+        return False, report
+
+    passed, report = classify(text)
+    if passed:
+        return True, report
+    if status != 0:
+        report.append(
+            f"FAILED: monkeydo exited with code {status} and the output did not "
+            "classify as a pass."
+        )
+    return False, report
+
+
 def main(argv: list[str]) -> int:
-    if len(argv) != 2:
-        print("usage: parse_results.py <monkeydo log>", file=sys.stderr)
+    args = argv[1:]
+    status = 0
+    if len(args) >= 2 and args[0] == "--status":
+        try:
+            status = int(args[1])
+        except ValueError:
+            print("usage: parse_results.py [--status N] <monkeydo log>", file=sys.stderr)
+            return 2
+        args = args[2:]
+
+    if len(args) != 1:
+        print("usage: parse_results.py [--status N] <monkeydo log>", file=sys.stderr)
         return 2
+
     try:
         # utf-8-sig: a redirected Windows console log may carry a BOM.
-        text = open(argv[1], encoding="utf-8-sig", errors="replace").read()
+        text = open(args[0], encoding="utf-8-sig", errors="replace").read()
     except OSError as error:
         print(f"FAILED: cannot read the log: {error}")
         return 1
 
-    passed, report = classify(text)
+    passed, report = evaluate(text, status)
     for line in report:
         print(line)
     return 0 if passed else 1

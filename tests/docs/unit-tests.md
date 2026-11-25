@@ -1,9 +1,10 @@
 # Connect IQ unit tests (Run No Evil)
 
-Status: **pilot, feasible, not yet executed on the E2E guest.** This page records
-what was established about Garmin's unit-test framework in this repository, what
-the pilot covers, how it runs, and where its limits are. It is the design note
-for the tier; the tests themselves live in `source/test/` and are run by
+Status: **pilot, feasible, verified on the guest** (fenix7, 18/18 PASS, about
+two minutes including the build). This page records what was established about
+Garmin's unit-test framework in this repository, what the pilot covers, how it
+runs, and where its limits are. It is the design note for the tier; the tests
+themselves live in `source/test/` and are run by
 [`tests/unit/run`](../unit/run).
 
 Related: [#140](https://github.com/openhab/openhab-garmin/issues/140) (regression
@@ -121,31 +122,48 @@ Closing shell and port
 - **No JUnit or other machine-readable report is documented.** If the pinned
   `monkeydo` gains one, `parse_results.py` can be replaced; until then the
   console is the interface.
-- **The exit code for a failing test is not documented and was not measured.**
-  `tests/unit/run` therefore treats the `RESULTS` block as authoritative and
-  only uses the exit code as an additional failure signal. A run with no
-  `RESULTS` block, no `PASSED` summary, a `FAIL`/`ERROR` test, or `Ran 0` fails.
+- **A fully passing run exits non-zero.** Measured on the guest (fenix7, 18/18
+  PASS): `monkeydo -t` exited `1`. The exit status therefore carries no
+  pass/fail signal, and the first version of this runner wrongly turned that
+  green run into a failure by trusting it. `tests/unit/run` now passes the
+  status to `parse_results.py`, which lets a classified `PASSED` block win,
+  fails a timeout (`124`) that did not finish on its own, and reports the status
+  only when the output cannot be classified. A run with no `RESULTS` block, no
+  `PASSED` summary, a `FAIL`/`ERROR` test, or `Ran 0` fails.
+- The tests run **inside the app process**: the app's E2E trace fires during the
+  run and appears in the same log (on the guest: `E2E:LANGUAGE;code=deu`,
+  `E2E:ERRORVIEW;id=UI:CONFIG`, `E2E:VIEW;category=error` — the app starting
+  without a configured URL, not test output). The parser ignores everything
+  outside the `RESULTS` block, and the glance did not crash in this run.
 
-The parser is covered by six synthetic logs (pass, error, lowercase `Pass`,
-missing block, zero tests, inconsistent summary); it is verified locally, but
-the _real_ output has not been observed yet.
+The decision logic is covered by `tests/runner/tests/test_unit_results.py`,
+including the real guest log with a non-zero exit status, a timeout, a failing
+summary, a missing block and zero tests; it also fails if the shell reintroduces
+its own status check.
 
 ### Headless
 
 Unit tests need no input, no touch and no key presses, so the #396 input problem
 does not apply. They do need the simulator **process** and an X display, exactly
-like the E2E driver: `DISPLAY` (default `:99`) plus Wine. Whether the whole
-sequence succeeds on the E2E guest is the first thing the operator run
-answers; it was **not** executed here (see [Executed and not executed](#executed-and-not-executed)).
+like the E2E driver: `DISPLAY` (default `:99`) plus Wine.
 
-On the **runner container**, everything except one detail is already in place:
-it has the SDK, Java, Wine and the Xvfb display. The blocker is the generated
-jungle: `monkeyc` resolves `project.manifest` relative to the jungle file, so
-`tests/unit/run` writes `unit.generated.jungle` to the project root, and the
-container mounts the checkout read-only. Either run the script on the host (what
-the operator section does), or make it write the jungle to an artifacts
-directory with absolute paths — which is what `e2e/jungle.py` already does and
-would be the natural follow-up if a containerised or scheduled run is wanted.
+**Verified on the guest** (fenix7, 18/18 PASS, about two minutes including the
+build). The run inherits the simulator's language — the guest's `simulator.ini`
+still carried `Language=7`, so the trace said `deu`; the pilot asserts no
+translated text, so any language passes. A future test that does depend on a
+language must set it explicitly in the ini before the run.
+
+The app does start during a test run (hence the trace lines above), but it is
+not driven: no view assertions are possible, and the ordered test list is the
+only output that matters.
+
+On the **runner container**: the writable-tree requirement is satisfiable
+without touching the host checkout. The guest run used `docker cp` of the
+checkout to `/tmp/work401` with `CIQ_SDK_ROOT=/tmp/ciq-sdk`, and
+`tests/unit/run --device fenix7` worked inside the container. Alternatively, the
+script could write the generated jungle to an artifacts directory with absolute
+paths — which is what `e2e/jungle.py` already does and would be the natural
+follow-up for a scheduled run.
 
 ### Network from inside a unit test
 
@@ -170,11 +188,12 @@ needed for the pilot. If the -402 boundary or the command paths must be tested
 below the network, that refactor is the way, and it should be agreed separately
 (see [Next candidates](#next-candidates)).
 
-One experiment would settle the callback question empirically, and it is listed
-for the operator below: a throwaway test that calls `makeWebRequest` and returns
-immediately. If the log shows the callback _after_ the `RESULTS` block, the
-event loop does run between tests and a bounded wait might be possible. Until
-then, treat "network is faked, not awaited" as the design rule.
+One experiment would settle the callback question empirically: a throwaway test
+that calls `makeWebRequest` and returns immediately. If the log shows the
+callback _after_ the `RESULTS` block, the event loop does run between tests and
+a bounded wait might be possible. Not tried yet; until then, treat "network is
+faked, not awaited" as the design rule. The guest run did show that the app runs
+in-process, which makes this experiment worth doing.
 
 ## What the tier cannot reach
 
@@ -243,7 +262,7 @@ Notes on the pilot data:
 | --- | --- |
 | Compile gate | **free and already there**: `ci-build.yaml` builds five devices with `--unit-test`, so the tests are typechecked on every PR |
 | Run job | **not possible on GitHub-hosted runners**: no simulator binary in the reduced SDK, no Wine, and the full SDK may not be redistributed or downloaded in CI |
-| Run cost on the guest | ~7 s for a full fenix847mm unit-test compile (measured on the authoring machine), plus simulator start (Wine, ~10–20 s) and a few seconds of tests |
+| Run cost on the guest | **measured: about two minutes** for build + 18 tests (fenix7). A full fenix847mm unit-test compile alone is ~7 s on the authoring machine; add simulator start (Wine, ~10–20 s) and the tests. |
 | Failure output | `tests/unit/out/monkeydo.log`, `compiler.log`, `simulator.log` |
 
 Running the tier per pull request would require the same kind of environment as
@@ -251,65 +270,67 @@ the E2E suite (SDK + Wine + Xvfb) and should be scheduled next to it, not in the
 GitHub-hosted jobs. Adding a self-hosted runner job later is a small change:
 `tests/unit/run` is already the whole interface.
 
-## Manual verification (operator)
+## Running it (operator)
 
-Run on the E2E guest (the Linux host with Docker, Wine and the SDK), in a fresh
-clone of the branch, **not** in the runner container (the script needs a writable
-checkout and the host's Wine/Xvfb):
+The first guest run used a fresh clone on the host. A container-side run also
+works: copy the checkout somewhere writable and point `CIQ_SDK_ROOT` at the
+SDK copy the entrypoint already made.
 
 ```bash
+# host
 git clone https://github.com/openhab/openhab-garmin.git /home/ansible/pr-unit
-cd /home/ansible/pr-unit
-git checkout <your-branch>
-
-# the same SDK the E2E stack mounts
+cd /home/ansible/pr-unit && git checkout <your-branch>
 export CIQ_SDK_ROOT=/path/to/connectiq-sdk-lin-9.3.0-2026-10-20-95888f262
 export DISPLAY=:99          # the Xvfb the E2E driver already uses
 tests/unit/run
+
+# or inside the runner container
+docker cp . <runner>:/tmp/pr-unit
+docker exec <runner> sh -lc 'cd /tmp/pr-unit && CIQ_SDK_ROOT=/tmp/ciq-sdk tests/unit/run --device fenix7'
 ```
 
 If the simulator is not running, the script starts it under Wine; if it is, the
-script reuses it. `--keep` leaves it running.
+script reuses it. `--keep` leaves it running. `--device` covers the other SDK
+devices; the five-device set of the CI matrix is the useful sweep
+(`fenix6pro`, `venu2`, `venu3`, `fenix847mm`, `edge540`).
 
-### What proves success
+### Result of the first guest run
+
+fenix7, 18/18 PASS, about two minutes including the build:
 
 ```text
 ==> results
-  PASS  <test name>          (one line per test)
+  PASS  ErrorClassificationTests.sizeLimitIsCritical
+  ... (18 lines, all PASS)
   Ran 18 tests
-PASSED: PASSED (failures=0, errors=0)
+PASSED: PASSED (passed=18, failed=0, errors=0)
 UNIT TESTS PASSED
 ```
 
-and exit code `0`. The test names are the class-qualified function names; the
-pilot has 18 tests (6 model, 5 error classification, 7 parameter). Success also
-proves the four open questions:
+Exit code `0` from the script. That run also settled the four open questions:
 
 1. `monkeydo -t` runs headless on the guest (no input, no window interaction).
 1. The compile from `tests/unit/run` works with the guest's SDK.
-1. The documented `RESULTS` format matches the pinned SDK.
-1. The tests themselves run — which is the one thing a compile cannot prove.
+1. The documented `RESULTS` format matches the pinned SDK (`PASSED` carries
+   `passed/failed/errors`, not `failures`).
+1. `monkeydo` exits **non-zero on a passing run** — the reason the decision now
+   lives in `parse_results.py` and not in the shell.
 
 ### What proves failure
 
 | Observation | Meaning |
 | --- | --- |
 | `FAILED: the log has no RESULTS block` + no `Executing test` lines | the tests did not run: `monkeydo` rejected the PRG or the command line |
-| `Encountered an app crash` / `Invalid Font Specified` in the log | `monkeydo -t` also starts the app; the glance (#396) interferes. Report it: the unit build then needs the E2E's watch-app/glance-stub overlay |
+| `FAILED: monkeydo timed out` | the run did not finish; Wine/simulator or a hung test |
+| `Encountered an app crash` / `Invalid Font Specified` in the log | the app started and crashed before the tests; report it, the build then needs the E2E's watch-app/glance-stub overlay |
 | `FAILED: <summary>` or `ERROR <name>` lines | a real regression, or a test that touches an unavailable API |
 | `error: simulator did not accept connections` | Wine/Xvfb, not the tests |
 | `error: SDK version mismatch` / `no monkeydo` | environment, not the tests |
 | exit `1` with `UNIT TESTS FAILED` | as above; the log tail is printed |
 
-Please also capture, once, whether the exit code of `monkeydo` is non-zero on a
-failing test (the script prints `monkeydo exited with code N` when it is):
-
-```bash
-# after a deliberate failure, e.g. temporarily invert an assertion
-tests/unit/run --test SitemapModelTests.homepageTitleAndWidgetTypes; echo "exit=$?"
-```
-
-And, if you want to settle the network question:
+Still unmeasured: the `--test NAME` filter, the other four devices, and whether
+a device-specific API guard is needed for any future test. And, if you want to
+settle the network question:
 
 ```bash
 # grab monkeydo's own option list; if a --test-report exists, we can use it
@@ -357,25 +378,34 @@ belongs to the E2E tier or to a follow-up issue.
 - `monkeyc --unit-test --typecheck 3 --warn` for fenix6pro, venu2, venu3,
   fenix847mm and edge540: all `BUILD SUCCESSFUL`.
 - the same build without `--unit-test` (success, test symbols absent) and with
-  `--release` (rejected by the compiler);
-- `tests/unit/run` end to end against a fake SDK, a fake `monkeydo` output and a
-  stub simulator port: pass → exit 0, failure → exit 1, missing `RESULTS` →
-  exit 1;
-- `parse_results.py` against six synthetic logs.
+  `--release` (success, test symbols absent; `--unit-test --release` is rejected
+  by the compiler);
+- `tests/unit/run` end to end against a fake SDK, fake `monkeydo` output and a
+  stub simulator port, including a passing block with a non-zero exit status;
+- the full harness suite, `python -m pytest` in `tests/runner`.
 
-**Not executed** (no simulator on this workstation):
+**Executed on the guest** (operator run, fenix7):
 
-- `monkeydo -t` itself: no `monkeydo` or `simulator.exe` outside the official SDK,
-  and no Wine;
-- therefore the real console format, the real exit code, headless behaviour on
-  the guest, and whether `-t` also starts the app are **unverified**. The manual
-  verification above closes all four.
+- `monkeydo -t` ran the tests headless in the app process: 18/18 PASS, about two
+  minutes including the build;
+- the app's `E2E:` trace fires during the run (language `deu`, configuration
+  error view) and is ignored by the parser;
+- **`monkeydo` exits non-zero on a fully passing run.** The runner now lets the
+  classified `RESULTS` block win; the regression is pinned by
+  `tests/runner/tests/test_unit_results.py`.
+
+**Not executed**:
+
+- the other five matrix devices (fenix847mm was skipped for time on the guest);
+- `monkeydo -t NAME` (the single-test filter);
+- whether a JUnit/report option exists in this `monkeydo` (none documented);
+- the `makeWebRequest` experiment above.
 
 ## Maintenance rules
 
 - Keep `tests/config/sdk.version` and `tests/unit/run`'s checks in step; a
-  changed `RESULTS` format must change `parse_results.py` and its synthetic
-  cases.
+  changed `RESULTS` format must change `parse_results.py` and
+  `tests/runner/tests/test_unit_results.py`.
 - When `garmin_e2e.sitemap` changes shape, mirror it in
   `source/test/UnitTestFixtures.mc`.
 - A test that needs a production change (injection, extraction) is a separate

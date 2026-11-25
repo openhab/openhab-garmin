@@ -222,19 +222,13 @@ monkeydo_status="${PIPESTATUS[0]}"
 set -e
 
 say "==> results"
+# The RESULTS block decides, not the exit status: monkeydo was measured to exit
+# non-zero on a fully passing run. parse_results.py applies that precedence and
+# reports a timeout (124) or an unclassifiable run itself.
 set +e
-python3 "$repo_root/tests/unit/parse_results.py" "$out/monkeydo.log"
+python3 "$repo_root/tests/unit/parse_results.py" --status "$monkeydo_status" "$out/monkeydo.log"
 result="$?"
 set -e
-
-if [ "$monkeydo_status" = "124" ]; then
-    say "error: monkeydo timed out after ${timeout_s}s. Last lines of the log:"
-    tail -n 20 "$out/monkeydo.log" >&2
-    result=1
-elif [ "$monkeydo_status" != "0" ] && [ "$result" = "0" ]; then
-    say "error: monkeydo exited with code $monkeydo_status"
-    result=1
-fi
 
 if [ "$result" != "0" ]; then
     say "==> last 40 lines of $out/monkeydo.log"
