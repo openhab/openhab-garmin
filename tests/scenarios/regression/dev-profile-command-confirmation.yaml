@@ -1,9 +1,12 @@
 # Regression: command confirmation depends on the dev openHAB profile.
 #
-# `commandConfirmMessage` is read from the sitemap JSON. The stable profile
-# does not reliably carry the parameter, so this scenario runs against the dev
-# milestone: selecting the element must open the confirmation dialog and send
-# nothing until the dialog is confirmed.
+# `commandConfirmMessage` is read from the sitemap JSON, but neither that field
+# nor the `confirmCmd` sitemap parameter exists in openHAB 5.2.5 (the stable
+# pin): both were added in openHAB core 5.3. This scenario therefore runs
+# against the dev milestone and the dev-only `garmin_confirm.sitemap`.
+#
+# Selecting the element must open the confirmation dialog and send nothing
+# until the dialog is confirmed.
 #
 # The machine assertion is the empty shim trace after the first ENTER. If the
 # parameter is missing (for example on a profile that strips it), the first
@@ -20,7 +23,7 @@ mode: ble
 fixture: fast-polling
 openhab:
   profile: dev
-  sitemap: garmin_e2e
+  sitemap: garmin_confirm
   items:
     E2E_GarageDoor: "OFF"
 language: eng
@@ -33,45 +36,51 @@ manual_checks:
   - >-
     Start the stack with the dev profile:
     `COMPOSE_PROFILES=dev docker compose -f compose.yaml -f compose.dev.yaml up -d`.
-    On the stable profile `commandConfirmMessage` may be absent, which is why
-    this scenario is not part of the stable-profile runs.
+    On the stable profile the parameter cannot be expressed at all, which is
+    why this scenario is not part of the stable-profile runs.
   - >-
     The confirmation dialog rendering is review-only; the machine assertion is
     that no command is sent before it is confirmed.
+
+settings:
+  sitemap_0: garmin_confirm
 
 steps:
   - action: launch
 
   - action: wait_for_request
     method: GET
-    path_prefix: /rest/sitemaps/garmin_e2e
+    path_prefix: /rest/sitemaps/garmin_confirm
     min_count: 1
     timeout_ms: 30000
 
+  - action: wait_for_event
+    description: The homepage menu is rendered before navigation starts.
+    event: VIEW
+    fields:
+      category: sitemap
+      view: HomepageMenu
+    timeout_ms: 60000
+
   - action: reset_shim
 
-  # Widgets -> Generic Switch -> Metadata -> Garage Door Confirm.
-  - action: press
-    button: DOWN
-  - action: press
-    button: ENTER
-  - action: press
-    button: DOWN
+  # The homepage has one frame ("Confirm"); open it, then select its only
+  # element ("Garage Door Confirm").
   - action: press
     button: ENTER
-  - action: press
-    button: DOWN
-  - action: press
-    button: ENTER
-  - action: press
-    button: DOWN
+
+  - action: wait_for_event
+    description: The frame page is rendered before selecting its element.
+    event: VIEW
+    fields:
+      category: sitemap
+      view: PageMenu
+    timeout_ms: 30000
+
   - action: press
     button: ENTER
 
   # Selecting the element opens the confirmation dialog.
-  - action: press
-    button: ENTER
-
   - action: screenshot
     name: confirmation-dialog
 

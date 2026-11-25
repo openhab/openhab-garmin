@@ -106,7 +106,13 @@ services:
     volumes:
       - openhab-dev-conf:/openhab/conf
       - ../fixtures/openhab/conf:/fixtures:ro
+      # Dev-only overlay. The pinned stable image cannot parse `confirmCmd`
+      # (openHAB 5.3+), and one rejected element makes openHAB drop the whole
+      # model, so the confirmation fixture is staged only for this profile.
+      - ../fixtures/openhab/conf-dev:/fixtures-dev:ro
       - ./seed-openhab-conf.sh:/seed-conf.sh:ro
+    environment:
+      FIXTURES_OVERLAY_DIR: /fixtures-dev
 
   openhab-dev:
     profiles: ["dev"]
@@ -192,6 +198,16 @@ services:
       # Docker has to create the mountpoint, which fails on a read-only tree.
       # /artifacts is its own top-level mount, outside the read-only checkout.
       E2E_ARTIFACTS: /artifacts
+      # The fixture guard reads the expected sets and DSL warnings from the
+      # same fixture tree `openhab-<profile>-init` stages, never from the
+      # checkout mounted at /work. If E2E_REPO_ROOT points the runner at a
+      # different checkout, the guard compares the two trees and fails loudly
+      # instead of asserting against fixtures openHAB never saw.
+      E2E_FIXTURES_DIR: /e2e-fixtures
+      # The openHAB logs are mounted read-only from the profile's userdata
+      # volume so a rejected DSL model can be reported with the exact
+      # `DSL model ... has errors` lines, not just "the item is missing".
+      E2E_OPENHAB_LOG_DIR: /openhab-logs
       DISPLAY: ":99"
       PYTHONUNBUFFERED: "1"
     volumes:
@@ -205,6 +221,10 @@ services:
       # $HOME/.Garmin/ConnectIQ/Devices.
       - ${CIQ_DEVICES_HOST_PATH:-e2e-empty-devices}:/opt/ciq-devices:ro
       - ${E2E_REPO_ROOT:-../..}:/work:ro
+      - ../fixtures:/e2e-fixtures:ro
+      # Logs only: the openHAB services still own these volumes read-write.
+      - openhab-stable-userdata:/openhab-logs/stable:ro
+      - openhab-dev-userdata:/openhab-logs/dev:ro
       - e2e-artifacts:/artifacts
     healthcheck:
       test: ["CMD", "python", "-c", "import e2e"]

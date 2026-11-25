@@ -166,6 +166,30 @@ class OpenHabClient:
             state=str(document.get("state", "")),
         )
 
+    def sitemaps(self) -> List[str]:
+        """Sitemap names from ``GET /rest/sitemaps``.
+
+        openHAB lists a sitemap only after its model parsed, so this is the
+        cheapest way to tell "the file is there" from "the file was loaded".
+        An empty list on an instance that should have fixtures is a failure,
+        not a healthy answer.
+        """
+
+        payload = self._expect("GET", "rest/sitemaps", (200,))
+        try:
+            document = json.loads(payload.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as error:
+            raise OpenHabError(f"GET rest/sitemaps returned invalid JSON: {error}") from None
+        if not isinstance(document, list):
+            raise OpenHabError("GET rest/sitemaps did not return a list")
+        names: List[str] = []
+        for entry in document:
+            if isinstance(entry, Mapping):
+                name = entry.get("name")
+                if isinstance(name, str) and name:
+                    names.append(name)
+        return sorted(names)
+
     def set_state(self, name: str, state: str) -> None:
         """Set an item state directly (``PUT /rest/items/{name}/state``).
 

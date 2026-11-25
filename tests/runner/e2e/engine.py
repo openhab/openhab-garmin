@@ -30,6 +30,7 @@ from pathlib import Path
 from typing import Callable, Dict, List, Mapping, Optional, Tuple
 
 from . import assertions
+from . import fixtures as fixtures_module
 from .assertions import AssertionFailure
 from .config import ConfigError, Device
 from .openhab import OpenHabClient, OpenHabError
@@ -257,6 +258,12 @@ class ScenarioRunner:
 
         self.openhab.wait_ready()
         self.shim.wait_ready()
+
+        # Refuse to run against an instance that dropped the fixture models.
+        # HTTP 200 on /rest/ proves nothing; the sets are what the scenario
+        # asserts against (issue #394).
+        fixture_report = fixtures_module.verify(self.openhab, scenario.openhab.profile)
+        self.log(f"fixtures: {fixture_report.summary()}")
 
         if scenario.openhab.items:
             seeded = self.openhab.seed(scenario.openhab.items)

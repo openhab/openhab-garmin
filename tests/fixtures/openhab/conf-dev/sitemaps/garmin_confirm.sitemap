@@ -1,0 +1,24 @@
+// Dev-only command-confirmation fixture for the E2E harness.
+//
+// `confirmCmd` was added in openHAB core 5.3 (PR openhab/openhab-core#5769).
+// The pinned stable image (5.2.5) has neither the DSL parameter nor the
+// `commandConfirmMessage` REST field, so this file lives in the dev overlay
+// (`fixtures/openhab/conf-dev`) and is staged only by `openhab-dev-init`.
+// Putting it in the common tree would make stable reject this model and, with
+// it, every confirmation scenario.
+//
+// Syntax notes, from the upstream PR:
+// - `confirmCmd=true` asks for the server-wide default confirmation text.
+// - a rule needs the leading `=` before the text, even without conditions:
+//   `confirmCmd=[="..."]`. Without it the string would be parsed as a
+//   condition value and the dialog would have no message.
+//
+// The item and the mapping are the same ones `garmin_e2e.sitemap` uses for the
+// non-confirmed Garage Door element, so the confirmation scenarios assert the
+// app's confirmation path and not a different item.
+
+sitemap garmin_confirm label="Confirm" {
+	Frame label="Confirm" {
+		Switch item=E2E_GarageDoor label="Garage Door Confirm" mappings=[ON="OPEN"] confirmCmd=[="Do you really want to open the garage door?"]
+	}
+}

@@ -41,6 +41,13 @@ Unknown devices, tiers, modes, languages, suites, actions, step keys, settings
 property ids and shim rule keys are all rejected at load time with the file, the
 key and the reason.
 
+The `openhab.profile` field selects which fixture tree the scenario expects:
+`stable` uses `fixtures/openhab/conf`, `dev` additionally uses the
+`fixtures/openhab/conf-dev` overlay. It is not a URL selector; both profiles
+serve on the URL Compose gives the runner. A scenario whose profile does not
+match the running stack fails the fixture guard with the missing sitemap or item
+named, instead of failing later on a missing page.
+
 ## Language matrix
 
 A scenario declares either one `language` or a `languages` list, never both:

@@ -11,6 +11,9 @@
 // Conventions:
 // - label prefixes are the stable navigation anchors scenarios assert on.
 // - no element relies on an add-on: only core file-based items and sitemaps.
+// - this file must parse on the *stable* pin. Constructs that only the dev
+//   milestone understands belong in fixtures/openhab/conf-dev instead, because
+//   one bad element makes openHAB reject the whole model.
 
 sitemap garmin_e2e label="My Home" {
 
@@ -34,27 +37,32 @@ sitemap garmin_e2e label="My Home" {
 	}
 
 	// --- Generic switch ----------------------------------------------------
+	// The sub-pages are `Text` elements, not nested `Frame`s: openHAB rejects
+	// a Frame inside a Frame ("Frame widget must not contain other Frames"),
+	// while a `Text` with a nested page is the supported way to build a
+	// submenu and renders as a navigation entry in the app.
 	Frame label="Generic Switch" {
-		Frame label="Mappings" {
+		Text label="Mappings" {
 			Switch item=E2E_TV label="TV A" mappings=[0="mABC"]
 			Switch item=E2E_TV label="TV A/B" mappings=[0="mABC", 1="mBBC"]
 			Switch item=E2E_TV label="TV A/B/C" mappings=[0="mABC", 1="mBBC", 2="mCNN"]
 			Switch item=E2E_TV label="TV Empty Label" mappings=[0="", 1="mBBC"]
 		}
-		Frame label="Metadata" {
+		Text label="Metadata" {
 			// ON/OFF options come from the item, not the sitemap.
 			Switch item=E2E_GarageDoor label="Garage Door"
-			// Confirmation dialog is shown before the command is sent. The app
-			// reads `commandConfirmMessage` from the sitemap JSON; the first
-			// smoke run asserts the key is present in the REST payload of the
-			// pinned openHAB version, because a rename upstream would silently
-			// disable every confirmation assertion.
-			Switch item=E2E_GarageDoor label="Garage Door Confirm" mappings=[ON="OPEN"] commandConfirmMessage="Do you really want to open the garage door?"
 			// Five commands force the action menu with a scrollable list.
 			Switch item=E2E_TV label="TV Many" mappings=[0="One", 1="Two", 2="Three", 3="Four", 4="Five"]
+			// Command confirmation is deliberately absent here. openHAB 5.2.5
+			// (the pinned stable image) has neither the `confirmCmd` DSL
+			// parameter nor the `commandConfirmMessage` REST field; only the
+			// dev milestone has them, and a `confirmCmd` element in this file
+			// would make stable reject the whole sitemap. The dev-only
+			// `garmin_confirm.sitemap` (fixtures/openhab/conf-dev) carries that
+			// case and the confirmation scenarios point at it.
 		}
 		// Selection behaves exactly like Switch in the app.
-		Frame label="Selection" {
+		Text label="Selection" {
 			Selection item=E2E_TV label="TV (Selection)" mappings=[0="ABC", 1="BBC", 2="CNN"]
 			Selection item=E2E_TV label="TV (Selection, 1)" mappings=[0="Only"]
 		}
@@ -105,8 +113,12 @@ sitemap garmin_e2e label="My Home" {
 		Switch item=E2E_Rollershutter label="Shutters" icon=rollershutter
 		Switch item=E2E_TV label="TV [Channel: %s]" icon=screen mappings=[0="ABC", 1="BBC", 2="CNN"]
 		Text item=E2E_Temperature label="Gates" icon=garagedoor
-		// staticIcon is a boolean in the sitemap DSL and in the REST payload.
-		Text item=E2E_Temperature label="Vehicle SoC" icon=batterylevel staticIcon=true
+		// In the sitemap DSL `staticIcon` names the icon to use and marks it
+		// static in the same step (the REST payload then carries
+		// `icon=batterylevel` and `staticIcon=true`). It is not a boolean
+		// parameter: `staticIcon=true` is a parse error because `true` is the
+		// BOOLEAN_OBJECT terminal.
+		Text item=E2E_Temperature label="Vehicle SoC" staticIcon=batterylevel
 		// No icon parameter at all: exercises the state-derived default icon.
 		Text item=E2E_Temperature label="No Icon"
 	}
@@ -115,16 +127,22 @@ sitemap garmin_e2e label="My Home" {
 	Frame label="Dynamic" {
 		Text item=E2E_Temperature label="Visible when marker is ON" visibility=[E2E_Visible==ON]
 		Text item=E2E_Temperature label="Hidden when marker is ON" visibility=[E2E_Visible!=ON]
-		// A frame whose only child can be hidden: exercising the
-		// "This page is empty" toast.
-		Frame label="Sometimes Empty" {
+		// A page whose only child can be hidden: exercising the
+		// "This page is empty" toast. `Text` rather than a nested `Frame`,
+		// because openHAB rejects Frame-in-Frame.
+		Text label="Sometimes Empty" {
 			Text item=E2E_Temperature label="Only when marker is ON" visibility=[E2E_Visible==ON]
 		}
 	}
 
 	// --- Empty page --------------------------------------------------------
-	Frame label="Empty" {
-	}
+	// No braces: the DSL rejects a linkable block with no child element
+	// (`required (...)+ loop did not match anything`). A Frame without a block
+	// and without children is valid and openHAB serializes it as
+	// `"widgets": []`, which is exactly what the app turns into the
+	// "This page is empty" toast (an absent `widgets` key would mean "not built
+	// yet" instead).
+	Frame label="Empty"
 
 	// --- Commands ----------------------------------------------------------
 	Frame label="Entrance Gates" {

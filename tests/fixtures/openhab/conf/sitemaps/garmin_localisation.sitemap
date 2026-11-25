@@ -34,6 +34,9 @@ sitemap garmin_localisation label="Localisation" {
 		}
 	}
 
-	Frame label="Empty" {
-	}
+	// No braces: a linkable block must contain at least one element, but a
+	// Frame without a block is valid and openHAB serializes it as
+	// `"widgets": []`. The app reads that as a page with no content and shows
+	// the "This page is empty" toast.
+	Frame label="Empty"
 }

@@ -11,6 +11,8 @@ flowchart LR
         stable["openhab-stable<br/>profile: stable (default)"]
         dev["openhab-dev<br/>profile: dev (opt-in)"]
         fx[("fixtures<br/>items + sitemaps (ro)")]
+        overlay[("dev overlay<br/>conf-dev (ro)")]
+        logs[("openHAB userdata<br/>logs (ro, guard)")]
         arts[("e2e-artifacts<br/>mounted at /artifacts")]
     end
     sdk[("Connect IQ SDK<br/>mounted ro, copied to /tmp")]
@@ -20,8 +22,10 @@ flowchart LR
     shim -->|"proxy"| stable
     shim -.->|"proxy (dev override)"| dev
     fx -->|"copy into the conf volume"| init
+    overlay -.->|"copy on top (dev only)"| init
     init -->|"service_completed_successfully"| stable
     init -.->|"same, dev profile"| dev
+    runner -->|"expected sets + DSL warnings"| logs
     runner --> arts
 ```
 
@@ -56,6 +60,10 @@ So `openhab-stable-init` / `openhab-dev-init` run first, one-shot, and:
 1. replace `conf/items` and `conf/sitemaps` with the fixture trees, so a second
    `up` is idempotent and a fixture removed from the repository disappears from
    the volume;
+1. for the dev profile only, copy `fixtures/openhab/conf-dev` **on top** of the
+   common tree. Constructs the stable pin cannot parse (currently `confirmCmd`)
+   live there, because one rejected element makes openHAB ignore the whole
+   model;
 1. `chown -R openhab:openhab` is left to openHAB itself, which can now do it
    because nothing underneath `/openhab` is read-only.
 
@@ -73,6 +81,22 @@ service mounts the fixtures itself, when any read-only mount lands under
 Reset paths: `docker compose run --rm --no-deps openhab-stable-init` re-asserts
 the fixture state in a running stack, and `docker compose down -v` followed by
 `up` rebuilds the volumes from scratch.
+
+## Fixture guard
+
+A healthy openHAB with every DSL model rejected still answers HTTP 200 and
+returns `[]` from `/rest/items` and `/rest/sitemaps`; that is how issue #394
+stayed invisible. The runner therefore compares a profile's expected item and
+sitemap sets (`fixtures/openhab/expected.yaml`) with the REST endpoints before
+every scenario, and CI does the same against a freshly started pinned image. On
+a mismatch the guard reports the `DSL model ... has errors` lines, read from the
+profile's userdata log mounted read-only at `/openhab-logs/<profile>`.
+
+The runner mounts `/e2e-fixtures` from the Compose project's `../fixtures`, the
+same source the init service copies, so the guard never asserts against a
+different tree. `E2E_REPO_ROOT` only controls the runner's `/work` mount; if it
+points at another checkout the two fixture trees differ and the guard fails
+with an explicit message. Start the stack from the checkout under test.
 
 ## Runner start-up
 

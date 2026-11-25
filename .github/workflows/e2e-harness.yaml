@@ -84,3 +84,105 @@ jobs:
       # checked-in tests/docs/coverage.md is stale.
       - name: Check scope coverage
         run: python -m e2e coverage --check
+
+  # The `harness` job proves the wiring without Docker. It cannot prove the
+  # fixtures parse: a healthy openHAB whose models were all rejected still
+  # answers HTTP 200 on /rest/ and returns []. This job starts the pinned
+  # images and asserts the expected item and sitemap sets, which is exactly
+  # the guard issue #394 lacked.
+  #
+  # Cost and cadence: run it per pull request, not on a schedule. The workflow
+  # is already path-filtered to tests/**, manifest.xml and monkey.jungle, so
+  # app-only pull requests pay nothing. A cold matrix leg is one image pull
+  # plus a 60-90 s start, and the two legs run in parallel. The dev leg is not
+  # optional: fixtures/openhab/conf-dev/garmin_confirm.sitemap is the only
+  # `confirmCmd` fixture, the stable pin cannot parse it, and only a dev leg
+  # can catch that file rotting.
+  fixtures:
+    name: openHAB fixtures (${{ matrix.profile }})
+    runs-on: 'ubuntu-latest'
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        profile: [stable, dev]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+          cache-dependency-path: 'tests/runner/requirements.txt'
+
+      - name: Install harness
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r tests/runner/requirements.txt
+          python -m pip install --editable tests/runner
+
+      # .env is git-ignored (it carries the operator's SDK path), so derive it
+      # from the committed pins. The runner service is not started, but Compose
+      # interpolates its required SDK mount, so a throwaway path is enough.
+      - name: Prepare Compose environment
+        working-directory: tests/compose
+        run: |
+          cp .env.example .env
+          python -m e2e pin-images --write
+          # The runner service is not started, but Compose interpolates its
+          # required SDK mount, so replace the example's empty value.
+          sed -i 's|^CIQ_SDK_HOST_PATH=.*|CIQ_SDK_HOST_PATH=/tmp|' .env
+
+      - name: Start pinned openHAB
+        working-directory: tests/compose
+        env:
+          COMPOSE_PROFILES: ${{ matrix.profile }}
+          CIQ_SDK_HOST_PATH: /tmp
+        run: |
+          if [ "${{ matrix.profile }}" = "dev" ]; then
+            docker compose -f compose.yaml -f compose.dev.yaml up -d --wait openhab-dev
+          else
+            docker compose -f compose.yaml up -d --wait openhab-stable
+          fi
+
+      # The guard compares /rest/items and /rest/sitemaps with
+      # tests/fixtures/openhab/expected.yaml. --strict also fails when the sets
+      # match but openHAB logged "DSL model ... has errors", and the log is
+      # passed so the rejected file and parser position end up in the job log.
+      - name: Verify fixture sets
+        working-directory: tests/runner
+        env:
+          COMPOSE_PROFILES: ${{ matrix.profile }}
+          CIQ_SDK_HOST_PATH: /tmp
+        run: |
+          docker compose -f ../compose/compose.yaml exec -T openhab-${{ matrix.profile }} \
+            cat /openhab/userdata/logs/openhab.log > ../compose/openhab.log
+          python -m e2e verify-fixtures \
+            --openhab-url http://127.0.0.1:8080 \
+            --profile ${{ matrix.profile }} \
+            --log ../compose/openhab.log \
+            --strict \
+            --wait 180
+
+      - name: Upload openHAB log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: openhab-${{ matrix.profile }}-log
+          path: tests/compose/openhab.log
+          if-no-files-found: ignore
+
+      - name: Stop the stack
+        if: always()
+        working-directory: tests/compose
+        env:
+          COMPOSE_PROFILES: ${{ matrix.profile }}
+          CIQ_SDK_HOST_PATH: /tmp
+        run: |
+          if [ "${{ matrix.profile }}" = "dev" ]; then
+            docker compose -f compose.yaml -f compose.dev.yaml down -v
+          else
+            docker compose -f compose.yaml down -v
+          fi
