@@ -89,5 +89,10 @@ echo -e "${BLUE}Compiling ${DEVICE} with monkeyc ...${NOCOLOR}"
 $MONKEYC_COMPILER -v
 # The generated jungle is derived from monkey.jungle, so the CI build always
 # matches the local build configuration (sources, resources and settings).
+#
+# --unit-test is load-bearing for the unit-test tier: source/test is part of the
+# base source path, so this flag is what makes every device build typecheck the
+# (:test) code. Dropping it would silently remove that gate (the tests themselves
+# are run by tests/unit/run, not here).
 $MONKEYC_COMPILER --jungles "$GENERATED_JUNGLE" --private-key "$PRIVATE_KEY" --typecheck 3 --unit-test --warn --device "$DEVICE" --output "$RUNNER_TEMP/compiled"
 echo -e "${BLUE}Finished compilation.${NOCOLOR}"

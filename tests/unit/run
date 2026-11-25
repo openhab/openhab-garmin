@@ -1,0 +1,240 @@
+#!/usr/bin/env bash
+#
+# Compile and run the Connect IQ unit tests (Run No Evil).
+#
+# This is the unit tier, not the E2E tier: no Docker, no openHAB, no shim and
+# no input. It builds the app with --unit-test, starts the simulator, and runs
+# `monkeydo <prg> <device> -t`, which executes every (:test) function in
+# source/test.
+#
+# Requirements (see tests/docs/unit-tests.md):
+#   - the pinned Connect IQ SDK 9.3.0. The SDK is never committed; point
+#     CIQ_SDK_ROOT (or CIQ_SDK_PATH) at it. The default is the newest
+#     $HOME/.Garmin/ConnectIQ/Sdks/connectiq-sdk-*.
+#   - java, python3, openssl, wine and an X display (Xvfb is fine).
+#   - a writable checkout: the device-scoped jungle is written to the project
+#     root, exactly like .github/scripts/monkeyc-build, because monkeyc
+#     resolves project.manifest relative to the jungle file.
+#
+# Usage:
+#   tests/unit/run [--device DEVICE] [--test NAME] [--keep]
+#
+#   --device  device to build and run on (default: fenix847mm)
+#   --test    run only the named test function (monkeydo -t NAME)
+#   --keep    leave the simulator running after the run
+#
+# Exit codes:
+#   0  every test passed
+#   1  a test failed, errored, or the run could not be classified
+#   2  configuration or build failure (SDK, key, compiler, simulator)
+#
+# The exit code of monkeydo is NOT trusted: whether it reports failures that
+# way has not been established. The RESULTS block is what decides.
+set -euo pipefail
+
+repo_root="$( cd "$( dirname "${BASH_SOURCE[0]}" )/../.." && pwd )"
+out="$repo_root/tests/unit/out"
+jungle="$repo_root/unit.generated.jungle"
+device="${DEVICE:-fenix847mm}"
+only_test="${TEST:-}"
+keep="${UNIT_KEEP_SIMULATOR:-0}"
+timeout_s="${UNIT_TIMEOUT:-180}"
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --device) device="$2"; shift 2 ;;
+        --test) only_test="$2"; shift 2 ;;
+        --keep) keep=1; shift ;;
+        -h|--help) sed -n '2,40p' "$0"; exit 0 ;;
+        *) echo "unknown argument: $1" >&2; exit 2 ;;
+    esac
+done
+
+say() { printf '%s\n' "$*"; }
+die() { printf 'error: %s\n' "$*" >&2; exit 2; }
+
+cleanup() {
+    rm -f "$jungle"
+    if [ "$keep" != "1" ] && [ -n "${simulator_pid:-}" ]; then
+        kill "$simulator_pid" 2>/dev/null || true
+    fi
+}
+trap cleanup EXIT
+
+# --- SDK -------------------------------------------------------------------
+resolve_sdk() {
+    local candidate
+    for candidate in "${CIQ_SDK_ROOT:-}" "${CIQ_SDK_PATH:-}"; do
+        if [ -n "$candidate" ] && [ -d "$candidate" ]; then
+            printf '%s\n' "$candidate"
+            return 0
+        fi
+    done
+    candidate="$( ls -d "$HOME"/.Garmin/ConnectIQ/Sdks/connectiq-sdk-* 2>/dev/null | sort | tail -n 1 || true )"
+    if [ -n "$candidate" ]; then
+        printf '%s\n' "$candidate"
+        return 0
+    fi
+    return 1
+}
+
+sdk="$( resolve_sdk )" || die "no Connect IQ SDK found. Set CIQ_SDK_ROOT to the 9.3.0 SDK (see tests/docs/sdk.md)."
+first_file() { for path in "$@"; do [ -f "$path" ] && { printf '%s\n' "$path"; return 0; }; done; return 1; }
+first_dir() { for path in "$@"; do [ -d "$path" ] && { printf '%s\n' "$path"; return 0; }; done; return 1; }
+
+monkeyc="$( first_file "$sdk/linux/bin/monkeyc" "$sdk/bin/monkeyc" )" \
+    || die "no monkeyc under $sdk (expected linux/bin/monkeyc or bin/monkeyc)"
+monkeydo="$( first_file "$sdk/linux/bin/monkeydo" "$sdk/bin/monkeydo" )" \
+    || die "no monkeydo under $sdk (expected linux/bin/monkeydo or bin/monkeydo)"
+simulator="$( first_file "$sdk/windows/bin/simulator.exe" "$sdk/bin/simulator.exe" )" \
+    || die "no simulator.exe under $sdk (expected windows/bin/simulator.exe or bin/simulator.exe)"
+pinned="$( cat "$repo_root/tests/config/sdk.version" )"
+installed="$( cat "$sdk/version.txt" 2>/dev/null || cat "$sdk/bin/version.txt" 2>/dev/null || echo "unknown" )"
+[ "$installed" = "$pinned" ] || die "SDK version mismatch: pinned $pinned, found $installed at $sdk"
+
+# monkeyc resolves device definitions from the user-level Connect IQ directory,
+# not from the SDK path (tests/docs/sdk.md). Stage them once when they are
+# missing; never replace an existing set, because it may be the operator's.
+if [ ! -f "$HOME/.Garmin/ConnectIQ/Devices/$device/compiler.json" ]; then
+    sdk_devices="$( first_dir "$sdk/Devices" "$sdk/devices" "$sdk/bin/Devices" \
+        "$sdk/linux/bin/Devices" "$sdk/windows/bin/Devices" )" || die \
+        "no device definitions for $device in $HOME/.Garmin/ConnectIQ/Devices and none found in the SDK. Run 'python -m e2e link-devices' or set up the directory as described in tests/docs/sdk.md."
+    mkdir -p "$HOME/.Garmin/ConnectIQ"
+    ln -sfn "$sdk_devices" "$HOME/.Garmin/ConnectIQ/Devices" \
+        || die "cannot link $sdk_devices to $HOME/.Garmin/ConnectIQ/Devices"
+    say "==> linked device definitions from $sdk_devices"
+    [ -f "$HOME/.Garmin/ConnectIQ/Devices/$device/compiler.json" ] \
+        || die "$sdk_devices has no definition for $device"
+fi
+
+export DISPLAY="${DISPLAY:-:99}"
+
+mkdir -p "$out"
+rm -f "$out/test.prg" "$out/monkeydo.log" "$out/compiler.log"
+
+# --- developer key ---------------------------------------------------------
+key="$out/developer_key.der"
+if [ ! -f "$key" ]; then
+    openssl genrsa -out "$out/developer_key.pem" 4096 >/dev/null 2>&1 || die "openssl genrsa failed"
+    openssl pkcs8 -topk8 -inform PEM -outform DER -in "$out/developer_key.pem" \
+        -out "$key" -nocrypt >/dev/null 2>&1 || die "openssl pkcs8 failed"
+    chmod 600 "$key"
+fi
+
+# --- device-scoped jungle --------------------------------------------------
+# Same transformation as .github/scripts/monkeyc-build: a reduced SDK rejects
+# the qualifiers of every device the repository does not ship definitions for.
+say "==> generating $jungle for $device"
+python3 - "$device" "$jungle" "$repo_root/monkey.jungle" <<'PY' || die "jungle generation failed"
+import re
+import sys
+
+device, output, source = sys.argv[1], sys.argv[2], sys.argv[3]
+property_pattern = re.compile(r'^([a-z][a-z0-9]*)\.(resourcePath|excludeAnnotations|sourcePath)\s*=')
+reference_pattern = re.compile(r'\$\(([a-z][a-z0-9]*)\.')
+
+with open(source, encoding='utf-8') as jungle:
+    lines = jungle.read().splitlines()
+
+required = {'base', device}
+changed = True
+while changed:
+    changed = False
+    for line in lines:
+        match = property_pattern.match(line)
+        if not match or match.group(1) not in required:
+            continue
+        for reference in reference_pattern.findall(line):
+            if reference not in required:
+                required.add(reference)
+                changed = True
+
+with open(output, 'w', encoding='utf-8', newline='\n') as generated:
+    for line in lines:
+        match = property_pattern.match(line)
+        if match and match.group(1) not in required:
+            continue
+        generated.write(f'{line}\n')
+PY
+
+# --- compile ---------------------------------------------------------------
+# No --release: monkeyc refuses to build unit tests in release mode, and the
+# app's (:debug) E2E trace helpers are useful in a failure log.
+say "==> compiling with --unit-test (typecheck 3)"
+if ! "$monkeyc" --jungles "$jungle" --private-key "$key" --typecheck 3 --unit-test \
+        --warn --device "$device" --output "$out/test.prg" >"$out/compiler.log" 2>&1; then
+    say "compiler output:"
+    cat "$out/compiler.log" >&2
+    die "monkeyc failed (see $out/compiler.log)"
+fi
+[ -f "$out/test.prg" ] || die "monkeyc reported success but $out/test.prg does not exist"
+
+# --- simulator -------------------------------------------------------------
+port_open() {
+    python3 - "$1" "$2" <<'PY'
+import socket, sys
+host, port = sys.argv[1], int(sys.argv[2])
+try:
+    with socket.create_connection((host, port), timeout=0.5):
+        pass
+except OSError:
+    sys.exit(1)
+PY
+}
+
+say "==> checking the simulator transport on 127.0.0.1:1234"
+if ! port_open 127.0.0.1 1234; then
+    say "==> starting the simulator under Wine on DISPLAY=$DISPLAY"
+    wine "$simulator" >"$out/simulator.log" 2>&1 &
+    simulator_pid=$!
+    for _ in $(seq 1 120); do
+        port_open 127.0.0.1 1234 && break
+        if ! kill -0 "$simulator_pid" 2>/dev/null; then
+            cat "$out/simulator.log" >&2
+            die "simulator exited before accepting connections"
+        fi
+        sleep 0.5
+    done
+    port_open 127.0.0.1 1234 || {
+        cat "$out/simulator.log" >&2
+        die "simulator did not accept connections on 127.0.0.1:1234 within 60s"
+    }
+fi
+
+# --- run -------------------------------------------------------------------
+# monkeydo buffers stdout when it is not a terminal; stdbuf keeps the log live
+# and makes a hung test visible in the tail instead of at exit.
+stdbuf_cmd=""
+command -v stdbuf >/dev/null 2>&1 && stdbuf_cmd="stdbuf -oL -eL"
+
+say "==> running unit tests on $device${only_test:+ (test $only_test)}"
+set +e
+if [ -n "$only_test" ]; then
+    # shellcheck disable=SC2086
+    timeout "$timeout_s" $stdbuf_cmd "$monkeydo" "$out/test.prg" "$device" -t "$only_test" 2>&1 \
+        | tee "$out/monkeydo.log" >/dev/null
+else
+    # shellcheck disable=SC2086
+    timeout "$timeout_s" $stdbuf_cmd "$monkeydo" "$out/test.prg" "$device" -t 2>&1 \
+        | tee "$out/monkeydo.log" >/dev/null
+fi
+monkeydo_status="${PIPESTATUS[0]}"
+set -e
+
+say "==> results"
+# The RESULTS block decides, not the exit status: monkeydo was measured to exit
+# non-zero on a fully passing run. parse_results.py applies that precedence and
+# reports a timeout (124) or an unclassifiable run itself.
+set +e
+python3 "$repo_root/tests/unit/parse_results.py" --status "$monkeydo_status" "$out/monkeydo.log"
+result="$?"
+set -e
+
+if [ "$result" != "0" ]; then
+    say "==> last 40 lines of $out/monkeydo.log"
+    tail -n 40 "$out/monkeydo.log" >&2
+    say "UNIT TESTS FAILED"
+    exit 1
+fi
+say "UNIT TESTS PASSED"
+exit 0

@@ -28,6 +28,7 @@ This README covers the following topics:
   - [Generating the `.iq` File for Garmin Connect IQ Store Upload](#generating-the-iq-file-for-garmin-connect-iq-store-upload)
   - [To Add a New Device](#to-add-a-new-device)
 - [End-to-End Tests](#end-to-end-tests)
+- [Unit Tests](#unit-tests)
 - [Helpful Tips and Notes](#helpful-tips-and-notes)
 - [Copyright Notice](#copyright-notice)
 - [Attributions](#attributions)
@@ -222,6 +223,25 @@ python -m pytest
 ```
 
 The Connect IQ SDK is never committed and never baked into an image: it is mounted read-only and validated against `tests/config/sdk.version`. See [tests/README.md](tests/README.md) for the full instructions, the scenario list and the current limitations.
+
+---
+
+## Unit Tests
+
+`source/test/` contains Connect IQ unit tests (Run No Evil) for the code that does
+not need a view, input or network: sitemap JSON parsing, error classification and
+element parameters. They live in the app's source path so the device build matrix
+typechecks them, and the compiler removes them from every normal build.
+
+```bash
+export CIQ_SDK_ROOT=/path/to/connectiq-sdk-9.3.0
+tests/unit/run                  # all tests on fenix847mm
+```
+
+They run only in the simulator and cannot assert rendering, input or lifecycle
+behaviour; that stays with the E2E harness. See
+[tests/docs/unit-tests.md](tests/docs/unit-tests.md) for the feasibility evidence,
+the split between the two tiers and what remains untestable.
 
 ---
 

@@ -16,6 +16,9 @@ Two mechanisms are used to tailor the source code for different target devices:
 ### Other Annotations
 
 - `(:glance)` marks code that must be included in the _Glance_ view.
+- `(:test)` marks Connect IQ unit tests. The compiler removes test code from
+  debug and release builds, so it only runs when the build uses `--unit-test`
+  and `monkeydo` is started with `-t`. See [Folder `test/`](#subfolder-test).
 
 ### **Inline Documentation**
 
@@ -49,3 +52,14 @@ For additional details, refer to the folder’s [README](main/README.md).
 Themes define the color schemes used in the app and can change dynamically at runtime. This also includes icons whose colors must be adapted to the active theme. Themes are used to implement the light and dark mode on Edge devices.
 
 For more details, continue reading the folder’s [README](themes/README.md).
+
+### Subfolder `test/`
+
+Contains the Connect IQ unit tests (`(:test)` functions), split by tier: sitemap
+model parsing, error classification, and element parameters. They are part of
+the base source path in [`monkey.jungle`](../README.md#root-folder-), so every
+device build typechecks them, and the compiler strips them from normal builds.
+
+They need no view, input or network, and they do not test rendering. Run them
+with [`tests/unit/run`](../tests/unit/run); the design note, evidence and limits
+are in [`tests/docs/unit-tests.md`](../tests/docs/unit-tests.md).
