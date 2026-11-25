@@ -33,6 +33,7 @@ This directory is the foundation tracked by
 | Protocol-tier scenarios (shim trace + `E2E:` trace events) | ready; need the debug trace build from [#364](https://github.com/openhab/openhab-garmin/issues/364) |
 | Connect IQ unit-test tier (`source/test`, run by `tests/unit/run`) | pilot: 18 tests over sitemap parsing, error classification and element parameters. Compiled by the existing device matrix (it already passes `--unit-test`); verified on the guest (18/18 PASS on fenix7, about two minutes). See [docs/unit-tests.md](docs/unit-tests.md). |
 | Wine simulator driver | implemented against the contract, with the compiled-properties model and the guest-measured start order; the proof is a driver run on the guest with `--prg` (see [docs/simulator-driver.md](docs/simulator-driver.md)) |
+| Visual-truth design (drive-and-look) | design note: a Windows host is rejected on licence and capacity; the feasible no-input route is off-screen rendered assertions (draw smoke plus real font metrics), because SDK 9.3.0 has no pixel readback; Xorg/uinput is a bounded spike. See [docs/visual-truth.md](docs/visual-truth.md). |
 | Wine feasibility spike | ready to run on an approved Linux host with Docker and the SDK (see [spike/README.md](spike/README.md), issue [#370](https://github.com/openhab/openhab-garmin/issues/370)) |
 | #140 scope coverage map | checked in as `config/scope.yaml` and `docs/coverage.md`; enforced by `python -m e2e coverage --check`. The glance entries are **blocked** by [#396](https://github.com/openhab/openhab-garmin/issues/396) and E2E builds exclude the glance by default (`--with-glance` re-enables it). |
 | Stack health in every run | complete: restart counts, working set and OOM evidence are classified as `valid`/`invalid`/`unknown`; see [docs/diagnostics.md](docs/diagnostics.md) |
@@ -831,6 +832,7 @@ manual counterpart to `tests/runner/tests/test_compose.py` and
 - [docs/localisation.md](docs/localisation.md) – language coverage, device choice and review-only assertions
 - [docs/sdk.md](docs/sdk.md) – SDK layout, version pinning, licence handling
 - [docs/simulator-driver.md](docs/simulator-driver.md) – driver contract and Wine plan
+- [docs/visual-truth.md](docs/visual-truth.md) – what visual truth one Ubuntu VM can give: off-screen assertions, no-input captures, AI review and the rejected Windows host
 - [docs/unit-tests.md](docs/unit-tests.md) – Connect IQ unit tests: feasibility, tier split, limits and operator commands
 - [spike/README.md](spike/README.md) – the #370 Wine feasibility spike and its verdict
 - [shim/README.md](shim/README.md) – shim control API and fault-script format
