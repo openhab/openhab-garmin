@@ -125,7 +125,7 @@ Closing shell and port
 
 The parser is covered by six synthetic logs (pass, error, lowercase `Pass`,
 missing block, zero tests, inconsistent summary); it is verified locally, but
-the *real* output has not been observed yet.
+the _real_ output has not been observed yet.
 
 ### Headless
 
@@ -147,7 +147,7 @@ so TCP is not the obstacle. The obstacle is the shape of a unit test:
 - A busy-wait on `System.getTimer()` would block the loop that delivers the
   callback, so it cannot make progress; the watchdog would fire.
 
-Therefore a test can *issue* a request but cannot *assert on its response*.
+Therefore a test can _issue_ a request but cannot _assert on its response_.
 Protocol tests that need a payload must hand one to the parser, as the pilot
 does (`JsonAdapter` takes the parsed `JsonObject` directly), or the transport
 must be injected behind an interface. **No transport injection is introduced
@@ -158,7 +158,7 @@ below the network, that refactor is the way, and it should be agreed separately
 
 One experiment would settle the callback question empirically, and it is listed
 for the operator below: a throwaway test that calls `makeWebRequest` and returns
-immediately. If the log shows the callback *after* the `RESULTS` block, the
+immediately. If the log shows the callback _after_ the `RESULTS` block, the
 event loop does run between tests and a bounded wait might be possible. Until
 then, treat "network is faked, not awaited" as the design rule.
 
@@ -196,7 +196,7 @@ share only the SDK pin (`tests/config/sdk.version`) and the SDK-layout rules in
 `tests/docs/coverage.md` is generated from `config/scope.yaml` and the scenarios,
 so the pilot is not listed there. Several #140 entries are currently **waived**
 because they need pixels or input (`sitemap.parameters-colors`,
-`sitemap.parameters-range`, …). The unit tier now asserts the *parsing* half of
+`sitemap.parameters-range`, …). The unit tier now asserts the _parsing_ half of
 those entries; the visual half stays waived. Do not remove a waiver on that
 basis alone.
 
@@ -220,7 +220,7 @@ Notes on the pilot data:
   first.
 - The tests call the app's own classes. There is no parallel parser and no
   reimplementation of the classification rules: `ExceptionHandler`'s presentation
-  logic is *not* re-tested, only the exception predicates it consumes.
+  logic is _not_ re-tested, only the exception predicates it consumes.
 
 ## CI and cost
 

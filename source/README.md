@@ -18,7 +18,7 @@ Two mechanisms are used to tailor the source code for different target devices:
 - `(:glance)` marks code that must be included in the _Glance_ view.
 - `(:test)` marks Connect IQ unit tests. The compiler removes test code from
   debug and release builds, so it only runs when the build uses `--unit-test`
-  and `monkeydo` is started with `-t`. See [Folder `test/`](#subfolder-test-).
+  and `monkeydo` is started with `-t`. See [Folder `test/`](#subfolder-test).
 
 ### **Inline Documentation**
 
