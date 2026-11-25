@@ -1661,7 +1661,8 @@ def test_contract_reports_a_glance_only_app_as_app_entry_failure(
     assert by_name["app-entry"].status == FAIL
     detail = by_name["app-entry"].detail
     assert "glance" in detail
-    assert "GlanceViewDelegate" in detail
+    assert "AppLifecycle.setGlance()" in detail
+    assert "#396" in detail
 
 
 def test_contract_passes_app_entry_on_a_real_view(tmp_path: Path) -> None:

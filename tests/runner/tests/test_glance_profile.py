@@ -244,7 +244,8 @@ def test_coverage_marks_the_glance_entries_blocked() -> None:
     blocked = {entry.id: entry for entry in scope.blocked}
 
     assert blocked["lifecycle.glance-widget"].issue == 396
-    assert "without-glance" in blocked["lifecycle.glance-widget"].reason
+    assert "watch-app" in blocked["lifecycle.glance-widget"].reason
+    assert "setGlance" in blocked["lifecycle.glance-widget"].reason
     assert blocked["devices.capabilities"].issue == 396
 
     report = build_report()

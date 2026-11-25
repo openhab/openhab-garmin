@@ -221,10 +221,12 @@ def run_contract(
     def app_entry() -> None:
         """`wait_ready` must leave the app on a real view, not the glance.
 
-        A widget that starts as part of the glance page runs in glance mode with
-        a 32 KB budget and only enters its initial view when it is selected.
-        If it stays there, no request is made and every UI scenario is
-        meaningless, so this is its own case with its own message.
+        Under the simulator the glance is requested in the app's own process,
+        and `OHApp.getGlanceView()` calls `AppLifecycle.setGlance()`, which
+        latches glance mode for that process: the lifecycle guards bail out and
+        `getInitialView()` never runs. No harness-side action can undo that, so
+        this case names the app-side cause instead of hiding it behind a view
+        timeout.
         """
         parsed = parse_lines(list(driver.events()))
         view = next((event for event in reversed(parsed) if event.event == "VIEW"), None)
@@ -233,10 +235,14 @@ def run_contract(
             raise AssertionError(
                 "the app is still showing the glance (`VIEW;category=glance`), so "
                 "getInitialView() never ran and no request is made.\n"
-                "A widget in glance mode must be selected to launch; the driver "
-                "tries the declared select/menu keys, taps and one relaunch. Check "
-                "whether the glance needs a `GlanceViewDelegate` to be selectable, "
-                "and whether the 32 KB glance budget stops the transition. See "
+                "Under the simulator the glance is requested in the app's own "
+                "process, and OHApp.getGlanceView() calls AppLifecycle.setGlance(), "
+                "which latches glance mode for that process: every lifecycle guard "
+                "then bails out, so getInitialView() yields no view and "
+                "SitemapRequest.start() is never reached. No harness-side change "
+                "(device, manifest type, input, coordinates) can undo that latch; it "
+                "is the app-side cause tracked in #396, and the watch-app build "
+                "profile should start working unchanged once it is released. See "
                 "tests/docs/simulator-driver.md."
             )
         if category is None:

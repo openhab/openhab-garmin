@@ -247,9 +247,11 @@ simulator on its first draw (`Invalid Font Specified`, tracked as
 Every `run` and `build` therefore uses the **`watch-app`** profile unless told
 otherwise: the generated jungle is rebased onto a copy of `source/` in which
 `GlanceSitemapView` is replaced by an empty stub, and `project.manifest` points
-at a generated copy of `manifest.xml` declaring `type="watch-app"`. The
-simulator then launches the app's normal initial view (and polling). The
-checkout is never modified.
+at a generated copy of `manifest.xml` declaring `type="watch-app"`. That is the
+right app type for a direct launch. It does not yet produce one: the app's own
+glance latch (`AppLifecycle.setGlance()` set by `getGlanceView()`) keeps the
+process on the glance page under the simulator, which is the app-side cause
+tracked in #396. The checkout is never modified.
 
 ```text
 profile: watch-app: the app is declared as a plain watch app in a generated manifest and its glance view is stubbed, so the simulator launches getInitialView() directly; widget and glance modes are NOT covered (issue #396)

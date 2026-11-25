@@ -329,8 +329,8 @@ its first draw (`Invalid Font Specified`, #396). Three profiles exist:
 
 | Profile | What it does | What it proves |
 | --- | --- | --- |
-| `watch-app` (default) | Stubs the glance view **and** writes `<artifacts>/build/manifest-watch-app.xml` with `type="watch-app"`, pointing the generated jungle's `project.manifest` at it | The simulator launches `getInitialView()` directly. Widget and glance modes are **not** covered. |
-| `without-glance` | Stubs the glance view, keeps the widget manifest | Compiles, but the simulator still starts the widget in glance mode, so scenarios do not reach the initial view on this simulator. |
+| `watch-app` (default) | Stubs the glance view **and** writes `<artifacts>/build/manifest-watch-app.xml` with `type="watch-app"`, pointing the generated jungle's `project.manifest` at it | The right app type for a direct launch. Today the app's own glance latch (#396) still keeps it on the glance page, so the initial view does not run; this is the profile to keep and it should start working unchanged once the latch is released. Widget and glance modes are **not** covered. |
+| `without-glance` | Stubs the glance view, keeps the widget manifest | Compiles, but the simulator still starts the widget in glance mode. |
 | `with-glance` | Compiles the app's own glance view | Nothing green: the simulator crashes on the first glance draw (#396). |
 
 `watch-app` is the only valid plain-app type in `monkeybrains.jar`
@@ -453,44 +453,47 @@ succeeded": `press-effect` presses ENTER, then MENU, then DOWN and requires a
 new `E2E:VIEW` or `E2E:ERRORVIEW` within a few seconds. Without one, input never
 reached the app and the case fails, naming both mechanisms.
 
-### Opening the app from the glance page
+### Why the app stays on the glance page
 
-The app is a **widget**, and a widget that the simulator shows as part of the
-glance page is started **in glance mode**, with a hard 32 KB memory budget; the
-SDK documents that selecting it launches the widget in its standard mode. So the
-simulator is behaving correctly when only
-`E2E:VIEW;category=glance` appears: `getInitialView()` has not run and no
-request is made.
+**This is the cause of every "no request" and every red input case, and it is
+app-side.** Under the simulator the glance is requested **in the app's own
+process**, and `OHApp.getGlanceView()` calls `AppLifecycle.setGlance()`. That
+flag is process-wide and latched, so the lifecycle guards
 
-`wait_ready` therefore checks the first view and, when it is the glance, presses
-the declared `onSelect` hit area, then the `onMenu` hold, then `onSelect` again;
-on a touch-only device it taps the screen centre twice instead. If none of that
-changes the view, it **relaunches the PRG once** (the `monkeydo` console log is
-appended, not replaced). Everything is bounded by the readiness budget, and every
-attempt plus its mapped window point is in `logs/driver.log`.
+```monkeyc
+if( AppLifecycle.isGlance() ) { return; }   // onStart, onActive, ...
+```
 
-None of those transitions the app on the guest while it is still built as a
-widget. With the `watch-app` profile (the default) the simulator launches
-`getInitialView()` directly, so a run that still shows `category=glance` means
-the profile was not applied — check the printed profile and the generated
-manifest. If the app is a widget again, the remaining candidates are:
+bail out for the rest of the process: `getInitialView()` yields no view and
+`SitemapRequest.start()` is never reached. On hardware the glance really is a
+separate process and the flag only affects that process; the simulator does not
+give it one.
 
-1. **Glance memory.** Glance mode has a 32 KB budget on most devices. The font
-   error seen only on the glance (`Invalid Font Specified`) and the missing
-   transition may share that cause; #396 records the measurement.
-1. **The simulator's own widget entry.** No simulator menu exists on the guest
-   (`xwininfo -root -children` lists only the main window plus 1x1 helper
-   windows, and no `Alt+…` accelerator opens anything), so there is no menu
-   action to drive.
-1. **The glance API itself.** `GlanceViewDelegate` is not a candidate: it only
-   has `onGlanceEvent`, documented as "none for now".
+Three builds on the guest confirm it:
 
-The contract keeps this honest: `app-entry` fails while the app is still on the
-glance, `input-delivery` fails because the declared select press changes neither
-a view nor the screen, and `press-effect` fails for the same reason. A scenario
-must not paper over it with a request assertion. Replacing the glance with a
-cleared background changed nothing either, so "the glance cannot be selected
-because it draws nothing" is not the cause.
+| Build | App source | Result |
+| --- | --- | --- |
+| `watch-app`, glance stubbed | unchanged | glance only, no request |
+| `watch-app` | `getGlanceView()` returns `null`, `setGlance()` kept | still `LANGUAGE` + `category=glance` |
+| `watch-app` | `getGlanceView()` returns `null` with no `setGlance()` | `LANGUAGE` only, `monkeydo` exits 0: no first view at all |
+
+So no device, manifest type, input event or coordinate change can fix it. The
+harness must **not** patch the latch in a build profile: a test build that
+changes lifecycle semantics would test a different application. The fix belongs
+to the app and is tracked in #396; the `watch-app` profile and the `app-entry`,
+`input-delivery` and `press-effect` cases are already the right shape and should
+start working unchanged once the latch is released.
+
+`wait_ready` still tries select, the `onMenu` hold, a second select (two taps on
+touch devices) and one PRG relaunch when the first view is the glance. Those are
+defensive: they matter on hardware or after the app-side fix, and each attempt
+plus its mapped window point is logged.
+
+Two related measurements, so they are not repeated: replacing the glance with a
+cleared background changed nothing, and `GlanceViewDelegate` is not a candidate
+(it only has `onGlanceEvent`, "none for now"). A widget left in glance mode also
+has a 32 KB budget, which is why the glance-only `Invalid Font Specified` may
+share the cause.
 
 `tap(x, y)` takes **device screen pixels**. The driver maps them into the
 window through the watch-screen rectangle declared by the device definition:
@@ -522,9 +525,8 @@ is enough to act on it.
 | `monkeydo exited with code …` | wrong PRG or device name | read `logs/console.log` |
 | `app-ready … no console line` | the app started but produced no `E2E:` line | check the PRG is a debug build and the device wiring (`link-devices` is accurate here) |
 | `warning: the app is still on the glance page` | a widget in glance mode; `getInitialView()` did not run, so no request is made | an app-side transition question: the glance delegate and the 32 KB glance budget, see below |
-| `app-entry … still showing the glance` | a widget started in glance mode; selecting it should launch it, but nothing transitions it | check the glance delegate (`getGlanceView()` returns no `GlanceViewDelegate`) and the 32 KB glance budget; app-side, not harness-side |
-| `no simulator menu opened: … synthetic input did not reach the simulator` | legacy text from the removed menu probe | replaced: `input-delivery` now presses select and measures the screen |
-| `press-effect … no new VIEW or ERRORVIEW and no screen change` | the press reached nothing or the app did not react | the log names the mechanism and point; if `input-delivery` and `app-entry` also failed, the app is on the glance, not a coordinate bug |
+| `app-entry … still showing the glance` | the app latched glance mode in its own process (`AppLifecycle.setGlance()` set by `getGlanceView()`), so `getInitialView()` never runs | app-side, tracked in #396; the harness must not patch lifecycle semantics in a build profile |
+| `press-effect … no different VIEW` | the press produced a repeated view or none; while the app is on the glance, screen changes are not counted | the app is on the glance, so see `app-entry`; otherwise compare the logged point with `keys[].location` |
 | `the app reported system language …` | `Language` in `simulator.ini` was ignored | see the language section above |
 | `the app showed the configuration error view` | the PRG was built without the requested properties | rebuild with `e2e build --settings <fixture>`, or pass a PRG built that way |
 

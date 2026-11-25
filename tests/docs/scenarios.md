@@ -55,12 +55,14 @@ widget, and a widget shown on the glance page starts in glance mode (32 KB
 budget) until it is selected; this simulator never selects it, so
 `getInitialView()` does not run. The profile writes a generated manifest
 declaring `type="watch-app"` and rebases the generated jungle onto a copy of
-`source/` whose `GlanceSitemapView.mc` is an empty stub, so the simulator
-launches the app's initial sitemap view and starts polling. The glance also
+`source/` whose `GlanceSitemapView.mc` is an empty stub. That is the right app
+type for a direct launch, but it does not yet produce one: `getGlanceView()`
+sets `AppLifecycle.setGlance()`, and in the simulator's single process that
+latch keeps every lifecycle guard bailing out, which is the app-side cause on
+[#396](https://github.com/openhab/openhab-garmin/issues/396). The glance also
 crashes the app before any request when compiled for real (`Invalid Font
-Specified` in `GlanceSitemapView.onUpdate`, issue
-[#396](https://github.com/openhab/openhab-garmin/issues/396)). The checkout is
-not modified and the `(:glance)` annotations stay as they are.
+Specified` in `GlanceSitemapView.onUpdate`). The checkout is not modified and
+the `(:glance)` annotations stay as they are.
 
 `run` prints the profile at the top and for every build, followed by the full
 `monkeyc` command. A green run therefore asserts nothing about the widget or
