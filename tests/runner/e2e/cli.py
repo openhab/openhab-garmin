@@ -75,6 +75,12 @@ from .coverage import (
 from .engine import run_scenario
 from .fixtures import FixtureError
 from .health import EXIT_INVALID_ENVIRONMENT, HealthError
+from .languages import (
+    LANGUAGE_INDEX_FILE,
+    LanguageIndexError,
+    load_language_index,
+    write_language_index,
+)
 from .openhab import OpenHabClient, OpenHabError
 from .paths import repo_root, tests_root
 from .preflight import parse_skip, run_preflight
@@ -89,7 +95,8 @@ from .sdk import (
 )
 from .settings import SettingsError, load_settings
 from .shim import ShimClient, ShimError
-from .sim import DRIVER_NAMES, create_driver
+from .sim import DRIVER_NAMES, Button, create_driver
+from .sim.wine import ENV_KEY_PREFIX
 from .variants import (
     check_coverage,
     combinations,
@@ -345,7 +352,40 @@ def _select_scenarios(args: argparse.Namespace) -> List[Scenario]:
     )
 
 
+def _apply_key_overrides(args: argparse.Namespace) -> Optional[str]:
+    """Apply ``--key BUTTON=KEYSYM`` overrides to the driver's environment."""
+    for item in getattr(args, "key", None) or []:
+        name, separator, keysym = item.partition("=")
+        if not separator or not keysym.strip():
+            return f"--key expects BUTTON=KEYSYM, got {item!r}"
+        try:
+            button = Button(name.strip().upper())
+        except ValueError:
+            known = ", ".join(button_.value for button_ in Button)
+            return f"--key {item!r}: unknown button {name!r}; expected one of {known}"
+        os.environ[f"{ENV_KEY_PREFIX}{button.value}"] = keysym.strip()
+    return None
+
+
+def _shim_request_probe(url: Optional[str]):  # type: ignore[no-untyped-def]
+    """A callable returning the shim's request count, or ``None`` when unreachable."""
+    if not url:
+        return None
+    client = ShimClient(url)
+
+    def probe() -> Optional[int]:
+        try:
+            return len(client.requests())
+        except ShimError:
+            return None
+
+    return probe
+
+
 def _cmd_run(args: argparse.Namespace) -> int:
+    invalid = _apply_key_overrides(args)
+    if invalid:
+        return _fail(invalid)
     scenarios = _select_scenarios(args)
     if not scenarios:
         return _fail("no scenarios matched")
@@ -676,6 +716,9 @@ def _cmd_list_scenarios(args: argparse.Namespace) -> int:
 
 
 def _cmd_contract_test(args: argparse.Namespace) -> int:
+    invalid = _apply_key_overrides(args)
+    if invalid:
+        return _fail(invalid)
     layout = None
     if args.driver == "wine":
         layout = load_layout()
@@ -694,7 +737,13 @@ def _cmd_contract_test(args: argparse.Namespace) -> int:
         if derived is not None:
             print(f"device: {derived.id} (from {prg.name})")
     try:
-        cases = run_contract(driver, workdir, device_id=args.device, prg=prg)
+        cases = run_contract(
+            driver,
+            workdir,
+            device_id=args.device,
+            prg=prg,
+            requests=_shim_request_probe(args.shim_url),
+        )
     except ContractError as error:
         driver.stop()
         return _fail(str(error))
@@ -712,6 +761,140 @@ def _cmd_contract_test(args: argparse.Namespace) -> int:
             [{"name": case.name, "status": case.status, "detail": case.detail} for case in cases]
         )
     return contract_exit_code(cases)
+
+
+def _parse_index_range(spec: str) -> List[int]:
+    """Parse ``0-24`` or ``0,1,2`` into a list of simulator language indices."""
+    indices: List[int] = []
+    for part in str(spec).replace(" ", "").split(","):
+        if not part:
+            continue
+        start, separator, end = part.partition("-")
+        if separator:
+            first, last = int(start), int(end)
+            if last < first:
+                raise ValueError(f"--indices {spec}: {part} counts down")
+            indices.extend(range(first, last + 1))
+        else:
+            indices.append(int(part))
+    seen: List[int] = []
+    for index in indices:
+        if index not in seen:
+            seen.append(index)
+    if not seen:
+        raise ValueError(f"--indices {spec!r} names no index")
+    return seen
+
+
+def _check_writable(path: Path) -> Optional[str]:
+    """Return an actionable message when ``path`` cannot be written, else None."""
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8"):
+            pass
+    except OSError as error:
+        return (
+            f"cannot write {path}: {error}\n"
+            "A mounted checkout is often read-only (for example `/work` in the "
+            "runner container). Re-run with a writable target and copy it back:\n"
+            "  python -m e2e language-scan --prg <prg> --write --output "
+            "/tmp/languages.json\n"
+            f"  cp /tmp/languages.json {path}"
+        )
+    return None
+
+
+def _cmd_language_scan(args: argparse.Namespace) -> int:
+    """Enumerate the simulator's numeric ``Language`` index by launching the app."""
+    if args.driver != "wine":
+        return _fail(
+            "language-scan needs a real simulator; use --driver wine on the guest"
+        )
+    prg = Path(args.prg)
+    if not prg.is_file():
+        return _fail(f"--prg {prg} is not a file")
+    derived = device_from_prg(prg)
+    device_id = args.device or (derived.id if derived is not None else None)
+    if not device_id:
+        return _fail(
+            f"cannot derive a device from {prg.name}; pass --device <id> "
+            "(the PRG names the build's device as openhab-garmin-<device>.prg)"
+        )
+    try:
+        indices = _parse_index_range(args.indices)
+    except ValueError as error:
+        return _fail(str(error))
+    target = Path(args.output) if args.output else LANGUAGE_INDEX_FILE
+    if args.write:
+        problem = _check_writable(target)
+        if problem:
+            return _fail(problem)
+    device = find_device(device_id)
+    settings = load_settings(args.settings)
+    workdir = _artifacts_dir(args) / "language-scan"
+    driver = create_driver(
+        "wine",
+        layout=load_layout(),
+        artifact_dir=workdir,
+        log=lambda message: print(message),
+    )
+    measured: Dict[str, int] = {}
+    rejected: List[int] = []
+    print(f"device: {device.id} ({device.product}); probing indices {args.indices}")
+    driver.prepare(prg)
+    for index in indices:
+        try:
+            code = driver.probe_language(
+                index,
+                device,
+                settings,
+                mode=args.mode,
+                timeout_s=args.timeout,
+            )
+        except Exception as error:  # noqa: BLE001 - a failed probe is a data point
+            rejected.append(index)
+            print(f"  index {index:>3}: rejected ({type(error).__name__}: {error})")
+            continue
+        finally:
+            driver.stop()
+        if code == "unknown":
+            rejected.append(index)
+            print(f"  index {index:>3}: no E2E:LANGUAGE line")
+            continue
+        measured.setdefault(code, index)
+        print(f"  index {index:>3}: {code}")
+    driver.stop()
+
+    document = {
+        code: index for code, index in sorted(measured.items(), key=lambda item: item[1])
+    }
+    print("\nmeasured:")
+    for code, index in document.items():
+        print(f"  {code}: {index}")
+    if rejected:
+        print(f"rejected indices (no language reported): {rejected}")
+    if args.write:
+        merged = dict(load_language_index())
+        merged.update(document)
+        try:
+            written = write_language_index(merged, target)
+        except LanguageIndexError as error:
+            return _fail(str(error))
+        print(f"\nwrote {written} ({len(merged)} codes)")
+        if written != LANGUAGE_INDEX_FILE:
+            print(
+                f"note: the checkout's map is {LANGUAGE_INDEX_FILE}; copy this "
+                "file over it from a writable shell."
+            )
+    elif document:
+        print(
+            "\nre-run with --write to persist this map in "
+            f"{LANGUAGE_INDEX_FILE}; until then the driver treats these codes as "
+            "unprovisionable and reports the runs blocked."
+        )
+    if args.json:
+        _emit_json({"measured": document, "rejected": rejected})
+    return 0 if document else 1
 
 
 def _cmd_preflight(args: argparse.Namespace) -> int:
@@ -1029,6 +1212,15 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--skip-events", action="store_true", help="skip assertions that need the console event stream")
     run.add_argument("--prg", help="use an existing PRG instead of building one")
     run.add_argument(
+        "--key",
+        action="append",
+        metavar="BUTTON=KEYSYM",
+        help=(
+            "send this X keysym for a semantic button instead of the driver's "
+            "default path, e.g. --key ENTER=Return; repeatable"
+        ),
+    )
+    run.add_argument(
         "--jungle",
         help=(
             "use this jungle for the build instead of generating a "
@@ -1096,8 +1288,62 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     contract.add_argument("--artifacts")
+    contract.add_argument(
+        "--shim-url",
+        default=os.environ.get("E2E_SHIM_URL"),
+        help=(
+            "shim base URL; when reachable, each measured press reports the shim "
+            "requests it caused (default: E2E_SHIM_URL)"
+        ),
+    )
+    contract.add_argument(
+        "--key",
+        action="append",
+        metavar="BUTTON=KEYSYM",
+        help=(
+            "send this X keysym for a semantic button instead of the driver's "
+            "default path, e.g. --key ENTER=Return; repeatable"
+        ),
+    )
     contract.add_argument("--json", action="store_true")
     contract.set_defaults(handler=_cmd_contract_test)
+
+    scan = subparsers.add_parser(
+        "language-scan",
+        help="measure the simulator's numeric Language index per language code",
+        description=(
+            "The simulator stores its device language as an index (Language=7 is "
+            "German), and its order is not documented. Launch the app once per "
+            "index, read E2E:LANGUAGE;code=... and record the mapping, which is "
+            "what makes a non-English scenario runnable. Run it on the guest."
+        ),
+    )
+    scan.add_argument("--driver", choices=DRIVER_NAMES, default="wine")
+    scan.add_argument("--prg", required=True, help="compiled PRG (build one with `e2e build`)")
+    scan.add_argument("--device", help="device id; defaults to the PRG's name")
+    scan.add_argument(
+        "--indices",
+        default="0-24",
+        help="index ranges to probe, e.g. 0-24 or 0,3,7 (default: 0-24)",
+    )
+    scan.add_argument("--mode", default="ble", help="communication mode (default: ble)")
+    scan.add_argument("--settings", default="default", help="fixture whose properties the PRG was built with")
+    scan.add_argument("--timeout", type=float, default=90.0, help="seconds per index")
+    scan.add_argument(
+        "--write",
+        action="store_true",
+        help=f"merge the measurement into {LANGUAGE_INDEX_FILE} (or --output)",
+    )
+    scan.add_argument(
+        "--output",
+        help=(
+            "write the map here instead of the checkout (the runner's /work is "
+            "read-only); copy it back afterwards"
+        ),
+    )
+    scan.add_argument("--json", action="store_true")
+    scan.add_argument("--artifacts")
+    scan.set_defaults(handler=_cmd_language_scan)
 
     preflight = subparsers.add_parser(
         "preflight",

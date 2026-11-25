@@ -27,7 +27,7 @@ from .config import (
 )
 from .scenarios import Scenario, discover_scenarios
 from .scope import Scope, ScopeBlocked, ScopeEntry, ScopeWaiver, load_scope
-from .sim.base import RUNNABLE_LANGUAGES
+from .languages import provisionable_languages
 from .variants import matrix_problems
 
 COVERAGE_DOC = DOCS_DIR / "coverage.md"
@@ -53,12 +53,14 @@ class CoverageProblem:
         return f"{self.kind}: {self.detail}"
 
 
-#: The runnable language set is shared with the engine (``sim.base``), which
-#: reports the other runs as skipped rather than failing them for an environment
-#: gap. This function only labels them for the reviewed document.
+#: The provisionable language set comes from the measured ``Language`` index map
+#: (``e2e.languages``), the same source the engine and the Wine driver use. A
+#: code without a measured index is labelled blocked for the reviewed document;
+#: `python -m e2e language-scan --write` is what unblocks it.
 def blocked_languages(languages: Sequence[str]) -> Tuple[str, ...]:
     """Languages in a matrix the environment cannot provision."""
-    return tuple(language for language in languages if language not in RUNNABLE_LANGUAGES)
+    runnable = set(provisionable_languages())
+    return tuple(language for language in languages if language not in runnable)
 
 
 @dataclass(frozen=True)
@@ -151,7 +153,9 @@ class CoverageReport:
     def blocked_language_runs(self) -> int:
         """Expanded runs whose language the environment cannot provision."""
         return sum(
-            1 for scenario in self.scenarios if scenario.language not in RUNNABLE_LANGUAGES
+            1
+            for scenario in self.scenarios
+            if scenario.language not in set(provisionable_languages())
         )
 
     @property
@@ -348,7 +352,7 @@ def render_markdown(
         f"| Empty (must be 0) | {empty} |",
         f"| Scenario files | {report.scenario_files} |",
         f"| Expanded scenario runs | {len(report.scenarios)} |",
-        f"| Language variants blocked (no provisioning) | {report.blocked_language_runs} |",
+        f"| Language variants blocked (no measured index) | {report.blocked_language_runs} |",
         "",
         "> **Host-only execution.** Every scenario listed below needs a Linux host",
         "> with Docker, the Connect IQ SDK and the simulator. The `harness` CI job",

@@ -40,16 +40,26 @@ engine reports event and golden assertions as **skipped**, never passed.
   build as another produced a `Symbol Not Found` and a pointless `tap` failure
   on the guest, which is a false result rather than a test.
 - `app-entry` requires the app to have left the glance: `wait_ready` runs it, and
-  a widget still in glance mode fails with the delegate/memory pointers instead
-  of a generic timeout.
-- `press-effect` proves the input path: it presses ENTER, MENU and DOWN (and
-  taps on touch devices) and requires a new view **or** a change inside the
-  screen rectangle. A pass means the app reacted, not that `xdotool` ran; the
-  simulator's bezel highlight cannot satisfy it.
+  a still-glance app fails with the glance/transition pointers instead of a
+  generic timeout.
+- Every `press[...]` case is **measured**: it reports `mechanism=…`, `effect=…`
+  and, with `--shim-url`, `requests +N`. A press with no effect is reported
+  `skipped` with that evidence, not failed, because one press legitimately does
+  nothing (navigation at the top of a list). `--key BUTTON=KEYSYM` (repeatable)
+  tries a different keysym.
+- `press-sequence` is the input verdict: `DOWN`, `DOWN`, `UP` must produce at
+  least one measurable effect. All three silent fails with every mechanism in
+  the message. A touch-only device (e.g. `venu2`) has no physical buttons, so its
+  press cases are skipped and `tap` covers its input.
+- `press-effect` presses ENTER, MENU and DOWN (and taps on touch devices) and
+  requires a different view or a screen change in the screen rectangle; a repeat
+  of the same view never counts.
 - `input-delivery` presses the declared select once and reports whether the app
-  changed a view or its screen area. It does not assume a simulator menu.
-- The contract starts with `mode=ble, language=deu`. The language is reported
-  and compared, never forced (see "Language cannot be provisioned").
+  changed a view or its screen area. It does not assume a simulator menu, and it
+  verifies the pointer is over the simulator before clicking.
+- The contract starts with `mode=ble, language=deu`. `deu` is provisioned through
+  the measured numeric index and the reported language must match, so a wrong
+  index fails the contract loudly instead of running in English.
 
 ## How the Wine driver works
 
@@ -143,7 +153,7 @@ PIDs instead.
 | `E2E_WINE_STARTUP_TIMEOUT` | seconds to wait for the simulator window (default `120`); the app's first trace line is bounded by the caller (90 s by default) |
 | `E2E_WINE_SETTINGS_FILE` | escape hatch: write this application-properties file before launch; the default path writes nothing because properties come from the build |
 | `E2E_WINE_SCREEN_RECT` | `x,y,width,height` of the watch screen inside the window; pin it when taps miss |
-| `E2E_WINE_KEY_<BUTTON>` | X keysym for one button, e.g. `E2E_WINE_KEY_MENU=ctrl+m` |
+| `E2E_WINE_KEY_<BUTTON>` | X keysym for one button, e.g. `E2E_WINE_KEY_ENTER=Return`; `--key BUTTON=KEYSYM` is the CLI spelling |
 
 ## Per-method status
 
@@ -151,14 +161,14 @@ PIDs instead.
 | --- | --- | --- |
 | `prepare` | implemented | Validates the external tools and copies the PRG. Runs before anything touches Wine. |
 | `start` | implemented | Display check, `simulator.ini`, simulator-window wait, property seeding and `monkeydo` launch. The device name is expected to appear only after the launch. |
-| `wait_ready` | implemented | First view **and** the reported language, both from the trace stream. A dead app fails with the console tail. The first view may be the glance (`category=glance`) on a plain `monkeydo` launch; reaching the sitemap is the app's behaviour and the scenario asserts it, not the driver. |
-| `press` | implemented, verified by effect | Clicks the declared `keys[].location` hit area (hold where `isHold`) as real X input; keysym only as an override/fallback. The contract proves delivery (`input-delivery`) and effect (`press-effect`). |
-| `tap` | implemented | The window is focused first. The screen rectangle comes from the device definition's `display.location` (`simulator.json`), with `E2E_WINE_SCREEN_RECT` as the override; a centred fit is only the last resort for an SDK without `simulator.json`. |
+| `wait_ready` | implemented | First view **and** the reported language, both from the trace stream. A dead app fails with an actionable message (`no console output at all` = launch/packaging, `output but no E2E: line` = wrong build, trace but no view = still on the glance). |
+| `press` | implemented, no effect in this environment | Path per button, recorded: `E2E_WINE_KEY_<BUTTON>`/`--key` first, then a documented keysym, then the declared hit area (mouse, **pointer verified** before the click). On this guest every press measures 0 px against an idle baseline, so `press-sequence` fails; the machinery is kept for a simulator that delivers input. |
+| `tap` | implemented, pointer verified | The window is focused and the pointer is verified to be over the simulator window before the click (see above). The screen rectangle comes from the device definition's `display.location` (`simulator.json`), with `E2E_WINE_SCREEN_RECT` as the override; a centred fit is only the last resort for an SDK without `simulator.json`. |
 | `screenshot` | implemented | Captures the simulator window. Fails when the capture is not a usable PNG instead of returning a blank image. |
 | `events` | implemented | `monkeydo` stdout/stderr with receipt timestamps; `stdbuf` disables its block buffering when available. |
 | `stop` | implemented | Terminates the app and the simulator by PID; leaks nothing into the next scenario. |
 | mode (`ble`/`wifi`/`offline`) | partial | The startup keys are written and reported. The app always starts in `BLE` and only leaves it after a request fails, so the driver does not claim a runtime mode; the scenario's request-count assertions cover the transition. |
-| language (`eng`/`deu`/...) | implemented, not provisionable | `Language` is written before start but the simulator does not apply it. The reported language is compared and a mismatch is recorded as a warning; the engine skips non-`eng` runs and `coverage.md` marks them blocked. |
+| language (`eng`/`deu`/...) | implemented, per code | `eng` removes the `Language` key (simulator default); every other code writes the **numeric** index from `tests/config/simulator-languages.json` and the reported `E2E:LANGUAGE` must match or the run fails. A code with no measured index raises in `start()` and is reported blocked; `python -m e2e language-scan --write` measures it. |
 | app properties | implemented, verified at build | Compiled into the PRG through a `settings.xml` resource override; `e2e build` asserts the defaults `monkeyc` emitted, and `wait_ready` rejects a `UI:CONFIG` error view. See below. |
 
 ## Application properties
@@ -234,51 +244,78 @@ waiting for a Wi-Fi check that has nothing to talk to. `nightMode=1` and
 `UseHttpsRequirements=0` in that same file confirm the numeric convention; the
 driver does not set them.
 
-Language is written as `Language=<code>` before start and the app's actual
-language is read from `E2E:LANGUAGE` (which comes from
-`System.getDeviceSettings().systemLanguage`). The configuration that was written
-is never used as evidence.
+### Language is a numeric index
 
-### Language cannot be provisioned
+The simulator stores the device language as an **index**, not a code: the
+maintainer's working installation carries `Language=7`, and launching with it
+makes the app report `E2E:LANGUAGE;code=deu`. The mapping lives in one place,
+[`tests/config/simulator-languages.json`](../config/simulator-languages.json),
+because the simulator's language order is undocumented and the only honest
+source is measurement:
 
-Measured on the guest, twice:
-
-```text
-simulator.ini: Language=deu                            -> app: E2E:LANGUAGE;code=eng
-LANG=de_DE.UTF-8 LANGUAGE=de LC_ALL=de_DE.UTF-8 + deu  -> app: E2E:LANGUAGE;code=eng
+```bash
+python -m e2e language-scan --prg <built.prg> --write     # on the guest
 ```
 
-The simulator's own `CIQ_LOG.YML` says `Language-Code: eng` in both cases.
-`GARMIN/Settings/` stays empty, there is no `HKCU\Software\Garmin*` key, and
-`deu` is a language the binary knows (the value survives in `simulator.ini`), so
-this is not a spelling problem: **device language is a device setting the
-simulator applies through its own UI**, and those menus are not scripted.
+`language-scan` starts the simulator once per index (default `0-24`), reads
+`E2E:LANGUAGE;code=...` from the app and merges `code -> index` into that file.
+The whole table was measured on the guest (fenix7, Connect IQ 6.0.4 simulator):
 
-The consequence is honest reporting, not pretending:
+| Index | Code | Index | Code | Index | Code |
+| --- | --- | --- | --- | --- | --- |
+| 0 | `eng` | 9 | `hun` | 18 | `spa` |
+| 1 | `ces` | 10 | `hrv` | 19 | `swe` |
+| 2 | `dan` | 11 | `ita` | 20 | `cht` |
+| 3 | `dut` | 12 | `nob` | 21 | `chs` |
+| 4 | `eng` again | 13 | `pol` | 22 | `jpn` |
+| 5 | `fin` | 14 | `por` | 23 | `tha` |
+| 6 | `fre` | 15 | `rus` | 24 | `ind` |
+| 7 | `deu` | 16 | `slo` |  |  |
+| 8 | `gre` | 17 | `slv` |  |  |
 
-- `wait_ready` requires that a language is reported and compares it with the
-  request. A mismatch is recorded as a **warning** in `logs/driver.log`
-  (including the requested and reported codes); it does not fail the run,
-  because no driver-side action can change it.
-- The engine skips a run whose language is not `eng` when the driver says it
-  cannot provision a language (`provisions_language = False` on the Wine
-  driver), with `skip_reason` in the report and a `skipped` entry in JUnit. The
-  dry run still exercises those scenarios' wiring with the null driver.
-- `tests/docs/coverage.md` lists every non-English variant as **blocked**
-  instead of counting it as evidence, and the summary counts them.
+Index 4 reports `eng` as well; the map keeps the first index per code. The
+app's six languages are therefore all provisionable: `eng` 0, `fre` 6, `deu` 7,
+`ita` 11, `pol` 13, `spa` 18, and the blocked-variant count in
+`tests/docs/coverage.md` is **0**. `deu: 7` also matches the maintainer's own
+`simulator.ini`, which is an independent cross-check of the table.
 
-The future path is one of: script the simulator's Simulation menu (device
-settings), or find a persistence file the simulator actually reads. The SDK
-history notes device-settings change notifications for language; nothing else on
-the guest accepted a language yet.
+`--write` checks writability **before** the scan starts, because a read-only
+checkout (the runner mounts `/work` read-only) would otherwise waste the whole
+25-index run:
+
+```text
+cannot write /work/tests/config/simulator-languages.json: [Errno 30] Read-only file system
+Re-run with a writable target and copy it back:
+  python -m e2e language-scan --prg <prg> --write --output /tmp/languages.json
+  cp /tmp/languages.json /work/tests/config/simulator-languages.json
+```
+
+- `eng` is the simulator's default. The driver **removes** the `Language` key for
+  it rather than writing an index, so a stale `Language=7` from a previous run
+  (or the maintainer's own file) cannot run an English scenario in German.
+- A code **with** an index is written and then **verified**: `wait_ready` fails
+  the run when the app reports a different language, because a run in the wrong
+  language asserts the wrong strings. The message names `language-scan`.
+- A code **without** an index raises in `start()` and is reported `skipped` by
+  the engine (`can_provision_language()` answers per language, not per driver),
+  so an unprovisionable language can never masquerade as evidence.
+- `tests/docs/coverage.md` counts a variant as blocked only while its code has no
+  measured index; the measured table unblocked all 50 localisation runs.
+
+The earlier conclusion that "device language cannot be provisioned" was wrong:
+it came from writing `Language=deu`, which the simulator ignores because it wants
+an index. `LANG`/`LC_ALL` on the Wine process make no difference either, and that
+part still holds.
 
 A mode change at runtime (the simulator's `Simulation` and `Connection` menus)
-is likewise **not implemented**. The driver would have to script native Win32
+is **not implemented**. The driver would have to script native Win32
 menus with `Alt+S`/`Alt+C` plus arrow keys and confirm the effect from
 `E2E:CONNECTION`; the spike under [`spike/`](../spike/README.md) exercises that
 path, and its verdict decides whether it is reliable enough for the driver.
 Until then a scenario that needs a mode gets it at startup, and the request-count
-assertions prove the app's behaviour.
+assertions prove the app's behaviour. The guest also shows there is **no menu bar
+to drive**: `xwininfo -root -children` lists only the main window and 1x1 helper
+windows, and `Alt+F`/`Alt+S`/`Alt+M` open nothing.
 
 Night mode, sleep mode and HTTPS requirements are also only available through
 those menus and are not scripted.
@@ -365,6 +402,35 @@ The earlier `GlanceViewDelegate` idea is recorded here so it is not retried:
 as "Invoked when certain glance event occurs, none for now". There is no select
 handling, so a delegate cannot be why the simulator stays in glance mode.
 
+## Window size is per device
+
+The simulator persists a window size per device and sizes the window to that
+device's art: measured on the guest, **fenix7 is 409x600** and **fenix847mm is
+713x961**. Each device's `simulator.json` (`display.location`, `keys[].location`)
+is in that device's own art space and maps **1:1 to its own window**, so the
+driver reads the geometry on every run and never assumes a size.
+
+`wait_ready` records the size and then checks that the declared
+`display.location` fits inside it:
+
+```text
+window geometry: 713x961 at (+0,+0)
+declared display 134,221 454x454 fits the 713x961 window 1:1
+```
+
+If it does not fit, the run stops, because that means the window is another
+device's size or the simulator ignored the device — the failure mode that made a
+409x600 assumption look correct for fenix7 only:
+
+```text
+the simulator window is 409x600, but fenix847mm declares display.location
+134,221 454x454, which does not fit inside it.
+```
+
+An `E2E_WINE_SCREEN_RECT` pin overrides the check (the operator's rectangle wins
+when the definition is wrong). The window position is re-read immediately before
+every click, because it changes between runs.
+
 ## Input
 
 `press` and `tap` first focus the simulator window:
@@ -413,63 +479,165 @@ the same scale/offset re-anchors the key hit areas, for a window that really is
 showing a different rectangle. `logs/driver.log` records the mechanism for every
 press: the clicked window point and the mapper source, or the keysym.
 
-### Proving that input is delivered
+### Input: no synthetic input reaches the simulator under Wine
 
-A click that lands correctly and a click the simulator never receives look the
-same in a log, so the driver separates the two from the simulator's chrome:
+**This is a limitation of this environment, and it is settled.** Every
+measurement below was taken on the guest with the screen rectangle cropped before
+and after, the shim's `/__requests` polled after every step, and — from
+`658f500` on — an **idle baseline**: two captures a second apart with no input,
+so a screen that redraws on its own cannot be mistaken for a press that worked.
 
-- The pointer moves to **absolute root coordinates** (`window origin + point`)
-  and the click is generated with XTEST; keys go to the **focused** window
-  instead of `xdotool key --window`, because `XSendEvent` is ignored by many
-  toolkits. Both keep the window-targeted form as a fallback if the first
-  command fails.
-- `probe_input_delivery()` presses the declared `onSelect` area once and
-  requires a new `E2E:VIEW`/`ERRORVIEW` **or** a change inside the
-  `display.location` rectangle. The contract case `input-delivery` fails with
-  "delivery to the app or the app not reacting" when neither happens — it does
-  **not** try a simulator menu: the guest's simulator has no menu bar, and no
-  `Alt+F`/`Alt+S`/`Alt+M` opens a window there.
-- `press-effect` accepts a new view or a change in the **screen rectangle** at or
-  above the pixel threshold. The simulator highlights its own bezel buttons, so
-  a whole-window difference would pass while the app never reacted; the screen
-  region is therefore the only area measured. It presses ENTER, MENU and DOWN,
-  and taps the screen centre on a touch device.
+| Input | Screen change | Requests |
+| --- | --- | --- |
+| `Down` (`nextPage`), `Up` (`previousPage`), repeated | 0 | 0 |
+| keys `a`, `b` | 0 | 0 |
+| `Return`, `KP_Enter`, `Escape`, `Menu`, `space`, `F5`, `F6` | 0 | 0 |
+| mouse click on the declared `enter` hit area, pointer verified | 0 | 0 |
+| mouse click inside the screen, pointer verified | 0 | 0 |
+| the same clicks with `matchbox-window-manager` and `windowactivate --sync` | 0 | 0 |
+| the same clicks inside a Wine virtual desktop (`wine explorer /desktop=ciq,1024x768`) | 0 | 0 |
 
-Both cases are red on the guest exactly while the app sits on the glance page:
-the simulator receives the clicks, but the app does not react (see "Opening the
-app from the glance page"). That is the accurate state, not a coordinate bug.
+Three earlier numbers of 749/731/638 px for `Down`/`Up` were **the app's first
+draw landing late**, not input: with the idle baseline in place every press
+measures **0 px**, including the arrow keys whose changes those numbers were.
+That is exactly the false positive the baseline exists to catch, and it is why
+the per-press measurement is evidence and `press-sequence` is the verdict.
 
-Keystrokes are only a fallback:
+With the pointer verified over the simulator window id at the hit areas and
+inside the screen, and with a window manager present or absent, and in a Wine
+virtual desktop, no click and no key changes anything and no request is made. The
+maintainer's Windows simulator does switch from the glance on a click, so the
+app's behaviour is fine; **the simulator receives no synthetic input under Wine
+in this environment**.
 
-- `E2E_WINE_KEY_<BUTTON>=<keysym>` always wins and sends a key instead;
-- an SDK whose `keys` is a mapping of action → Windows virtual-key code (the
-  older shape) also produces keysyms;
-- the documented defaults (`START=ctrl+s`, `UP=Up`, `DOWN=Down`,
-  `ENTER=Return`, `BACK=Escape`, `MENU=ctrl+m`) are the last resort.
+The consequence, stated plainly for the next reader:
 
-A keystroke the simulator ignores is indistinguishable from a successful press
-unless the effect is observed, so the contract test does not stop at "the call
-succeeded": `press-effect` presses ENTER, then MENU, then DOWN and requires a
-new `E2E:VIEW` or `E2E:ERRORVIEW` within a few seconds. Without one, input never
-reached the app and the case fails, naming both mechanisms.
+> No coordinate, keysym, focus or window-manager change can fix this. If you
+> need UI assertions, run the simulator on Windows or fix Wine input; the
+> harness cannot.
+
+The `press`/`tap` machinery is kept because it is correct and cheap, and because
+it is what proves the environment: `app-entry`, `input-delivery`, `press-effect`
+and `press-sequence` fail on the guest, and those four failures are the accurate
+record, not a regression to chase.
+
+**`press-effect` must not pass without an effect, and now cannot.** It once passed
+while the app was not running at all, because a pixel comparison cannot tell "the
+press changed the screen" from "the screen redraws on its own". Two idle captures
+are taken `PRESS_BASELINE_INTERVAL` apart before any input, and a press must
+change the screen rectangle by **more** than that idle delta (and by at least
+`PRESS_PIXEL_THRESHOLD`). The detail reports both numbers:
+
+```text
+press-effect  pass  tap: screen change 60000px in the screen rectangle (idle baseline 5000px)
+```
+
+and a case with no `E2E:` output at all fails immediately with "the app produced
+no E2E: console output at all … This is a launch problem, not a press problem",
+so an unstarted app can never satisfy it.
+
+`press` therefore picks its path and records it (kept for the day the
+environment delivers input; none of these paths works here today):
+
+1. `E2E_WINE_KEY_<BUTTON>=<keysym>` (or `--key BUTTON=KEYSYM`) always wins;
+1. a documented keyboard binding (currently `UP=Up`, `DOWN=Down`) is used
+   instead of the declared hit area;
+1. otherwise the declared `keys[].location` rectangle is clicked;
+1. the last resort is the documented keysym (`START=ctrl+s`, `ENTER=Return`,
+   `BACK=Escape`, `MENU=ctrl+m`).
+
+`--key` exists so a candidate key can be tried without a code change. Given the
+measurements above it is an escape hatch, not a workaround:
+
+```bash
+python -m e2e contract-test --driver wine --prg <prg> --key ENTER=Return
+python -m e2e contract-test --driver wine --prg <prg> --key ENTER=KP_Enter --key MENU=Menu
+```
+
+Each measured press reports its path, its effect and (with `--shim-url` or
+`E2E_SHIM_URL`) the shim requests it caused, in the normal contract output:
+
+```text
+press[DOWN]   skipped  mechanism=keyboard (keysym Down); effect=none; screen=0px; requests +0 — no effect in isolation; the press-sequence case is the delivery verdict
+press[ENTER]  skipped  mechanism=mouse (window (378,180)); effect=none; screen=0px; requests +0 — no effect in isolation; the press-sequence case is the delivery verdict
+press-sequence fail   a sequence of DOWN, DOWN, UP produced no effect on any press
+```
+
+On this guest `press-sequence` fails, and that is the accurate state.
+
+**The per-press measurement is evidence; the sequence is the verdict.** A single
+`DOWN` at the top of a glance list legitimately changes nothing, so a per-press
+pass/fail verdict would be unfair to a working input path. `press-sequence`
+presses `DOWN`, `DOWN`, `UP` and requires at least one measurable effect, which is
+a fair test for cumulative navigation and still catches a completely dead input
+path (all three silent = fail, with every mechanism in the message). A press that
+has no effect is never reported as a pass, and a repeated view is never an
+effect: `press-effect` requires a _different_ `VIEW` (category or name), or, once
+the app has left the glance, a change inside the declared screen rectangle.
+
+`tap` remains a call-level case because its coordinate is arbitrary; its detail
+names the verified window and point, and no effect is asserted there.
+
+### The pointer must be verified, not assumed
+
+A click that lands on the **root window** is indistinguishable from a simulator
+that ignores the mouse. That is not hypothetical: on the guest,
+`xdotool getmouselocation` reported window `543` (the root) while the simulator
+was `85983235`, and Wine logged no button or motion events at all. Every "the
+mouse is silent" measurement before this check had that failure mode.
+
+`press` and `tap` therefore never click blind:
+
+1. resolve the simulator window id for _this_ run (it changes between runs);
+1. read its geometry immediately before moving, and move the pointer to
+   `window origin + declared point`;
+1. read `xdotool getmouselocation` back and require the pointer to be at that
+   point **and** over the simulator window — the same window id, or another
+   window belonging to the same PID, because Wine parents the client area in a
+   child window;
+1. only then send the button. The verified window id and point appear in
+   `last_press()` and in `logs/driver.log`.
+
+If the pointer is not over the simulator the driver raises:
+
+```text
+DriverError: the pointer never reached the simulator window: `xdotool getmouselocation`
+reports window 543, which is the root window, not the simulator (85983235).
+```
+
+That is a hard error rather than a silent press, and the pointer is re-moved once
+with freshly read geometry first, because a window that moved between reading its
+position and moving the pointer looks identical. If `xdotool getmouselocation` is
+unavailable the driver records a warning and continues, so an old xdotool does not
+break the run.
+
+Verifying the pointer was necessary but not sufficient: on the guest it is over
+the simulator window at every measured point, and still no click has any effect.
+The pointer check is what turned "the mouse is silent" from a guess into two
+separate facts — first the pointer was on the root window, and now that it is on
+the simulator the simulator still takes no input. See the input section above.
 
 ### Why the app stays on the glance page
 
-**This is the cause of every "no request" and every red input case, and it is
-app-side.** Under the simulator the glance is requested **in the app's own
-process**, and `OHApp.getGlanceView()` calls `AppLifecycle.setGlance()`. That
-flag is process-wide and latched, so the lifecycle guards
+The maintainer reports that **clicking the glance in their simulator switches
+into app mode**, so the transition itself works on a working simulator. In this
+environment it cannot be reached at all, because **no synthetic input arrives**
+(see "Input: no synthetic input reaches the simulator under Wine"): `wait_ready`
+still tries select, the `onMenu` hold, a second select (two taps on touch
+devices) and one PRG relaunch, and every one of those clicks is pointer-verified
+and still changes nothing. So `app-entry`'s failure here is environmental, not an
+app defect and not a coordinate or keysym problem.
+
+The app also latches glance mode in its own process, which matters when input
+does work:
 
 ```monkeyc
 if( AppLifecycle.isGlance() ) { return; }   // onStart, onActive, ...
+function getGlanceView(...) { AppLifecycle.setGlance(); ... }
 ```
 
-bail out for the rest of the process: `getInitialView()` yields no view and
-`SitemapRequest.start()` is never reached. On hardware the glance really is a
-separate process and the flag only affects that process; the simulator does not
-give it one.
-
-Three builds on the guest confirm it:
+`setGlance()` sets a process-wide flag, and the simulator does not give the
+glance the separate process hardware gives it. Three builds on the guest:
 
 | Build | App source | Result |
 | --- | --- | --- |
@@ -477,23 +645,17 @@ Three builds on the guest confirm it:
 | `watch-app` | `getGlanceView()` returns `null`, `setGlance()` kept | still `LANGUAGE` + `category=glance` |
 | `watch-app` | `getGlanceView()` returns `null` with no `setGlance()` | `LANGUAGE` only, `monkeydo` exits 0: no first view at all |
 
-So no device, manifest type, input event or coordinate change can fix it. The
-harness must **not** patch the latch in a build profile: a test build that
-changes lifecycle semantics would test a different application. The fix belongs
-to the app and is tracked in #396; the `watch-app` profile and the `app-entry`,
-`input-delivery` and `press-effect` cases are already the right shape and should
-start working unchanged once the latch is released.
-
-`wait_ready` still tries select, the `onMenu` hold, a second select (two taps on
-touch devices) and one PRG relaunch when the first view is the glance. Those are
-defensive: they matter on hardware or after the app-side fix, and each attempt
-plus its mapped window point is logged.
+Neither the harness nor a build profile may patch that: a test build that changes
+lifecycle semantics would test a different application. The `watch-app` profile
+and the `app-entry`, `input-delivery`, `press-effect` and `press-sequence` cases
+are the right shape and should start working unchanged on a simulator that
+delivers input.
 
 Two related measurements, so they are not repeated: replacing the glance with a
 cleared background changed nothing, and `GlanceViewDelegate` is not a candidate
 (it only has `onGlanceEvent`, "none for now"). A widget left in glance mode also
 has a 32 KB budget, which is why the glance-only `Invalid Font Specified` may
-share the cause.
+share the cause. Both are recorded in #396.
 
 `tap(x, y)` takes **device screen pixels**. The driver maps them into the
 window through the watch-screen rectangle declared by the device definition:
@@ -524,10 +686,18 @@ is enough to act on it.
 | `device title … does not match` / `does not name a device` | **warning only**; the trace stream already proved the app is running | check `LastUsedDevice` in `simulator.ini` if results look wrong |
 | `monkeydo exited with code …` | wrong PRG or device name | read `logs/console.log` |
 | `app-ready … no console line` | the app started but produced no `E2E:` line | check the PRG is a debug build and the device wiring (`link-devices` is accurate here) |
-| `warning: the app is still on the glance page` | a widget in glance mode; `getInitialView()` did not run, so no request is made | an app-side transition question: the glance delegate and the 32 KB glance budget, see below |
-| `app-entry … still showing the glance` | the app latched glance mode in its own process (`AppLifecycle.setGlance()` set by `getGlanceView()`), so `getInitialView()` never runs | app-side, tracked in #396; the harness must not patch lifecycle semantics in a build profile |
-| `press-effect … no different VIEW` | the press produced a repeated view or none; while the app is on the glance, screen changes are not counted | the app is on the glance, so see `app-entry`; otherwise compare the logged point with `keys[].location` |
-| `the app reported system language …` | `Language` in `simulator.ini` was ignored | see the language section above |
+| `warning: the app is still on the glance page` | the glance transition did not happen; in this environment no synthetic input arrives, so it cannot | see "Input: no synthetic input reaches the simulator under Wine"; run on Windows for UI assertions |
+| `app-entry … still showing the glance` | `getInitialView()` never ran; the app never left the glance because input does not arrive | environmental: run the simulator on Windows, or fix Wine input. `--key` will not help |
+| `app-ready … no console output at all` | the app never started: `monkeydo` produced nothing, so this is launch/packaging for that device, not the glance | read `logs/console.log` and the build log; confirm the PRG is the device's build and fits its memory; launch `monkeydo <prg> <device>` by hand |
+| `app-ready … output but no 'E2E:' line` | something ran, but not this E2E build | pass the debug PRG built by `e2e build`; a release build prints no trace |
+| `press-effect … no E2E: console output at all` | the app was not running, so no pixel change is attributable to input | same as `app-ready`: fix the launch first |
+| `press-effect … beat that` | the screen changes on its own by at least the idle baseline, so the press is indistinguishable | freeze the animated region or assert a view instead of pixels |
+| `press-effect … no different VIEW` | the press produced a repeated view or none; the idle baseline shows no input arrived | environmental: no coordinate, keysym or window manager fixes it; run on Windows for UI assertions |
+| `press[<button>] … effect=none` | the press ran but changed nothing measurable, which is every press in this environment. Reported as evidence (`skipped`); the verdict is `press-sequence` | check the mechanism and verified pointer in `logs/driver.log`; if the pointer is verified, stop — it is the environment |
+| `press-sequence … DOWN, DOWN, UP produced no effect` | no press in the sequence reached the app by any mechanism, which is the accurate state here | read the three mechanisms; this is not a regression to chase, it is the environment |
+| `the pointer never reached the simulator window` | the click would have gone to the root window or another client, so it was refused | the window moved or is not mapped on this display; re-run, and confirm `xdotool getmouselocation` names the simulator window. This is the failure mode behind every "the mouse is silent" measurement |
+| `the app reported system language …` | the numeric index was written but the app reports another language, so the index is wrong or was ignored | run `python -m e2e language-scan --prg <prg> --write` and check `tests/config/simulator-languages.json` |
+| `language 'pol' has no measured simulator index` | the code is not in the measured map, so the run would be in another language | measure it with `language-scan --write`; until then the run is reported blocked |
 | `the app showed the configuration error view` | the PRG was built without the requested properties | rebuild with `e2e build --settings <fixture>`, or pass a PRG built that way |
 
 ## The Windows `shell.exe` bridge does not work
@@ -558,7 +728,9 @@ running so the next `start` does not pay for prefix initialisation again.
 ## What is not verified in this change
 
 The driver was written and reviewed without Wine, a display or the SDK. The
-proof is a driver run on the guest, which the operator performs:
+proof is a driver run on the guest, which the operator performs. Since `658f500`
+the guest has confirmed the language path end to end (`deu` provisioned through
+index 7) and the input limitation below.
 
 1. Build the debug PRG with the contract's fixture:
    `python -m e2e build --device fenix6pro --settings default` (it prints the
@@ -566,32 +738,29 @@ proof is a driver run on the guest, which the operator performs:
    app's property defaults in, and the build fails if `monkeyc`'s settings JSON
    does not echo them.
 1. Run `python -m e2e contract-test --driver wine --prg <built.prg>` inside the
-   runner container and confirm the report is all `pass` with exit `0`. The
-   device is taken from the PRG name; pass `--device fenix847mm` with that
-   build so `tap` is exercised on a touch device for real.
+   runner container. Expect `app-entry`, `input-delivery`, `press-effect` and
+   `press-sequence` to **fail**: that is the environment, not a regression (see
+   "Input: no synthetic input reaches the simulator under Wine"). Everything
+   else should pass.
 1. Run `python -m e2e run smoke/launch-and-poll --driver wine` (or `--prg
    <built.prg>`; the run command builds per scenario, with that scenario's
-   fixture) and confirm the assertions are evaluated, not skipped.
+   fixture) and confirm the trace-driven assertions are evaluated, not skipped.
 1. Open `logs/driver.log` and `logs/CIQ_LOG.YML`: the first should show the
-   `simulator.ini` keys, the transport, `app properties come from the build`,
-   the device-title corroboration and the language warning; the second is the
-   evidence when anything crashed. `logs/ciq-log-errors.txt` lists the
-   classified errors.
-1. Run one language scenario (`extended/localisation-sitemap`) and one mode
-   scenario (`extended/wifi-mode`) to confirm the verification paths.
-1. With the app open, check a press reaches it: the contract's `input-delivery`
-   case proves synthetic input changes the simulator at all, and `press-effect`
-   proves a press changes the app. `logs/driver.log` shows the clicked window
-   point. If either fails, treat it as a delivery/coordinate question in that
-   order before assuming an app defect.
-1. If the log says the app stayed on the glance page, the simulator never
-   reached `getInitialView()`. The driver tried the declared select, the menu
-   hold, a tap and one relaunch. Next, check whether a second `monkeydo` starts
-   another process, and whether the PRG's manifest app types include the watch
-   app. Record what worked here so the launch path can stop guessing.
-1. If taps miss, compare a screenshot with `display.location` in the device's
-   `simulator.json` and pin `E2E_WINE_SCREEN_RECT` for the next run; record the
-   value for the device in this document.
+   `simulator.ini` keys (`Language=7` for `deu`, `Language` removed for `eng`),
+   the transport, `app properties come from the build`, the device-title
+   corroboration and the window geometry; the second is the evidence when
+   anything crashed. `logs/ciq-log-errors.txt` lists the classified errors.
+1. Run one language scenario (`extended/localisation-sitemap`): all six
+   languages should execute (no `skipped` runs) and each should confirm its
+   reported language. Run one mode scenario (`extended/wifi-mode`) to confirm
+   the mode verification path.
+1. Do **not** spend time on input paths in this environment. The pointer is
+   verified, the window manager does not matter, and no click or key reaches the
+   simulator; use Windows, or fix Wine input, if UI assertions are needed.
+1. If taps miss on a device, compare a screenshot with `display.location` in
+   the device's `simulator.json` and pin `E2E_WINE_SCREEN_RECT` for the next run.
+   The `wait_ready` window-fit check already refuses a window that cannot contain
+   the declared rectangle.
 
 ## Fallback if Wine cannot drive the simulator menus
 

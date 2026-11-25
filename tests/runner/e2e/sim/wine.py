@@ -61,6 +61,12 @@ from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 import yaml
 
 from ..config import Device
+from ..languages import (
+    DEFAULT_LANGUAGE,
+    LANGUAGE_INDEX_FILE,
+    language_index,
+    load_language_index,
+)
 from ..sdk import (
     SdkLayout,
     find_device_definitions,
@@ -100,6 +106,16 @@ INPUT_PROBE_KEYS: Tuple[str, ...] = ("alt+s", "alt+c")
 #: A glance clock ticking changes a few hundred; an opened menu or a new view
 #: changes thousands.
 PIXEL_CHANGE_THRESHOLD = 2000
+
+#: Keyboard keysyms the guest has **proven** this simulator honours. Mouse
+#: clicks are silent under this Wine/Xvfb (measured at every point, with and
+#: without a window manager), so a proven keyboard binding is preferred over a
+#: click. The select key is still unknown: `Return`, `KP_Enter`, `Escape`,
+#: `Menu`, `space`, `F5`, `F6` and clicks all produced no screen change.
+PROVEN_KEYSYMS: Mapping[Button, str] = {
+    Button.UP: "Up",
+    Button.DOWN: "Down",
+}
 #: TCP transport ``monkeydo`` connects to; the simulator listens on it after
 #: start. Waiting for it avoids racing the push against the simulator's start-up.
 SIMULATOR_TCP_HOST = "127.0.0.1"
@@ -217,6 +233,36 @@ INI_HINTS: Tuple[str, ...] = (
     "drive_c/users/{user}/AppData/Local/Garmin/ConnectIQ/simulator.ini",
     "drive_c/users/{user}/Temp/com.garmin.connectiq/simulator.ini",
 )
+
+
+@dataclass(frozen=True)
+class PressResult:
+    """What one ``press`` did, and whether it changed anything.
+
+    ``mechanism`` is ``keyboard``, ``mouse`` or ``keyboard (override)``;
+    ``detail`` names the keysym or the window point. ``effect`` is filled in by
+    :meth:`WineSimulatorDriver.press_measured` and is empty when the press
+    produced no observable change, so a no-op can never be reported as success.
+    """
+
+    button: str
+    mechanism: str
+    detail: str
+    effect: str = ""
+    screen_delta: Optional[int] = None
+    views: Tuple[str, ...] = ()
+    requests: Optional[int] = None
+
+    def describe(self) -> str:
+        parts = [f"mechanism={self.mechanism} ({self.detail})"]
+        parts.append(f"effect={self.effect or 'none'}")
+        if self.screen_delta is not None:
+            parts.append(f"screen={self.screen_delta}px")
+        if self.views:
+            parts.append("views=" + ",".join(self.views))
+        if self.requests is not None:
+            parts.append(f"requests +{self.requests}")
+        return "; ".join(parts)
 
 
 # ---------------------------------------------------------------------------
@@ -420,18 +466,15 @@ def xdotool_key_to_window_command(
     ]
 
 
-def xdotool_click_command(
-    x: int,
-    y: int,
-    count: int = 1,
-    delay_ms: int = DEFAULT_KEY_DELAY_MS,
+def xdotool_mousemove_command(x: int, y: int) -> List[str]:
+    return ["xdotool", "mousemove", str(int(x)), str(int(y))]
+
+
+def xdotool_click_only_command(
+    count: int = 1, delay_ms: int = DEFAULT_KEY_DELAY_MS
 ) -> List[str]:
-    """Click at absolute root coordinates, as real X input (XTEST)."""
     return [
         "xdotool",
-        "mousemove",
-        str(int(x)),
-        str(int(y)),
         "click",
         "--repeat",
         str(max(1, int(count))),
@@ -441,56 +484,52 @@ def xdotool_click_command(
     ]
 
 
-def xdotool_click_to_window_command(
-    window: str,
-    x: int,
-    y: int,
-    count: int = 1,
-    delay_ms: int = DEFAULT_KEY_DELAY_MS,
-) -> List[str]:
-    return [
-        "xdotool",
-        "mousemove",
-        "--window",
-        window,
-        str(int(x)),
-        str(int(y)),
-        "click",
-        "--repeat",
-        str(max(1, int(count))),
-        "--delay",
-        str(max(0, int(delay_ms))),
-        "1",
-    ]
-
-
-def xdotool_mousedown_command(x: int, y: int) -> List[str]:
-    """Press the primary button at absolute root coordinates (a device hold)."""
-    return [
-        "xdotool",
-        "mousemove",
-        str(int(x)),
-        str(int(y)),
-        "mousedown",
-        "1",
-    ]
-
-
-def xdotool_mousedown_to_window_command(window: str, x: int, y: int) -> List[str]:
-    return [
-        "xdotool",
-        "mousemove",
-        "--window",
-        window,
-        str(int(x)),
-        str(int(y)),
-        "mousedown",
-        "1",
-    ]
+def xdotool_mousedown_command() -> List[str]:
+    """Press the primary button at the current pointer (see mousemove)."""
+    return ["xdotool", "mousedown", "1"]
 
 
 def xdotool_mouseup_command() -> List[str]:
     return ["xdotool", "mouseup", "1"]
+
+
+def xdotool_mouselocation_command() -> List[str]:
+    return ["xdotool", "getmouselocation", "--shell"]
+
+
+def xdotool_window_pid_command(window: str) -> List[str]:
+    return ["xdotool", "getwindowpid", window]
+
+
+def xwininfo_root_command() -> List[str]:
+    return ["xwininfo", "-root"]
+
+
+def parse_mouselocation(text: str) -> Optional[Dict[str, int]]:
+    """Parse ``xdotool getmouselocation --shell`` output."""
+    values: Dict[str, int] = {}
+    for line in (text or "").splitlines():
+        key, separator, value = line.partition("=")
+        if not separator:
+            continue
+        value = value.strip()
+        if value.lstrip("-").isdigit():
+            values[key.strip().lower()] = int(value)
+    if {"x", "y", "window"} <= set(values):
+        return values
+    return None
+
+
+def parse_root_window_id(text: str) -> Optional[str]:
+    """The root window id from ``xwininfo -root``, as a decimal string."""
+    match = re.search(r'Window id:\s*(0x[0-9a-fA-F]+|[0-9]+)', text or "")
+    if match is None:
+        return None
+    raw = match.group(1)
+    try:
+        return str(int(raw, 16)) if raw.lower().startswith("0x") else str(int(raw))
+    except ValueError:
+        return None
 
 
 def compare_command(before: Path, after: Path) -> List[str]:
@@ -912,13 +951,26 @@ def read_device_keys(devices_root: Optional[Path], product: str) -> Mapping[str,
 # ---------------------------------------------------------------------------
 
 
-def ini_updates(product: str, mode: str, language: str) -> Dict[str, str]:
-    """Startup keys written before the simulator starts."""
+def ini_updates(product: str, mode: str, language_value: Optional[str]) -> Dict[str, str]:
+    """Startup keys written before the simulator starts.
+
+    ``language_value`` is the numeric ``Language`` index the map measured, or
+    ``None`` for the simulator's own default language: the key is then removed
+    rather than written, because writing an unmeasured index would silently run
+    the app in a language nobody asked for.
+    """
     if mode not in MODE_INI_VALUES:
         raise DriverError(f"unknown mode {mode!r}; expected one of {sorted(MODE_INI_VALUES)}")
-    updates: Dict[str, str] = {"LastUsedDevice": product, "Language": language}
+    updates: Dict[str, str] = {"LastUsedDevice": product}
+    if language_value is not None:
+        updates["Language"] = str(language_value)
     updates.update(MODE_INI_VALUES[mode])
     return updates
+
+
+def ini_removals(language_value: Optional[str]) -> Tuple[str, ...]:
+    """Keys to delete: ``Language`` when the default language is requested."""
+    return () if language_value is not None else ("Language",)
 
 
 @dataclass(frozen=True)
@@ -928,22 +980,34 @@ class IniUpdate:
     text: str
     written: Tuple[str, ...] = ()
     appended: Tuple[str, ...] = ()
+    removed: Tuple[str, ...] = ()
 
     @property
     def keys(self) -> Tuple[str, ...]:
-        return tuple(sorted(set(self.written) | set(self.appended)))
+        return tuple(sorted(set(self.written) | set(self.appended) | set(self.removed)))
 
 
-def update_ini(text: Optional[str], updates: Mapping[str, str]) -> IniUpdate:
+def update_ini(
+    text: Optional[str],
+    updates: Mapping[str, str],
+    remove: Sequence[str] = (),
+) -> IniUpdate:
     """Rewrite ``simulator.ini`` in the simulator's own format.
 
     The file the simulator writes is flat ``key=value`` lines with **no section
     header** (for example ``LastFplVersion=9``, ``BleState=2``). Existing keys
     are replaced in place and keep their original spelling, every unrelated key
     is preserved because the simulator rewrites the file itself, and a missing
-    key is appended at the end rather than under an invented section.
+    key is appended at the end rather than under an invented section. Keys in
+    ``remove`` are deleted outright: a stale ``Language`` index from a previous
+    run would otherwise put the app in the wrong language.
     """
-    lines = (text or "").splitlines()
+    removed = {name.lower() for name in remove}
+    lines = [
+        line
+        for line in (text or "").splitlines()
+        if not (line.partition("=")[1] and line.partition("=")[0].strip().lower() in removed)
+    ]
     written: List[str] = []
     pending: Dict[str, str] = {}
     for name, value in updates.items():
@@ -964,6 +1028,7 @@ def update_ini(text: Optional[str], updates: Mapping[str, str]) -> IniUpdate:
         text="\n".join(lines) + "\n" if lines else "",
         written=tuple(written),
         appended=tuple(pending),
+        removed=tuple(sorted(set(remove))),
     )
 
 
@@ -1210,11 +1275,12 @@ class WineSimulatorDriver(SimulatorDriver):
     name: str = "wine"
     supports_events: bool = True
     supports_screenshots: bool = True
-    #: The simulator applies device language from its own UI; writing
-    #: ``Language`` to ``simulator.ini`` is preserved but not applied, so this
-    #: driver cannot provision a language. ``wait_ready`` records the language
-    #: the app reports, and the engine reports other languages as blocked.
-    provisions_language: bool = False
+    #: The simulator's ``Language`` setting is a numeric index, not a code, and
+    #: the index is measured per code (see ``e2e.languages``). Every code with a
+    #: measured index can be provisioned; ``eng`` always can, by removing the key
+    #: and using the simulator's own default. ``can_provision_language()`` is the
+    #: precise question, because this is per language and not per driver.
+    provisions_language: bool = True
 
     def __init__(
         self,
@@ -1249,8 +1315,13 @@ class WineSimulatorDriver(SimulatorDriver):
         self._settings_file: Optional[Path] = None
         self._keys: Dict[Button, str] = dict(DEFAULT_KEYS)
         self._definition = SimulatorDefinition()
+        self._last_press: Optional[PressResult] = None
         self._mode = "ble"
         self._language = "eng"
+        self._expect_language = True
+        self._language_index_map: Optional[Dict[str, int]] = None
+        #: The language code the app reported at the last ``wait_ready``.
+        self.last_language: Optional[str] = None
         self._display_name = ""
         self._ini_path: Optional[Path] = None
         self._ini_summary: Optional[IniUpdate] = None
@@ -1337,6 +1408,79 @@ class WineSimulatorDriver(SimulatorDriver):
         language: str = "eng",
     ) -> None:
         """Start the simulator for ``device`` and launch the app."""
+        self._start_with(
+            device,
+            settings,
+            mode=mode,
+            language=language,
+            language_value=self._language_ini_value(language),
+        )
+
+    def can_provision_language(self, language: str) -> bool:
+        """True when this driver can put the app into ``language``."""
+        if language == DEFAULT_LANGUAGE:
+            return True
+        return language_index(language, self._language_map()) is not None
+
+    def probe_language(
+        self,
+        index: int,
+        device: Device,
+        settings: AppSettings,
+        mode: str = "ble",
+        timeout_s: float = DEFAULT_READY_TIMEOUT,
+    ) -> str:
+        """Launch with an explicit ``Language`` index and return the reported code.
+
+        ``e2e language-scan`` uses this to enumerate the map: the simulator does
+        not document its language order, so the only honest source is one launch
+        per index plus the ``E2E:LANGUAGE`` line the app prints.
+        """
+        self._start_with(
+            device,
+            settings,
+            mode=mode,
+            language=f"index:{index}",
+            language_value=str(int(index)),
+            expect_language=False,
+        )
+        self.wait_ready(timeout_s)
+        return self.last_language or "unknown"
+
+    def _language_map(self) -> Dict[str, int]:
+        cached = getattr(self, "_language_index_map", None)
+        if cached is None:
+            cached = load_language_index()
+            self._language_index_map = cached
+        return cached
+
+    def _language_ini_value(self, language: str) -> Optional[str]:
+        """The numeric ``Language`` value, or ``None`` for the simulator default."""
+        if language == DEFAULT_LANGUAGE:
+            return None
+        index = language_index(language, self._language_map())
+        if index is None:
+            raise DriverError(
+                f"language {language!r} has no measured simulator index, so it "
+                "cannot be provisioned.\n"
+                "The simulator stores its language as an index (`Language=7` is "
+                "German), and its order is not documented. Measure it once:\n"
+                f"  python -m e2e language-scan --prg <built.prg> --write\n"
+                f"which updates {LANGUAGE_INDEX_FILE}. Until then the scenario is "
+                "reported blocked rather than run in the wrong language."
+            )
+        return str(index)
+
+    def _start_with(
+        self,
+        device: Device,
+        settings: AppSettings,
+        *,
+        mode: str,
+        language: str,
+        language_value: Optional[str],
+        expect_language: bool = True,
+    ) -> None:
         if self._prg is None:
             raise DriverError("prepare() must stage a PRG before start()")
         if mode not in MODE_INI_VALUES:
@@ -1348,6 +1492,8 @@ class WineSimulatorDriver(SimulatorDriver):
         self._settings = settings
         self._mode = mode
         self._language = language
+        self._expect_language = expect_language
+        self.last_language = None
         self._ciq_errors = []
         self._ciq_header = {}
         self._ciq_log = None
@@ -1365,7 +1511,7 @@ class WineSimulatorDriver(SimulatorDriver):
 
         self._ensure_display()
         self._sweep_existing_simulator()
-        self._write_simulator_ini(device, mode, language)
+        self._write_simulator_ini(device, mode, language_value)
         self._start_simulator()
         self._seed_settings(settings)
         self._launch_app(device)
@@ -1381,16 +1527,21 @@ class WineSimulatorDriver(SimulatorDriver):
         parsed = self._wait_for_startup(timeout)
         language = next((event for event in parsed if event.event == "LANGUAGE"), None)
         observed = language.get("code") if language is not None else "unknown"
+        self.last_language = observed
         if observed != self._language:
-            # The simulator applies device language through its own UI, which is
-            # not scripted. The app still reports the language it runs in, so a
-            # mismatch is evidence to record, not a reason to fail a run.
+            if self._expect_language:
+                raise DriverError(
+                    f"the app reported system language {observed!r} but the "
+                    f"scenario requested {self._language!r}, and this driver "
+                    "provisioned it (the numeric simulator index was written).\n"
+                    "That means the index is wrong for this code or the simulator "
+                    "ignored the key: correct the map with\n"
+                    f"  python -m e2e language-scan --prg <built.prg> --write\n"
+                    f"({LANGUAGE_INDEX_FILE}). A run in the wrong language would "
+                    "assert the wrong strings, so it is stopped here."
+                )
             self._record(
-                f"warning: the app reported system language {observed!r} but the "
-                f"scenario requested {self._language!r}; device language is a "
-                "simulator setting the harness cannot provision (the ini key is "
-                "written and preserved, but not applied). tests/docs/"
-                "simulator-driver.md records the measurements."
+                f"probed language: the app reported {observed!r} for this index"
             )
         else:
             self._record(f"language confirmed: {observed}")
@@ -1426,6 +1577,71 @@ class WineSimulatorDriver(SimulatorDriver):
                 "request assertions prove the transition."
             )
         self._record_device_title()
+        self._verify_window_geometry()
+
+    def _verify_window_geometry(self) -> None:
+        """Record the window size and check the declared space fits inside it.
+
+        Each device's ``simulator.json`` is in that device's own art space and
+        maps 1:1 to that device's window, and the size is per device and
+        persisted by the simulator: fenix7's window is 409x600 while
+        fenix847mm's is 713x961. Anything that assumes one of those sizes is only
+        accidentally right for one device, so the size is read per run and the
+        declared screen rectangle is checked against it.
+        """
+        window = self._window
+        if window is None:
+            return
+        display = self._definition.display
+        pinned = parse_screen_rect(os.environ.get(ENV_SCREEN_RECT, ""))
+        try:
+            geometry = self._geometry(window)
+        except DriverError as error:
+            self._record(
+                f"warning: could not read the window geometry, so the declared "
+                f"display.location was not checked against it ({error})"
+            )
+            return
+        if display is not None and pinned is None:
+            # The window can still be resizing right after the app launch, so
+            # give it a moment before declaring the declared space impossible.
+            for _ in range(6):
+                if (
+                    display.x + display.width <= geometry.get("width", 0)
+                    and display.y + display.height <= geometry.get("height", 0)
+                ):
+                    break
+                time.sleep(0.5)
+                geometry = self._geometry(window)
+        width, height = geometry.get("width", 0), geometry.get("height", 0)
+        self._record(
+            f"window geometry: {width}x{height} at "
+            f"(+{geometry.get('x', 0)},+{geometry.get('y', 0)})"
+        )
+        if display is None:
+            return
+        if pinned is not None:
+            self._record(
+                f"{ENV_SCREEN_RECT} is pinned, so the declared "
+                "display.location is not checked against the window"
+            )
+            return
+        if display.x + display.width > width or display.y + display.height > height:
+            product = self._device.product if self._device else "?"
+            raise DriverError(
+                f"the simulator window is {width}x{height}, but {product} declares "
+                f"display.location {display.x},{display.y} "
+                f"{display.width}x{display.height}, which does not fit inside it.\n"
+                "The declared coordinates are in this device's own art space and "
+                "map 1:1 to its own window, so the window is the wrong device's "
+                "size or the simulator ignored the device. Check "
+                "`LastUsedDevice` in simulator.ini, or pin "
+                f"{ENV_SCREEN_RECT}=x,y,width,height from a screenshot."
+            )
+        self._record(
+            f"declared display {display.x},{display.y} {display.width}x"
+            f"{display.height} fits the {width}x{height} window 1:1"
+        )
 
     def _open_app_if_needed(
         self, parsed: Sequence[TraceEvent], deadline: float
@@ -1586,6 +1802,88 @@ class WineSimulatorDriver(SimulatorDriver):
         """Classified simulator runtime errors from the last collected log."""
         return tuple(self._ciq_errors)
 
+    def last_press(self) -> Optional[PressResult]:
+        """What the last ``press`` used and, if measured, what it changed."""
+        return self._last_press
+
+    def press_measured(
+        self,
+        button: Button,
+        count: int = 1,
+        *,
+        timeout_s: float = 3.0,
+        requests: Optional[Callable[[], Optional[int]]] = None,
+    ) -> PressResult:
+        """Press a button and measure whether anything changed.
+
+        A no-op is reported as an empty ``effect``, never as success. The
+        measurement is a new, different view/ERRORVIEW or a change inside the
+        screen rectangle; ``requests``, when given, is a callable returning the
+        shim's request count for the report.
+        """
+        window = self._require_window()
+        region = self.screen_region(window)
+        shots = self.artifact_dir / "logs"
+        shots.mkdir(parents=True, exist_ok=True)
+        before = shots / f"press-{button.value.lower()}-before.png"
+        if region is not None:
+            self.screenshot(before)
+        parsed = parse_lines(list(self.events()))
+        known = {
+            (event.get("category"), event.get("view"))
+            for event in parsed
+            if event.event == "VIEW"
+        }
+        requests_before = requests() if requests is not None else None
+        mark = len(self.events())
+        self.press(button, count)
+        base = self._last_press or PressResult(button.value, "unknown", "")
+
+        deadline = time.monotonic() + timeout_s
+        difference: Optional[int] = None
+        views: List[str] = []
+        effect = ""
+        while time.monotonic() < deadline:
+            for event in parse_lines(list(self.events())[mark:]):
+                if event.event == "ERRORVIEW":
+                    views.append("ERRORVIEW")
+                    effect = f"ERRORVIEW {event.get('id')}"
+                    break
+                if event.event != "VIEW":
+                    continue
+                signature = (event.get("category"), event.get("view"))
+                if signature not in known and event.get("category") != "glance":
+                    views.append(f"{signature[0]}/{signature[1]}")
+                    effect = f"view {signature[0]}/{signature[1]}"
+                    break
+            if effect:
+                break
+            if region is not None:
+                after = shots / f"press-{button.value.lower()}-after.png"
+                self.screenshot(after)
+                difference = self.region_pixel_difference(before, after, region)
+                if difference is not None and difference >= PIXEL_CHANGE_THRESHOLD:
+                    effect = f"screen change {difference}px"
+                    break
+            time.sleep(0.25)
+
+        requests_after = requests() if requests is not None else None
+        self._last_press = PressResult(
+            button=base.button,
+            mechanism=base.mechanism,
+            detail=base.detail,
+            effect=effect,
+            screen_delta=difference,
+            views=tuple(views),
+            requests=(
+                None
+                if requests_before is None or requests_after is None
+                else max(0, requests_after - requests_before)
+            ),
+        )
+        self._record(f"press measurement: {self._last_press.describe()}")
+        return self._last_press
+
     @property
     def ciq_header(self) -> Mapping[str, str]:
         """The ``CIQ_LOG.YML`` header, e.g. ``Language-Code`` and
@@ -1622,6 +1920,13 @@ class WineSimulatorDriver(SimulatorDriver):
             self._send_keys(window, button, override.strip(), count, "environment override")
             return
 
+        proven = PROVEN_KEYSYMS.get(button)
+        if proven:
+            # The guest proved the simulator honours these keys; mouse clicks
+            # are silent under this Wine/Xvfb, so the keyboard path wins.
+            self._send_keys(window, button, proven, count, "proven keyboard binding")
+            return
+
         declared = self._definition.key_for(button)
         if declared is not None:
             self._click_declared_key(window, declared, count)
@@ -1630,10 +1935,10 @@ class WineSimulatorDriver(SimulatorDriver):
         keysym = self._keys.get(button)
         if not keysym:
             raise DriverError(
-                f"no declared hit area and no key binding for {button.value}; set "
-                f"{ENV_KEY_PREFIX}{button.value}=<keysym>"
+                f"no proven keysym, no declared hit area and no key binding for "
+                f"{button.value}; set {ENV_KEY_PREFIX}{button.value}=<keysym>"
             )
-        self._send_keys(window, button, keysym, count, "no declared hit area")
+        self._send_keys(window, button, keysym, count, "no proven binding or hit area")
 
     def _send_keys(
         self, window: str, button: Button, keysym: str, count: int, why: str
@@ -1644,17 +1949,23 @@ class WineSimulatorDriver(SimulatorDriver):
                 check=True,
                 action=f"press {button.value}",
             )
-            mechanism = "XTEST key to the focused window"
+            transport = "XTEST key to the focused window"
         except DriverError:
             self._run(
                 xdotool_key_to_window_command(window, keysym, count),
                 check=True,
                 action=f"press {button.value} (window-targeted fallback)",
             )
-            mechanism = "window-targeted key (XSendEvent)"
+            transport = "window-targeted key (XSendEvent)"
+        mechanism = (
+            "keyboard (override)" if why == "environment override" else "keyboard"
+        )
+        self._last_press = PressResult(
+            button=button.value, mechanism=mechanism, detail=f"keysym {keysym}"
+        )
         self._record(
-            f"press {button.value} x{count} -> keysym {keysym!r} ({mechanism}; "
-            f"{why}); the simulator may ignore keyboard input"
+            f"press {button.value} x{count} -> keysym {keysym!r} ({transport}; "
+            f"{why})"
         )
 
     def _click_declared_key(
@@ -1679,9 +1990,15 @@ class WineSimulatorDriver(SimulatorDriver):
             else:
                 self._click_at(window, x, y, action=f"press {key.button.value}")
             time.sleep(DEFAULT_KEY_DELAY_MS / 1000.0)
+        self._last_press = PressResult(
+            button=key.button.value,
+            mechanism="mouse",
+            detail=f"simulator window {window} at ({x},{y}), pointer verified",
+        )
         self._record(
             f"press {key.button.value} x{count} -> clicked {key.describe()} at "
-            f"window ({x},{y}) ({mapper.source})"
+            f"window ({x},{y}) in simulator window {window} ({mapper.source}); "
+            "the pointer was verified over that window before the button went down"
         )
 
     def _mapper(self) -> CoordinateMapper:
@@ -1695,34 +2012,124 @@ class WineSimulatorDriver(SimulatorDriver):
     def _pointer_down(
         self, window: str, x: int, y: int, *, action: str
     ) -> None:
-        """Press the pointer at a window point, as real X input (XTEST)."""
-        abs_x, abs_y = self._absolute(window, x, y)
-        try:
-            self._run(
-                xdotool_mousedown_command(abs_x, abs_y),
-                check=True,
-                action=action,
-            )
-        except DriverError:
-            self._run(
-                xdotool_mousedown_to_window_command(window, x, y),
-                check=True,
-                action=f"{action} (window-targeted fallback)",
-            )
+        """Press the pointer at a verified window point, as real X input."""
+        self._move_verified(window, x, y, action)
+        self._run(xdotool_mousedown_command(), check=True, action=action)
 
     def _pointer_up(self) -> None:
         self._run(xdotool_mouseup_command(), check=True, action="release")
 
     def _click_at(self, window: str, x: int, y: int, *, action: str) -> None:
-        abs_x, abs_y = self._absolute(window, x, y)
-        try:
-            self._run(xdotool_click_command(abs_x, abs_y, 1), check=True, action=action)
-        except DriverError:
+        """Click a point that the pointer was verified to be over.
+
+        There is deliberately no window-targeted fallback: `xdotool click`
+        clicks wherever the pointer is, so a fallback would be exactly the blind
+        click this check exists to prevent.
+        """
+        self._move_verified(window, x, y, action)
+        self._run(xdotool_click_only_command(1), check=True, action=action)
+
+    def _move_verified(self, window: str, x: int, y: int, action: str) -> None:
+        """Move the pointer and prove it is over the simulator window.
+
+        Clicking blind is how "the mouse is silent" is born: on the guest the
+        pointer was over the root window (`xdotool getmouselocation` reported
+        the root id) and Wine received no button event at all. The window
+        position can change between runs, so the geometry is re-read and the
+        move retried once before failing.
+        """
+        for attempt in (1, 2):
+            abs_x, abs_y = self._absolute(window, x, y)
             self._run(
-                xdotool_click_to_window_command(window, x, y, 1),
+                xdotool_mousemove_command(abs_x, abs_y),
                 check=True,
-                action=f"{action} (window-targeted fallback)",
+                action=f"{action} (move pointer)",
             )
+            location = self._mouse_location()
+            if location is None:
+                self._record(
+                    "warning: xdotool getmouselocation is unavailable, so the "
+                    "pointer could not be verified before this click"
+                )
+                return
+            if (
+                abs(location["x"] - abs_x) <= 1
+                and abs(location["y"] - abs_y) <= 1
+            ):
+                self._verify_pointer_window(window, location["window"])
+                return
+            if attempt == 2:
+                raise DriverError(
+                    f"the pointer did not reach ({abs_x},{abs_y}) for "
+                    f"{action}: xdotool reports ({location['x']},{location['y']}).\n"
+                    "The simulator window may have moved between reading its "
+                    "geometry and moving the pointer; re-run, or check that no "
+                    "other client is grabbing the pointer."
+                )
+
+    def _mouse_location(self) -> Optional[Dict[str, int]]:
+        try:
+            completed = self._run(
+                xdotool_mouselocation_command(),
+                check=False,
+                action="xdotool getmouselocation",
+            )
+        except DriverError:
+            return None
+        return parse_mouselocation(completed.stdout or "")
+
+    def _verify_pointer_window(self, window: str, pointer_window: int) -> None:
+        """Fail unless the pointer is over the simulator window (or a child)."""
+        if str(pointer_window) == str(window):
+            return
+        root = self._root_window_id()
+        if root is not None and str(pointer_window) == root:
+            raise DriverError(
+                "the pointer never reached the simulator window: "
+                f"`xdotool getmouselocation` reports window {pointer_window}, which "
+                f"is the root window, not the simulator ({window}).\n"
+                "A click would go to the desktop and look like a silent simulator. "
+                "Check the window geometry and that the window is mapped and on "
+                "this display."
+            )
+        simulator_pid = self._window_pid(window)
+        pointer_pid = self._window_pid(str(pointer_window))
+        if (
+            simulator_pid is not None
+            and pointer_pid is not None
+            and simulator_pid == pointer_pid
+        ):
+            return
+        raise DriverError(
+            f"the pointer is over window {pointer_window}, not the simulator "
+            f"window {window}, so a click would not reach the app.\n"
+            "Refusing to click blind; see tests/docs/simulator-driver.md."
+        )
+
+    def _root_window_id(self) -> Optional[str]:
+        cached = getattr(self, "_root_id", None)
+        if cached is not None:
+            return cached
+        try:
+            completed = self._run(
+                xwininfo_root_command(), check=False, action="xwininfo -root"
+            )
+        except DriverError:
+            return None
+        self._root_id = parse_root_window_id(completed.stdout or "")
+        return self._root_id
+
+    def _window_pid(self, window: str) -> Optional[int]:
+        try:
+            completed = self._run(
+                xdotool_window_pid_command(window),
+                check=False,
+                action="xdotool getwindowpid",
+            )
+        except DriverError:
+            return None
+        value = (completed.stdout or "").strip()
+        return int(value) if value.isdigit() else None
 
     def _absolute(self, window: str, x: int, y: int) -> Tuple[int, int]:
         geometry = self._geometry(window)
@@ -1751,9 +2158,15 @@ class WineSimulatorDriver(SimulatorDriver):
         for _ in range(max(1, int(count))):
             self._click_at(window, px, py, action="tap")
             time.sleep(DEFAULT_KEY_DELAY_MS / 1000.0)
+        self._last_press = PressResult(
+            button="TAP",
+            mechanism="mouse",
+            detail=f"simulator window {window} at ({px},{py}), pointer verified",
+        )
         self._record(
             f"tap device=({x},{y}) window=({px},{py}) x{count} "
-            f"screen={rect.x},{rect.y},{rect.width},{rect.height}"
+            f"screen={rect.x},{rect.y},{rect.width},{rect.height} "
+            f"in simulator window {window}; the pointer was verified before each click"
         )
 
     def screenshot(self, path: Path) -> Path:
@@ -1980,21 +2393,29 @@ class WineSimulatorDriver(SimulatorDriver):
                 candidates.append(self.prefix / hint.format(user=user))
         return candidates
 
-    def _write_simulator_ini(self, device: Device, mode: str, language: str) -> None:
-        updates = ini_updates(device.product, mode, language)
+    def _write_simulator_ini(
+        self, device: Device, mode: str, language_value: Optional[str]
+    ) -> None:
+        updates = ini_updates(device.product, mode, language_value)
         existing = next((path for path in self._ini_candidates() if path.is_file()), None)
         created = existing is None
         path = existing or self._ini_candidates()[0]
         path.parent.mkdir(parents=True, exist_ok=True)
         text = path.read_text(encoding="utf-8", errors="replace") if path.is_file() else ""
-        update = update_ini(text, updates)
+        update = update_ini(text, updates, remove=ini_removals(language_value))
         path.write_text(update.text, encoding="utf-8")
         self._ini_path = path
         self._ini_summary = update
+        language_note = (
+            f"Language={language_value}"
+            if language_value is not None
+            else "Language removed (simulator default)"
+        )
         self._record(
             f"simulator.ini {path}: "
             + ("created" if created else "rewrote")
-            + f" written={list(update.written)} appended={list(update.appended)}"
+            + f" written={list(update.written)} appended={list(update.appended)} "
+            + f"removed={list(update.removed)}; {language_note}"
         )
 
     def _ini_description(self) -> str:
@@ -2004,7 +2425,8 @@ class WineSimulatorDriver(SimulatorDriver):
             return str(self._ini_path)
         return (
             f"{self._ini_path} (written={list(self._ini_summary.written)}, "
-            f"appended={list(self._ini_summary.appended)})"
+            f"appended={list(self._ini_summary.appended)}, "
+            f"removed={list(self._ini_summary.removed)})"
         )
 
     # -- simulator ---------------------------------------------------------
@@ -2307,6 +2729,31 @@ class WineSimulatorDriver(SimulatorDriver):
                 return parsed
             time.sleep(0.25)
 
+        lines = [line for line in self.events() if line.strip()]
+        if not lines:
+            raise DriverError(
+                "app-ready: monkeydo produced no console output at all within "
+                f"{min(timeout, DEFAULT_READY_TIMEOUT * 2):g}s, so the app never "
+                "started.\n"
+                "This is a launch or packaging problem for this device, not the "
+                "glance transition: a device that starts the app prints at least "
+                "`E2E:LANGUAGE` even when it then stays on the glance.\n"
+                "What to check, in order: logs/console.log for monkeydo's own "
+                "error; that the PRG was built for this device "
+                "(`openhab-garmin-<device>.prg`); the PRG size against the "
+                "device's memory limit; then launch it by hand with "
+                "`monkeydo <prg> <device>`.\n"
+                f"log: {self.console_log}"
+            )
+        if not any("E2E:" in line for line in lines):
+            raise DriverError(
+                "app-ready: the console has output but no `E2E:` line within "
+                f"{min(timeout, DEFAULT_READY_TIMEOUT * 2):g}s, so the launched "
+                "binary is probably not this E2E build (a release build does not "
+                "print the trace).\n"
+                f"log: {self.console_log}\n"
+                f"{tail(lines, 12)}"
+            )
         raise timeout_error(
             "app-ready",
             min(timeout, DEFAULT_READY_TIMEOUT * 2),

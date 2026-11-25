@@ -34,6 +34,10 @@ NOT_IMPLEMENTED = "not-implemented"
 PRESS_EFFECT_TIMEOUT = 4.0
 #: Window pixels that must change for a press to count as having had an effect.
 PRESS_PIXEL_THRESHOLD = 2000
+#: Seconds between the two idle captures that measure how much the screen
+#: changes on its own. A press must beat that baseline, so a ticking clock or an
+#: idle redraw cannot turn a dead input path into a pass.
+PRESS_BASELINE_INTERVAL = 1.0
 
 
 class ContractError(RuntimeError):
@@ -100,14 +104,18 @@ def _png_is_valid(path: Path) -> str:
     return ""
 
 
-def _run_case(name: str, fn: Callable[[], None]) -> ContractCase:
+def _run_case(name: str, fn: Callable[[], object]) -> ContractCase:
     try:
-        fn()
+        result = fn()
     except NotImplementedError as error:
         return ContractCase(name, NOT_IMPLEMENTED, str(error))
     except Exception as error:  # noqa: BLE001 - a contract failure is a result
         return ContractCase(name, FAIL, f"{type(error).__name__}: {error}")
-    return ContractCase(name, PASS)
+    if isinstance(result, tuple) and len(result) == 2:
+        status, detail = result
+        return ContractCase(name, str(status), str(detail))
+    detail = result if isinstance(result, str) else ""
+    return ContractCase(name, PASS, detail)
 
 
 def run_contract(
@@ -118,6 +126,7 @@ def run_contract(
     settings_fixture: str = "default",
     prg: Optional[Path] = None,
     ready_timeout_s: float = 90.0,
+    requests: Optional[Callable[[], Optional[int]]] = None,
 ) -> List[ContractCase]:
     """Exercise every part of the driver contract against ``driver``.
 
@@ -221,12 +230,11 @@ def run_contract(
     def app_entry() -> None:
         """`wait_ready` must leave the app on a real view, not the glance.
 
-        Under the simulator the glance is requested in the app's own process,
-        and `OHApp.getGlanceView()` calls `AppLifecycle.setGlance()`, which
-        latches glance mode for that process: the lifecycle guards bail out and
-        `getInitialView()` never runs. No harness-side action can undo that, so
-        this case names the app-side cause instead of hiding it behind a view
-        timeout.
+                The app reaches the sitemap when the glance is selected, which is what a
+                click does on a working simulator. Here no synthetic input arrives at
+                the simulator at all (measured against an idle baseline), so the glance
+                cannot be selected and this case records the environment rather than
+                pretending the initial view ran.
         """
         parsed = parse_lines(list(driver.events()))
         view = next((event for event in reversed(parsed) if event.event == "VIEW"), None)
@@ -235,14 +243,17 @@ def run_contract(
             raise AssertionError(
                 "the app is still showing the glance (`VIEW;category=glance`), so "
                 "getInitialView() never ran and no request is made.\n"
-                "Under the simulator the glance is requested in the app's own "
-                "process, and OHApp.getGlanceView() calls AppLifecycle.setGlance(), "
-                "which latches glance mode for that process: every lifecycle guard "
-                "then bails out, so getInitialView() yields no view and "
-                "SitemapRequest.start() is never reached. No harness-side change "
-                "(device, manifest type, input, coordinates) can undo that latch; it "
-                "is the app-side cause tracked in #396, and the watch-app build "
-                "profile should start working unchanged once it is released. See "
+                        "The glance is left by selecting it, and on this guest no "
+                        "synthetic input reaches the simulator at all: pointer-verified "
+                        "clicks at the declared hit areas and inside the screen, every "
+                        "candidate keysym, with and without a window manager, and inside "
+                        "a Wine virtual desktop, all measure 0 px against an idle "
+                        "baseline. No coordinate, keysym, focus or window-manager change "
+                        "can fix that.\n"
+                        "If you need UI assertions, run the simulator on Windows or fix "
+                        "Wine input; the harness cannot. The app-side glance latch "
+                        "(OHApp.getGlanceView -> AppLifecycle.setGlance, #396) is a "
+                        "separate concern and is not what this run demonstrates. See "
                 "tests/docs/simulator-driver.md."
             )
         if category is None:
@@ -286,6 +297,13 @@ def run_contract(
         region = None
         if screen_region is not None:
             region = screen_region()
+        if not any("E2E:" in line for line in driver.events()):
+            raise AssertionError(
+                "the app produced no E2E: console output at all, so no press can "
+                "have reached it and nothing on screen is attributable to input.\n"
+                "This is a launch problem, not a press problem: check "
+                "`wait_ready`/`start` and logs/console.log."
+            )
         parsed_before = parse_lines(list(driver.events()))
         known = {
             (event.get("category"), event.get("view"))
@@ -313,6 +331,25 @@ def run_contract(
             )
         shots = workdir / "input"
         shots.mkdir(parents=True, exist_ok=True)
+        baseline = 0
+        if driver.supports_screenshots and not on_glance and region is not None:
+            # Control measurement: how much does the screen change with no input?
+            # A ticking clock or an idle redraw otherwise passes a dead press.
+            calm_a = shots / "idle-1.png"
+            calm_b = shots / "idle-2.png"
+            try:
+                driver.screenshot(calm_a)
+                time.sleep(PRESS_BASELINE_INTERVAL)
+                driver.screenshot(calm_b)
+                measured = (
+                    region_pixel(calm_a, calm_b, region)
+                    if region_pixel is not None
+                    else (pixel(calm_a, calm_b) if pixel is not None else None)
+                )
+                baseline = int(measured or 0)
+            except Exception:  # noqa: BLE001 - a missing baseline is not a verdict
+                baseline = 0
+        threshold = max(PRESS_PIXEL_THRESHOLD, baseline)
         attempts: List[str] = []
         for label, action in actions:
             before = None
@@ -326,12 +363,15 @@ def run_contract(
             while time.monotonic() < deadline:
                 for event in parse_lines(list(driver.events())[mark:]):
                     if event.event == "ERRORVIEW":
-                        return
+                        return f"{label}: ERRORVIEW"
                     if event.event != "VIEW":
                         continue
                     signature = (event.get("category"), event.get("view"))
                     if signature not in known and event.get("category") != "glance":
-                        return
+                        return (
+                            f"{label}: new VIEW {signature[0]}/{signature[1]} "
+                            f"(idle baseline {baseline}px)"
+                        )
                 if before is not None and pixel is not None:
                     after = shots / f"{label}-after.png"
                     driver.screenshot(after)
@@ -339,8 +379,11 @@ def run_contract(
                         changed = region_pixel(before, after, region)
                     else:
                         changed = pixel(before, after)
-                    if changed is not None and changed >= PRESS_PIXEL_THRESHOLD:
-                        return
+                    if changed is not None and changed > threshold:
+                        return (
+                            f"{label}: screen change {changed}px in the screen "
+                            f"rectangle (idle baseline {baseline}px)"
+                        )
                 time.sleep(0.25)
             attempts.append(f"{label} ({changed!r} px)")
         reason = (
@@ -349,25 +392,108 @@ def run_contract(
             if on_glance
             else ""
         )
+        calibrate = (
+            ""
+            if baseline == 0
+            else (
+                f" The screen changes {baseline} px on its own within "
+                f"{PRESS_BASELINE_INTERVAL:g}s, so a press had to beat that; "
+                "freeze the animated region or assert a view instead."
+            )
+        )
         raise AssertionError(
             "pressing ENTER, MENU and DOWN"
             + (" and tapping the screen" if device.supports_touch else "")
             + " produced no different VIEW (a repeated view does not count), no "
-            f"ERRORVIEW and no screen change at or above {PRESS_PIXEL_THRESHOLD} "
-            f"px: {'; '.join(attempts)}.{reason}\n"
+            f"ERRORVIEW and no screen change above {threshold} px "
+            f"(empty-screen baseline {baseline} px): {'; '.join(attempts)}."
+            f"{reason}{calibrate}\n"
             "logs/driver.log names the mechanism and window point for each press. "
-            "Compare that point with the device definition's keys[].location and "
-            "the window's client origin."
+            "If the pointer is verified and nothing moves, the environment is not "
+            "delivering input: if you need UI assertions, run the simulator on "
+            "Windows or fix Wine input; the harness cannot. See "
+            "tests/docs/simulator-driver.md."
         )
 
     if driver.supports_events:
         cases.append(_run_case("press-effect", press_effect))
 
     for button in Button:
-        cases.append(
-            _run_case(f"press[{button.value}]", lambda button=button: driver.press(button, 1))
+        def press_case(button: Button = button) -> object:
+            if not device.supports_buttons:
+                return (
+                    SKIPPED,
+                    f"device {device.id} has input {device.input!r} and no physical "
+                    "buttons; tap covers its input",
+                )
+            measured = getattr(driver, "press_measured", None)
+            if measured is None:
+                driver.press(button, 1)
+                return "mechanism not measured by this driver"
+            result = measured(
+                button, 1, timeout_s=PRESS_EFFECT_TIMEOUT, requests=requests
+            )
+            if result.effect:
+                return result.describe()
+            # A single press legitimately does nothing (nav at the top of a
+            # list), so this is evidence, not the verdict: press-sequence is.
+            return (
+                SKIPPED,
+                f"{result.describe()} — no effect in isolation; the "
+                "press-sequence case is the delivery verdict",
+            )
+
+        cases.append(_run_case(f"press[{button.value}]", press_case))
+
+    def press_sequence() -> object:
+        """The delivery verdict: a sequence of navigation presses must move.
+
+        One `DOWN` at the top of a list changes nothing; two do. A device whose
+        navigation is cumulative cannot be judged press by press.
+        """
+        measured = getattr(driver, "press_measured", None)
+        if not device.supports_buttons:
+            return (
+                SKIPPED,
+                f"device {device.id} has input {device.input!r} and no physical "
+                "buttons; tap covers its input",
+            )
+        if measured is None:
+            for button in (Button.DOWN, Button.DOWN, Button.UP):
+                driver.press(button, 1)
+            return (
+                SKIPPED,
+                f"{driver.name} cannot measure a press, so delivery is unproven",
+            )
+        seen: List[str] = []
+        for button in (Button.DOWN, Button.DOWN, Button.UP):
+            result = measured(
+                button, 1, timeout_s=PRESS_EFFECT_TIMEOUT, requests=requests
+            )
+            seen.append(result.describe())
+            if result.effect:
+                return "sequence delivered: " + " | ".join(seen)
+        raise AssertionError(
+            "a sequence of DOWN, DOWN, UP produced no effect on any press:\n  "
+            + "\n  ".join(seen)
+            + "\nThe mechanism each press used is above. If the pointer was "
+            "verified over the simulator window, this is the environment and not "
+            "a coordinate or keysym problem: no synthetic input reaches the "
+            "simulator under Wine here.\n"
+            "If you need UI assertions, run the simulator on Windows or fix Wine "
+            "input; the harness cannot. See tests/docs/simulator-driver.md."
         )
-    cases.append(_run_case("tap", lambda: driver.tap(1, 1, 1)))
+
+    cases.append(_run_case("press-sequence", press_sequence))
+
+    def tap() -> object:
+        driver.tap(1, 1, 1)
+        return (
+            "mechanism=mouse (window point logged); effect not asserted at an "
+            "arbitrary coordinate"
+        )
+
+    cases.append(_run_case("tap", tap))
 
     def screenshot() -> None:
         result = driver.screenshot(shot)
@@ -409,7 +535,14 @@ def run_contract(
 
 def _launch_cases() -> List[str]:
     """Names of the cases that need a launched application, in order."""
-    names = ["start", "wait_ready", "app-entry", "input-delivery", "press-effect"]
+    names = [
+        "start",
+        "wait_ready",
+        "app-entry",
+        "input-delivery",
+        "press-effect",
+        "press-sequence",
+    ]
     names.extend(f"press[{button.value}]" for button in Button)
     names.extend(["tap", "screenshot", "events"])
     return names
