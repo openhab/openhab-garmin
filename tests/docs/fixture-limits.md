@@ -18,12 +18,12 @@ How it was measured:
 
 1. Built the app for `fenix7` with the `fast-polling` fixture and a compiled
    `url_0` pointing at a local HTTP server plus `sitemap_0` set to a test name.
-2. Started the Windows simulator, switched **Settings > Glance Launch Mode >
+1. Started the Windows simulator, switched **Settings > Glance Launch Mode >
    Launch in Normal Mode**, and pushed the PRG with `monkeydo`.
-3. Served a valid sitemap JSON body of an exact byte length and binary-searched
+1. Served a valid sitemap JSON body of an exact byte length and binary-searched
    the length until the app's trace flipped from a successful sitemap to the
    `S:-402` error view.
-4. Confirmed the endpoints explicitly: 16,384 bytes produced
+1. Confirmed the endpoints explicitly: 16,384 bytes produced
    `E2E:SITEMAP;result=success;code=200`; 16,385 bytes produced the critical
    `-402` error and the full-screen error view.
 

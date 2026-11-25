@@ -577,13 +577,25 @@ def verify(
             sitemap_bytes: Tuple[Tuple[str, int], ...] = ()
             if check_sizes:
                 measured = []
-                if dump_dir is not None:
-                    dump_dir.mkdir(parents=True, exist_ok=True)
-                for name in sorted(expected.sitemaps):
-                    raw = openhab.sitemap_raw(name)
-                    measured.append((name, len(raw)))
+                try:
                     if dump_dir is not None:
-                        (dump_dir / f"{name}.json").write_bytes(raw)
+                        dump_dir.mkdir(parents=True, exist_ok=True)
+                    for name in sorted(expected.sitemaps):
+                        raw = openhab.sitemap_raw(name)
+                        measured.append((name, len(raw)))
+                        if dump_dir is not None:
+                            (dump_dir / f"{name}.json").write_bytes(raw)
+                except OpenHabError as error:
+                    # The collection endpoint can be registered before the
+                    # individual /rest/sitemaps/<name> resources on a cold
+                    # start. Treat the 404 like a not-yet-loaded sitemap.
+                    if time.monotonic() >= deadline:
+                        raise FixtureError(
+                            "openHAB did not expose every expected sitemap "
+                            f"within {wait_s:.0f}s; last error: {error}"
+                        ) from None
+                    time.sleep(max(0.1, interval_s))
+                    continue
                 sitemap_bytes = tuple(measured)
                 by_name = dict(measured)
                 limit = expected.simulator_json_limit_bytes
