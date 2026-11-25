@@ -164,6 +164,7 @@ jobs:
             --profile ${{ matrix.profile }} \
             --log ../compose/openhab.log \
             --strict \
+            --sizes \
             --wait 180
 
       - name: Upload openHAB log

@@ -159,7 +159,7 @@ a second job, `fixtures`, with a `stable` and a `dev` matrix leg:
 1. start the pinned openHAB image and wait for its healthcheck;
 1. read `/openhab/userdata/logs/openhab.log` from the container;
 1. run `python -m e2e verify-fixtures --profile <profile> --log openhab.log
-   --strict --wait 180`.
+   --strict --sizes --wait 180`.
 
 The job is per pull request, not scheduled. The workflow is already
 path-filtered to `tests/`, `manifest.xml`, `monkey.jungle` and the workflow
