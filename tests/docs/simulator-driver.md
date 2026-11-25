@@ -43,13 +43,20 @@ engine reports event and golden assertions as **skipped**, never passed.
   a still-glance app fails with the glance/transition pointers instead of a
   generic timeout.
 - Every `press[...]` case is **measured**: it reports `mechanism=…`, `effect=…`
-  and, with `--shim-url`, `requests +N`, and fails when the press changed
-  nothing. `--key BUTTON=KEYSYM` (repeatable) tries a different keysym.
+  and, with `--shim-url`, `requests +N`. A press with no effect is reported
+  `skipped` with that evidence, not failed, because one press legitimately does
+  nothing (navigation at the top of a list). `--key BUTTON=KEYSYM` (repeatable)
+  tries a different keysym.
+- `press-sequence` is the input verdict: `DOWN`, `DOWN`, `UP` must produce at
+  least one measurable effect. All three silent fails with every mechanism in
+  the message. A touch-only device (e.g. `venu2`) has no physical buttons, so its
+  press cases are skipped and `tap` covers its input.
 - `press-effect` presses ENTER, MENU and DOWN (and taps on touch devices) and
   requires a different view or a screen change in the screen rectangle; a repeat
   of the same view never counts.
 - `input-delivery` presses the declared select once and reports whether the app
-  changed a view or its screen area. It does not assume a simulator menu.
+  changed a view or its screen area. It does not assume a simulator menu, and it
+  verifies the pointer is over the simulator before clicking.
 - The contract starts with `mode=ble, language=deu`. The language is reported
   and compared, never forced (see "Language cannot be provisioned").
 
@@ -154,8 +161,8 @@ PIDs instead.
 | `prepare` | implemented | Validates the external tools and copies the PRG. Runs before anything touches Wine. |
 | `start` | implemented | Display check, `simulator.ini`, simulator-window wait, property seeding and `monkeydo` launch. The device name is expected to appear only after the launch. |
 | `wait_ready` | implemented | First view **and** the reported language, both from the trace stream. A dead app fails with the console tail. The first view may be the glance (`category=glance`) on a plain `monkeydo` launch; reaching the sitemap is the app's behaviour and the scenario asserts it, not the driver. |
-| `press` | implemented, measured | Proven keyboard bindings first (`UP=Up`, `DOWN=Down`), then the declared hit area (mouse, unproven under this Wine/Xvfb), then a keysym. Every measured press reports mechanism, effect and shim requests; a press with no effect fails. `--key BUTTON=KEYSYM` tries candidates. |
-| `tap` | implemented | The window is focused first. The screen rectangle comes from the device definition's `display.location` (`simulator.json`), with `E2E_WINE_SCREEN_RECT` as the override; a centred fit is only the last resort for an SDK without `simulator.json`. |
+| `press` | implemented, measured | Path per button, recorded: `E2E_WINE_KEY_<BUTTON>`/`--key` first, then a proven keysym (`UP=Up`, `DOWN=Down`), then the declared hit area (mouse, **pointer verified** before the click), then a documented keysym. Per-press measurements are evidence; `press-sequence` is the delivery verdict. |
+| `tap` | implemented, pointer verified | The window is focused and the pointer is verified to be over the simulator window before the click (see above). The screen rectangle comes from the device definition's `display.location` (`simulator.json`), with `E2E_WINE_SCREEN_RECT` as the override; a centred fit is only the last resort for an SDK without `simulator.json`. |
 | `screenshot` | implemented | Captures the simulator window. Fails when the capture is not a usable PNG instead of returning a blank image. |
 | `events` | implemented | `monkeydo` stdout/stderr with receipt timestamps; `stdbuf` disables its block buffering when available. |
 | `stop` | implemented | Terminates the app and the simulator by PID; leaks nothing into the next scenario. |
@@ -429,10 +436,14 @@ after, shim `/__requests` polled after every step):
 | mouse click on the `enter` rect, screen centre, 1.5 s hold, double click | 0 | 0 |
 | the same clicks with `matchbox-window-manager`, `windowactivate --sync` and fullscreen-scaled coordinates | 0 | 0 |
 
-**The keyboard reaches the simulator; the mouse does not** under this Wine/Xvfb,
-at any coordinate and with or without a window manager. The maintainer reports
-that in their simulator clicking the glance switches into app mode, so the
-difference is ours and the mouse path is kept.
+**The keyboard reaches the simulator; the mouse is unproven.** Every mouse row
+above was measured _before_ the driver verified the pointer target, and on that
+same guest `xdotool getmouselocation` afterwards reported the root window instead
+of the simulator — so "the mouse is silent" is not an established fact, it is an
+unverified one. The operator's simulator does switch from the glance on a click.
+The driver keeps the mouse path, proves the pointer is over the simulator before
+each click (see "The pointer must be verified, not assumed"), and reports what
+happened; `contract-test` now decides between the two paths with evidence.
 
 `press` therefore picks its path and records it:
 
@@ -457,18 +468,58 @@ Each measured press reports its path, its effect and (with `--shim-url` or
 `E2E_SHIM_URL`) the shim requests it caused, in the normal contract output:
 
 ```text
-press[DOWN]   pass  mechanism=keyboard (keysym Down); effect=screen change 731px; screen=731px; requests +0
-press[ENTER]  fail  mechanism=mouse (window (378,180)); effect=none; screen=0px; requests +0 — the press ran but changed nothing…
+press[DOWN]   skipped  mechanism=keyboard (keysym Down); effect=none; screen=0px; requests +0 — no effect in isolation; the press-sequence case is the delivery verdict
+press[ENTER]  skipped  mechanism=mouse (window (378,180)); effect=none; screen=0px; requests +0 — no effect in isolation; the press-sequence case is the delivery verdict
+press-sequence pass   sequence delivered: mechanism=keyboard (keysym Down); effect=screen change 731px; screen=731px; requests +0
 ```
 
-A press with no measurable effect is a **failure**, not a pass: `press_measured()`
-returns an empty `effect` and the contract case raises. `press-effect` performs
-the same measurement across ENTER/MENU/DOWN (and a tap on touch devices) and
-requires a different view or a screen change above the threshold; a repeated
-view never counts.
+**The per-press measurement is evidence; the sequence is the verdict.** A single
+`DOWN` at the top of a glance list legitimately changes nothing — the guest
+measured 749/731/638 px on _repeated_ presses and 0 on the first — so a per-press
+pass/fail verdict said `press[UP]` was broken when it was not. `press-sequence`
+presses `DOWN`, `DOWN`, `UP` and requires at least one measurable effect, which
+is a fair test for cumulative navigation while still catching a completely dead
+input path (all three silent = fail, with every mechanism in the message).
+A press that has no effect is never reported as a pass, and a repeated view is
+never an effect: `press-effect` requires a _different_ `VIEW` (category or name),
+or, once the app has left the glance, a change inside the declared screen
+rectangle.
 
 `tap` remains a call-level case because its coordinate is arbitrary; its detail
 says the mouse path is unproven and no effect is asserted there.
+
+### The pointer must be verified, not assumed
+
+A click that lands on the **root window** is indistinguishable from a simulator
+that ignores the mouse. That is not hypothetical: on the guest,
+`xdotool getmouselocation` reported window `543` (the root) while the simulator
+was `85983235`, and Wine logged no button or motion events at all. Every "the
+mouse is silent" measurement before this check had that failure mode.
+
+`press` and `tap` therefore never click blind:
+
+1. resolve the simulator window id for _this_ run (it changes between runs);
+1. read its geometry immediately before moving, and move the pointer to
+   `window origin + declared point`;
+1. read `xdotool getmouselocation` back and require the pointer to be at that
+   point **and** over the simulator window — the same window id, or another
+   window belonging to the same PID, because Wine parents the client area in a
+   child window;
+1. only then send the button. The verified window id and point appear in
+   `last_press()` and in `logs/driver.log`.
+
+If the pointer is not over the simulator the driver raises:
+
+```text
+DriverError: the pointer never reached the simulator window: `xdotool getmouselocation`
+reports window 543, which is the root window, not the simulator (85983235).
+```
+
+That is a hard error rather than a silent press, and the pointer is re-moved once
+with freshly read geometry first, because a window that moved between reading its
+position and moving the pointer looks identical. If `xdotool getmouselocation` is
+unavailable the driver records a warning and continues, so an old xdotool does not
+break the run.
 
 ### Why the app stays on the glance page
 
@@ -501,7 +552,12 @@ working unchanged once the app and the input environment are understood.
 
 `wait_ready` still tries select, the `onMenu` hold, a second select (two taps on
 touch devices) and one PRG relaunch when the first view is the glance. Those are
-defensive, and each attempt plus its mapped window point is logged.
+defensive, and each attempt plus its mapped window point is logged. Each of those
+clicks now goes through the verified-pointer path, so the next contract run
+settles whether the mouse reaches the simulator at all: `press[ENTER]` either
+reports an effect (the click works, and the remaining gap is the app's latch) or
+raises _the pointer never reached the simulator window_ (the click never
+happened, and the coordinates and keysyms were never the problem).
 
 Two related measurements, so they are not repeated: replacing the glance with a
 cleared background changed nothing, and `GlanceViewDelegate` is not a candidate
@@ -541,7 +597,9 @@ is enough to act on it.
 | `warning: the app is still on the glance page` | the glance transition did not happen: clicks are silent in this environment and the app latches glance mode | see "Why the app stays on the glance page"; both threads are on #396 |
 | `app-entry … still showing the glance` | `getInitialView()` never ran; the app is on the glance | read the glance section; try `--key ENTER=<keysym>` candidates once the mouse question is settled |
 | `press-effect … no different VIEW` | the press produced a repeated view or none; while the app is on the glance, screen changes are not counted | see `app-entry`; otherwise compare the logged point with `keys[].location` |
-| `press[<button>] … effect=none` | the press ran but changed nothing measurable | try `--key <BUTTON>=<keysym>`; check the mechanism in `logs/driver.log` (keyboard vs mouse) |
+| `press[<button>] … effect=none` | the press ran but changed nothing measurable. Reported as evidence (`skipped`); the verdict is `press-sequence` | try `--key <BUTTON>=<keysym>`; check the mechanism and the verified pointer target in `logs/driver.log` |
+| `press-sequence … DOWN, DOWN, UP produced no effect` | no press in the sequence reached the app by any mechanism | read the three mechanisms in the message; if they are mouse presses, check the pointer line above |
+| `the pointer never reached the simulator window` | the click would have gone to the root window or another client, so it was refused | the window moved or is not mapped on this display; re-run, and confirm `xdotool getmouselocation` names the simulator window. This is the failure mode behind every "the mouse is silent" measurement |
 | `the app reported system language …` | `Language` in `simulator.ini` was ignored | see the language section above |
 | `the app showed the configuration error view` | the PRG was built without the requested properties | rebuild with `e2e build --settings <fixture>`, or pass a PRG built that way |
 
@@ -595,10 +653,14 @@ proof is a driver run on the guest, which the operator performs:
 1. Run one language scenario (`extended/localisation-sitemap`) and one mode
    scenario (`extended/wifi-mode`) to confirm the verification paths.
 1. With the app open, check a press reaches it: the contract's `input-delivery`
-   case proves synthetic input changes the simulator at all, and `press-effect`
-   proves a press changes the app. `logs/driver.log` shows the clicked window
-   point. If either fails, treat it as a delivery/coordinate question in that
-   order before assuming an app defect.
+   case proves synthetic input changes the simulator at all, `press-effect`
+   proves a press changes the app, and `press-sequence` decides delivery from a
+   `DOWN`, `DOWN`, `UP` sequence. `logs/driver.log` shows the mechanism and the
+   verified pointer target for every press. If the driver raises _the pointer
+   never reached the simulator window_, the click never happened and no
+   coordinate or keysym change can help; if the pointer is verified and the
+   press still does nothing, it is a delivery/coordinate question in that order
+   before assuming an app defect.
 1. If the log says the app stayed on the glance page, the simulator never
    reached `getInitialView()`. The driver tried the declared select, the menu
    hold, a tap and one relaunch. Next, check whether a second `monkeydo` starts

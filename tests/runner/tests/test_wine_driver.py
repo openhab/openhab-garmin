@@ -22,6 +22,7 @@ from e2e.contract import (
     FAIL,
     NOT_IMPLEMENTED,
     PASS,
+    SKIPPED,
     ContractError,
     device_from_prg,
     exit_code,
@@ -50,7 +51,9 @@ from e2e.sim.wine import (
     key_bindings,
     monkeydo_command,
     parse_ciq_log,
+    parse_mouselocation,
     parse_properties,
+    parse_root_window_id,
     parse_screen_rect,
     parse_window_geometry,
     parse_window_title,
@@ -68,14 +71,18 @@ from e2e.sim.wine import (
     vk_to_keysym,
     window_point,
     WineSimulatorDriver,
-    xdotool_click_command,
-    xdotool_click_to_window_command,
+    xdotool_click_only_command,
     xdotool_focus_commands,
     xdotool_geometry_command,
     xdotool_key_command,
     xdotool_key_to_window_command,
+    xdotool_mousedown_command,
+    xdotool_mouselocation_command,
+    xdotool_mousemove_command,
     xdotool_search_command,
+    xdotool_window_pid_command,
     xdpyinfo_command,
+    xwininfo_root_command,
 )
 
 
@@ -117,6 +124,20 @@ def _driver(tmp_path: Path, **kwargs) -> WineSimulatorDriver:
     )
 
 
+def _pressing_driver(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> WineSimulatorDriver:
+    """A started driver with fenix7 declared input and a fixed 409x600 window."""
+    driver = _driver(tmp_path)
+    driver._started = True
+    driver._device = _device("fenix7")
+    driver._window = "42"
+    driver._definition = _definition(tmp_path)
+    monkeypatch.setattr(driver, "_window_name", lambda window: "CIQ Simulator - Fenix 7")
+    monkeypatch.setattr(
+        driver, "_geometry", lambda window: {"x": 0, "y": 0, "width": 409, "height": 600}
+    )
+    return driver
+
+
 @pytest.fixture
 def tools(monkeypatch: pytest.MonkeyPatch) -> None:
     """Pretend every external tool is installed; no test runs one."""
@@ -132,11 +153,21 @@ def _device(device_id: str = "fenix7") -> Device:
 class FakeRun:
     """Stand-in for ``driver._run`` that records commands."""
 
-    def __init__(self, returncode: int = 0, stdout: str = "", stderr: str = "") -> None:
+    def __init__(
+        self,
+        returncode: int = 0,
+        stdout: str = "",
+        stderr: str = "",
+        pointer_window: str = "42",
+        root_window: str = "543",
+    ) -> None:
         self.returncode = returncode
         self.stdout = stdout
         self.stderr = stderr
         self.commands: List[List[str]] = []
+        self.pointer_window = pointer_window
+        self.root_window = root_window
+        self._pointer = (0, 0)
 
     def __call__(
         self,
@@ -149,8 +180,21 @@ class FakeRun:
         self.commands.append(list(command))
         if check and self.returncode != 0:
             raise DriverError("command failed")
+        stdout = self.stdout
+        if command[:2] == ["xdotool", "mousemove"] and "--window" not in command:
+            self._pointer = (int(command[2]), int(command[3]))
+            stdout = ""
+        elif command[:2] == ["xdotool", "getmouselocation"]:
+            x, y = self._pointer
+            stdout = (
+                f"X={x}\nY={y}\nSCREEN=0\nWINDOW={self.pointer_window}\n"
+            )
+        elif command[:2] == ["xdotool", "getwindowpid"]:
+            stdout = "1234\n"
+        elif command[:2] == ["xwininfo", "-root"]:
+            stdout = f'xwininfo: Window id: 0x{int(self.root_window):x} "root"\n'
         return subprocess.CompletedProcess(
-            list(command), self.returncode, self.stdout, self.stderr
+            list(command), self.returncode, stdout, self.stderr
         )
 
 
@@ -439,7 +483,7 @@ def test_press_uses_the_mouse_for_a_button_without_a_proven_binding(
     assert any(command[1] == "mousemove" for command in fake.commands)
     result = driver.last_press()
     assert result is not None and result.mechanism == "mouse"
-    assert "mouse path is unproven" in _driver_log(driver)
+    assert "pointer was verified over that window" in _driver_log(driver)
 
 
 def test_press_measured_reports_the_effect_and_requests(
@@ -559,6 +603,85 @@ def test_press_key_override_beats_the_declared_area(
 
     assert [command for command in fake.commands if command[1] == "key"]
     assert not any(command[1] == "mousemove" for command in fake.commands)
+
+
+def test_press_refuses_a_pointer_over_the_root_window(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The guest's silent mouse: the pointer sat over the root window."""
+    driver = _pressing_driver(tmp_path, monkeypatch)
+    fake = FakeRun(pointer_window="543", root_window="543")
+    driver._run = fake  # type: ignore[method-assign]
+
+    with pytest.raises(DriverError) as error:
+        driver.press(Button.ENTER)
+
+    message = str(error.value)
+    assert "never reached the simulator window" in message
+    assert "root window" in message
+    assert not any(command[1] == "click" for command in fake.commands), "no blind click"
+
+
+def test_press_accepts_a_child_window_of_the_simulator(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Wine parents the client area, so a child window with the same pid is fine."""
+    driver = _pressing_driver(tmp_path, monkeypatch)
+    fake = FakeRun(pointer_window="99")  # same pid (see FakeRun.getwindowpid)
+    driver._run = fake  # type: ignore[method-assign]
+
+    driver.press(Button.ENTER)
+
+    assert any(command[1] == "click" for command in fake.commands)
+    assert "window 42" in _driver_log(driver)
+
+
+def test_press_refuses_a_pointer_over_another_process(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    driver = _pressing_driver(tmp_path, monkeypatch)
+
+    class ForeignRun(FakeRun):
+        def __call__(self, command, **kwargs):  # noqa: ANN001, ANN003
+            if command[:2] == ["xdotool", "getwindowpid"]:
+                pid = "4321\n" if command[-1] == "99" else "1234\n"
+                return subprocess.CompletedProcess(list(command), 0, pid, "")
+            return super().__call__(command, **kwargs)
+
+    fake = ForeignRun(pointer_window="99")
+    driver._run = fake  # type: ignore[method-assign]
+
+    with pytest.raises(DriverError) as error:
+        driver.press(Button.ENTER)
+    assert "not the simulator window" in str(error.value)
+
+
+def test_pointer_verification_retries_once_when_the_window_moves(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Geometry is re-read: a stale position must not become a failure."""
+    driver = _pressing_driver(tmp_path, monkeypatch)
+    positions = iter([{"x": 0, "y": 0, "width": 409, "height": 600},
+                      {"x": 10, "y": 20, "width": 409, "height": 600},
+                      {"x": 10, "y": 20, "width": 409, "height": 600},
+                      {"x": 10, "y": 20, "width": 409, "height": 600}])
+
+    class MovingRun(FakeRun):
+        def __call__(self, command, **kwargs):  # noqa: ANN001, ANN003
+            if command[:2] == ["xdotool", "mousemove"] and "--window" not in command:
+                # The first move misses because the window moved underneath us.
+                if len([c for c in self.commands if c[1] == "mousemove"]) == 1:
+                    self._pointer = (int(command[2]) - 5, int(command[3]))
+                    return subprocess.CompletedProcess(list(command), 0, "", "")
+            return super().__call__(command, **kwargs)
+
+    monkeypatch.setattr(driver, "_geometry", lambda window: next(positions))
+    fake = MovingRun()
+    driver._run = fake  # type: ignore[method-assign]
+
+    driver.press(Button.ENTER)
+
+    assert any(command[1] == "click" for command in fake.commands)
 
 
 def test_tap_uses_the_declared_one_to_one_mapping(
@@ -753,24 +876,6 @@ def test_xdotool_and_capture_commands() -> None:
         "--window",
         "42",
     ]
-    assert xdotool_click_command(10, 20, 3) == [
-        "xdotool",
-        "mousemove",
-        "10",
-        "20",
-        "click",
-        "--repeat",
-        "3",
-        "--delay",
-        "150",
-        "1",
-    ]
-    assert xdotool_click_to_window_command("42", 10, 20, 3)[:4] == [
-        "xdotool",
-        "mousemove",
-        "--window",
-        "42",
-    ]
     assert import_command(":99", "42", Path("/shots/a.png")) == [
         "import",
         "-display",
@@ -789,6 +894,37 @@ def test_xdotool_and_capture_commands() -> None:
         str(Path("/b.png")),
         "null:",
     ]
+
+
+def test_parse_mouselocation_reads_the_window_under_the_pointer() -> None:
+    """`xdotool getmouselocation` says which window would get the click."""
+    location = parse_mouselocation("X=378\nY=179\nSCREEN=0\nWINDOW=543\n")
+    assert location is not None
+    assert (location["x"], location["y"], location["window"]) == (378, 179, 543)
+    assert parse_mouselocation("X=0\nY=0\nSCREEN=0\n") is None
+    assert parse_mouselocation("") is None
+    assert parse_mouselocation("garbage") is None
+    # The --shell form used by the driver carries the same fields.
+    assert parse_mouselocation("WINDOW=85983235\nX=12\nY=34\nSCREEN=0\n")["window"] == (
+        85983235
+    )
+
+
+def test_parse_root_window_id_reads_the_xwininfo_line() -> None:
+    text = 'xwininfo: Window id: 0x21f "root"\n\n  Absolute upper-left X: 0\n'
+    assert parse_root_window_id(text) == "543"
+    assert parse_root_window_id("nothing here") is None
+
+
+def test_pointer_commands_move_then_click_separately() -> None:
+    """A blind click is forbidden: move, verify, then click at the pointer."""
+    assert xdotool_mousemove_command(120, 240) == ["xdotool", "mousemove", "120", "240"]
+    assert xdotool_mouselocation_command()[:2] == ["xdotool", "getmouselocation"]
+    assert xdotool_click_only_command(2)[:2] == ["xdotool", "click"]
+    assert xdotool_click_only_command(2)[2:4] == ["--repeat", "2"]
+    assert xdotool_mousedown_command() == ["xdotool", "mousedown", "1"]
+    assert xdotool_window_pid_command("42") == ["xdotool", "getwindowpid", "42"]
+    assert xwininfo_root_command() == ["xwininfo", "-root"]
 
 
 def test_count_and_delay_are_clamped() -> None:
@@ -1173,6 +1309,10 @@ def test_tap_maps_device_coordinates_to_the_window(
     driver.tap(208, 208)
     click = [command for command in fake.commands if command[1] == "mousemove"][0]
     assert click[2:4] == ["208", "208"]
+    result = driver.last_press()
+    assert result is not None
+    assert "simulator window 42" in result.detail
+    assert "pointer verified" in result.detail
 
 
 def test_seeding_writes_and_round_trips_every_property(
@@ -1622,10 +1762,12 @@ class _FakeDriver(SimulatorDriver):
         press_changes_view: bool = True,
         start_category: str = "sitemap",
         repeat_view: bool = False,
+        effect_plan: Optional[List[bool]] = None,
     ) -> None:
         self.fail_start = fail_start
         self.press_changes_view = press_changes_view
         self.repeat_view = repeat_view
+        self.effect_plan = list(effect_plan) if effect_plan is not None else None
         self.stopped = False
         self._lines: List[str] = [
             f"E2E:VIEW;category={start_category};view=StartView;depth=1"
@@ -1657,6 +1799,8 @@ class _FakeDriver(SimulatorDriver):
         effect = "" if not self.press_changes_view else "view sitemap/ActionMenu"
         if self.repeat_view:
             effect = ""
+        if self.effect_plan is not None:
+            effect = "view sitemap/ActionMenu" if self.effect_plan.pop(0) else ""
 
         class Result:
             mechanism = "keyboard"
@@ -1821,6 +1965,67 @@ def test_contract_press_cases_report_the_input_path(tmp_path: Path) -> None:
         assert "mechanism=keyboard" in case.detail
         assert "effect=" in case.detail
         assert "requests +1" in case.detail
+
+
+def test_contract_marks_a_no_effect_press_as_evidence_not_a_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A single no-op press is normal (nav at the top); the sequence decides."""
+    import e2e.contract as contract_module
+
+    monkeypatch.setattr(contract_module, "PRESS_EFFECT_TIMEOUT", 0.05)
+    prg = tmp_path / "openhab-garmin-fenix7.prg"
+    prg.write_bytes(b"prg")
+    cases = run_contract(
+        _FakeDriver(press_changes_view=False), tmp_path, prg=prg, device_id=None
+    )
+    by_name = {case.name: case for case in cases}
+
+    for button in Button:
+        case = by_name[f"press[{button.value}]"]
+        assert case.status == SKIPPED
+        assert "no effect in isolation" in case.detail
+        assert "press-sequence case is the delivery verdict" in case.detail
+
+    sequence = by_name["press-sequence"]
+    assert sequence.status == FAIL
+    assert "DOWN, DOWN, UP produced no effect" in sequence.detail
+    assert "--key DOWN=" in sequence.detail
+
+
+def test_contract_press_sequence_passes_when_a_later_press_moves(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Two DOWNs move a list even though the first DOWN at the top does not."""
+    import e2e.contract as contract_module
+
+    monkeypatch.setattr(contract_module, "PRESS_EFFECT_TIMEOUT", 0.05)
+    prg = tmp_path / "openhab-garmin-fenix7.prg"
+    prg.write_bytes(b"prg")
+    # Six per-button presses, then the sequence's first DOWN: all no-ops.
+    plan = [False] * 7 + [True]
+    cases = run_contract(
+        _FakeDriver(effect_plan=plan), tmp_path, prg=prg, device_id=None
+    )
+    by_name = {case.name: case for case in cases}
+    assert by_name["press[DOWN]"].status == SKIPPED
+    assert by_name["press-sequence"].status == PASS
+    assert "sequence delivered" in by_name["press-sequence"].detail
+    assert by_name["press-sequence"].detail.count("|") == 1
+
+
+def test_contract_skips_presses_on_a_buttonless_device(tmp_path: Path) -> None:
+    """A touch-only device has no buttons: tapping is its input, not a failure."""
+    prg = tmp_path / "openhab-garmin-venu2.prg"
+    prg.write_bytes(b"prg")
+    cases = run_contract(_FakeDriver(), tmp_path, prg=prg, device_id=None)
+    by_name = {case.name: case for case in cases}
+
+    assert by_name["press[UP]"].status == SKIPPED
+    assert "no physical buttons" in by_name["press[UP]"].detail
+    assert by_name["press-sequence"].status == SKIPPED
+    assert "tap covers its input" in by_name["press-sequence"].detail
+    assert by_name["tap"].status == PASS
 
 
 def test_key_override_option_sets_the_driver_environment(

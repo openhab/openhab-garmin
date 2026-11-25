@@ -460,18 +460,15 @@ def xdotool_key_to_window_command(
     ]
 
 
-def xdotool_click_command(
-    x: int,
-    y: int,
-    count: int = 1,
-    delay_ms: int = DEFAULT_KEY_DELAY_MS,
+def xdotool_mousemove_command(x: int, y: int) -> List[str]:
+    return ["xdotool", "mousemove", str(int(x)), str(int(y))]
+
+
+def xdotool_click_only_command(
+    count: int = 1, delay_ms: int = DEFAULT_KEY_DELAY_MS
 ) -> List[str]:
-    """Click at absolute root coordinates, as real X input (XTEST)."""
     return [
         "xdotool",
-        "mousemove",
-        str(int(x)),
-        str(int(y)),
         "click",
         "--repeat",
         str(max(1, int(count))),
@@ -481,56 +478,52 @@ def xdotool_click_command(
     ]
 
 
-def xdotool_click_to_window_command(
-    window: str,
-    x: int,
-    y: int,
-    count: int = 1,
-    delay_ms: int = DEFAULT_KEY_DELAY_MS,
-) -> List[str]:
-    return [
-        "xdotool",
-        "mousemove",
-        "--window",
-        window,
-        str(int(x)),
-        str(int(y)),
-        "click",
-        "--repeat",
-        str(max(1, int(count))),
-        "--delay",
-        str(max(0, int(delay_ms))),
-        "1",
-    ]
-
-
-def xdotool_mousedown_command(x: int, y: int) -> List[str]:
-    """Press the primary button at absolute root coordinates (a device hold)."""
-    return [
-        "xdotool",
-        "mousemove",
-        str(int(x)),
-        str(int(y)),
-        "mousedown",
-        "1",
-    ]
-
-
-def xdotool_mousedown_to_window_command(window: str, x: int, y: int) -> List[str]:
-    return [
-        "xdotool",
-        "mousemove",
-        "--window",
-        window,
-        str(int(x)),
-        str(int(y)),
-        "mousedown",
-        "1",
-    ]
+def xdotool_mousedown_command() -> List[str]:
+    """Press the primary button at the current pointer (see mousemove)."""
+    return ["xdotool", "mousedown", "1"]
 
 
 def xdotool_mouseup_command() -> List[str]:
     return ["xdotool", "mouseup", "1"]
+
+
+def xdotool_mouselocation_command() -> List[str]:
+    return ["xdotool", "getmouselocation", "--shell"]
+
+
+def xdotool_window_pid_command(window: str) -> List[str]:
+    return ["xdotool", "getwindowpid", window]
+
+
+def xwininfo_root_command() -> List[str]:
+    return ["xwininfo", "-root"]
+
+
+def parse_mouselocation(text: str) -> Optional[Dict[str, int]]:
+    """Parse ``xdotool getmouselocation --shell`` output."""
+    values: Dict[str, int] = {}
+    for line in (text or "").splitlines():
+        key, separator, value = line.partition("=")
+        if not separator:
+            continue
+        value = value.strip()
+        if value.lstrip("-").isdigit():
+            values[key.strip().lower()] = int(value)
+    if {"x", "y", "window"} <= set(values):
+        return values
+    return None
+
+
+def parse_root_window_id(text: str) -> Optional[str]:
+    """The root window id from ``xwininfo -root``, as a decimal string."""
+    match = re.search(r'Window id:\s*(0x[0-9a-fA-F]+|[0-9]+)', text or "")
+    if match is None:
+        return None
+    raw = match.group(1)
+    try:
+        return str(int(raw, 16)) if raw.lower().startswith("0x") else str(int(raw))
+    except ValueError:
+        return None
 
 
 def compare_command(before: Path, after: Path) -> List[str]:
@@ -1818,12 +1811,12 @@ class WineSimulatorDriver(SimulatorDriver):
         self._last_press = PressResult(
             button=key.button.value,
             mechanism="mouse",
-            detail=f"window ({x},{y})",
+            detail=f"simulator window {window} at ({x},{y}), pointer verified",
         )
         self._record(
             f"press {key.button.value} x{count} -> clicked {key.describe()} at "
-            f"window ({x},{y}) ({mapper.source}); the mouse path is unproven "
-            "under this Wine/Xvfb"
+            f"window ({x},{y}) in simulator window {window} ({mapper.source}); "
+            "the pointer was verified over that window before the button went down"
         )
 
     def _mapper(self) -> CoordinateMapper:
@@ -1837,34 +1830,124 @@ class WineSimulatorDriver(SimulatorDriver):
     def _pointer_down(
         self, window: str, x: int, y: int, *, action: str
     ) -> None:
-        """Press the pointer at a window point, as real X input (XTEST)."""
-        abs_x, abs_y = self._absolute(window, x, y)
-        try:
-            self._run(
-                xdotool_mousedown_command(abs_x, abs_y),
-                check=True,
-                action=action,
-            )
-        except DriverError:
-            self._run(
-                xdotool_mousedown_to_window_command(window, x, y),
-                check=True,
-                action=f"{action} (window-targeted fallback)",
-            )
+        """Press the pointer at a verified window point, as real X input."""
+        self._move_verified(window, x, y, action)
+        self._run(xdotool_mousedown_command(), check=True, action=action)
 
     def _pointer_up(self) -> None:
         self._run(xdotool_mouseup_command(), check=True, action="release")
 
     def _click_at(self, window: str, x: int, y: int, *, action: str) -> None:
-        abs_x, abs_y = self._absolute(window, x, y)
-        try:
-            self._run(xdotool_click_command(abs_x, abs_y, 1), check=True, action=action)
-        except DriverError:
+        """Click a point that the pointer was verified to be over.
+
+        There is deliberately no window-targeted fallback: `xdotool click`
+        clicks wherever the pointer is, so a fallback would be exactly the blind
+        click this check exists to prevent.
+        """
+        self._move_verified(window, x, y, action)
+        self._run(xdotool_click_only_command(1), check=True, action=action)
+
+    def _move_verified(self, window: str, x: int, y: int, action: str) -> None:
+        """Move the pointer and prove it is over the simulator window.
+
+        Clicking blind is how "the mouse is silent" is born: on the guest the
+        pointer was over the root window (`xdotool getmouselocation` reported
+        the root id) and Wine received no button event at all. The window
+        position can change between runs, so the geometry is re-read and the
+        move retried once before failing.
+        """
+        for attempt in (1, 2):
+            abs_x, abs_y = self._absolute(window, x, y)
             self._run(
-                xdotool_click_to_window_command(window, x, y, 1),
+                xdotool_mousemove_command(abs_x, abs_y),
                 check=True,
-                action=f"{action} (window-targeted fallback)",
+                action=f"{action} (move pointer)",
             )
+            location = self._mouse_location()
+            if location is None:
+                self._record(
+                    "warning: xdotool getmouselocation is unavailable, so the "
+                    "pointer could not be verified before this click"
+                )
+                return
+            if (
+                abs(location["x"] - abs_x) <= 1
+                and abs(location["y"] - abs_y) <= 1
+            ):
+                self._verify_pointer_window(window, location["window"])
+                return
+            if attempt == 2:
+                raise DriverError(
+                    f"the pointer did not reach ({abs_x},{abs_y}) for "
+                    f"{action}: xdotool reports ({location['x']},{location['y']}).\n"
+                    "The simulator window may have moved between reading its "
+                    "geometry and moving the pointer; re-run, or check that no "
+                    "other client is grabbing the pointer."
+                )
+
+    def _mouse_location(self) -> Optional[Dict[str, int]]:
+        try:
+            completed = self._run(
+                xdotool_mouselocation_command(),
+                check=False,
+                action="xdotool getmouselocation",
+            )
+        except DriverError:
+            return None
+        return parse_mouselocation(completed.stdout or "")
+
+    def _verify_pointer_window(self, window: str, pointer_window: int) -> None:
+        """Fail unless the pointer is over the simulator window (or a child)."""
+        if str(pointer_window) == str(window):
+            return
+        root = self._root_window_id()
+        if root is not None and str(pointer_window) == root:
+            raise DriverError(
+                "the pointer never reached the simulator window: "
+                f"`xdotool getmouselocation` reports window {pointer_window}, which "
+                f"is the root window, not the simulator ({window}).\n"
+                "A click would go to the desktop and look like a silent simulator. "
+                "Check the window geometry and that the window is mapped and on "
+                "this display."
+            )
+        simulator_pid = self._window_pid(window)
+        pointer_pid = self._window_pid(str(pointer_window))
+        if (
+            simulator_pid is not None
+            and pointer_pid is not None
+            and simulator_pid == pointer_pid
+        ):
+            return
+        raise DriverError(
+            f"the pointer is over window {pointer_window}, not the simulator "
+            f"window {window}, so a click would not reach the app.\n"
+            "Refusing to click blind; see tests/docs/simulator-driver.md."
+        )
+
+    def _root_window_id(self) -> Optional[str]:
+        cached = getattr(self, "_root_id", None)
+        if cached is not None:
+            return cached
+        try:
+            completed = self._run(
+                xwininfo_root_command(), check=False, action="xwininfo -root"
+            )
+        except DriverError:
+            return None
+        self._root_id = parse_root_window_id(completed.stdout or "")
+        return self._root_id
+
+    def _window_pid(self, window: str) -> Optional[int]:
+        try:
+            completed = self._run(
+                xdotool_window_pid_command(window),
+                check=False,
+                action="xdotool getwindowpid",
+            )
+        except DriverError:
+            return None
+        value = (completed.stdout or "").strip()
+        return int(value) if value.isdigit() else None
 
     def _absolute(self, window: str, x: int, y: int) -> Tuple[int, int]:
         geometry = self._geometry(window)
@@ -1893,9 +1976,15 @@ class WineSimulatorDriver(SimulatorDriver):
         for _ in range(max(1, int(count))):
             self._click_at(window, px, py, action="tap")
             time.sleep(DEFAULT_KEY_DELAY_MS / 1000.0)
+        self._last_press = PressResult(
+            button="TAP",
+            mechanism="mouse",
+            detail=f"simulator window {window} at ({px},{py}), pointer verified",
+        )
         self._record(
             f"tap device=({x},{y}) window=({px},{py}) x{count} "
-            f"screen={rect.x},{rect.y},{rect.width},{rect.height}"
+            f"screen={rect.x},{rect.y},{rect.width},{rect.height} "
+            f"in simulator window {window}; the pointer was verified before each click"
         )
 
     def screenshot(self, path: Path) -> Path:

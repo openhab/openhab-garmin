@@ -107,6 +107,9 @@ def _run_case(name: str, fn: Callable[[], object]) -> ContractCase:
         return ContractCase(name, NOT_IMPLEMENTED, str(error))
     except Exception as error:  # noqa: BLE001 - a contract failure is a result
         return ContractCase(name, FAIL, f"{type(error).__name__}: {error}")
+    if isinstance(result, tuple) and len(result) == 2:
+        status, detail = result
+        return ContractCase(name, str(status), str(detail))
     detail = result if isinstance(result, str) else ""
     return ContractCase(name, PASS, detail)
 
@@ -367,6 +370,12 @@ def run_contract(
 
     for button in Button:
         def press_case(button: Button = button) -> object:
+            if not device.supports_buttons:
+                return (
+                    SKIPPED,
+                    f"device {device.id} has input {device.input!r} and no physical "
+                    "buttons; tap covers its input",
+                )
             measured = getattr(driver, "press_measured", None)
             if measured is None:
                 driver.press(button, 1)
@@ -374,16 +383,55 @@ def run_contract(
             result = measured(
                 button, 1, timeout_s=PRESS_EFFECT_TIMEOUT, requests=requests
             )
-            if not result.effect:
-                raise AssertionError(
-                    f"{result.describe()} — the press ran but changed nothing, so "
-                    "it is not a pass. logs/driver.log has the mechanism and point; "
-                    "try another keysym with `--key "
-                    f"{button.value}=<keysym>` if the simulator ignores this one."
-                )
-            return result.describe()
+            if result.effect:
+                return result.describe()
+            # A single press legitimately does nothing (nav at the top of a
+            # list), so this is evidence, not the verdict: press-sequence is.
+            return (
+                SKIPPED,
+                f"{result.describe()} — no effect in isolation; the "
+                "press-sequence case is the delivery verdict",
+            )
 
         cases.append(_run_case(f"press[{button.value}]", press_case))
+
+    def press_sequence() -> object:
+        """The delivery verdict: a sequence of navigation presses must move.
+
+        One `DOWN` at the top of a list changes nothing; two do. A device whose
+        navigation is cumulative cannot be judged press by press.
+        """
+        measured = getattr(driver, "press_measured", None)
+        if not device.supports_buttons:
+            return (
+                SKIPPED,
+                f"device {device.id} has input {device.input!r} and no physical "
+                "buttons; tap covers its input",
+            )
+        if measured is None:
+            for button in (Button.DOWN, Button.DOWN, Button.UP):
+                driver.press(button, 1)
+            return (
+                SKIPPED,
+                f"{driver.name} cannot measure a press, so delivery is unproven",
+            )
+        seen: List[str] = []
+        for button in (Button.DOWN, Button.DOWN, Button.UP):
+            result = measured(
+                button, 1, timeout_s=PRESS_EFFECT_TIMEOUT, requests=requests
+            )
+            seen.append(result.describe())
+            if result.effect:
+                return "sequence delivered: " + " | ".join(seen)
+        raise AssertionError(
+            "a sequence of DOWN, DOWN, UP produced no effect on any press:\n  "
+            + "\n  ".join(seen)
+            + "\nThe mechanism each press used is above; a silent mouse and an "
+            "ignored keysym both look like this. Try another keysym with "
+            "`--key DOWN=<keysym>`, and check the pointer target in logs/driver.log."
+        )
+
+    cases.append(_run_case("press-sequence", press_sequence))
 
     def tap() -> object:
         driver.tap(1, 1, 1)
@@ -434,7 +482,14 @@ def run_contract(
 
 def _launch_cases() -> List[str]:
     """Names of the cases that need a launched application, in order."""
-    names = ["start", "wait_ready", "app-entry", "input-delivery", "press-effect"]
+    names = [
+        "start",
+        "wait_ready",
+        "app-entry",
+        "input-delivery",
+        "press-effect",
+        "press-sequence",
+    ]
     names.extend(f"press[{button.value}]" for button in Button)
     names.extend(["tap", "screenshot", "events"])
     return names
