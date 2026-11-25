@@ -22,11 +22,11 @@ from typing import ClassVar, List, Optional, Sequence
 from ..config import Device
 from ..settings import AppSettings
 
-#: Languages the harness can actually put the app into. Device language is a
-#: simulator device setting applied from its own UI, so unless a driver says it
-#: can provision one, only the simulator's default language is runnable. The
-#: engine reports the other language runs as blocked instead of failing them,
-#: and ``tests/docs/coverage.md`` marks them the same way.
+#: Languages every driver can always put the app into, whatever the simulator
+#: stores. ``eng`` is the Connect IQ default; a driven simulator that persists a
+#: numeric ``Language`` index relies on its own default for this one. Every other
+#: language needs a driver that says it can provision that code, which
+#: ``can_provision_language`` answers precisely.
 RUNNABLE_LANGUAGES = ("eng",)
 
 
@@ -65,7 +65,18 @@ class SimulatorDriver(abc.ABC):
     #: True when ``start()`` can put the app into the requested system language.
     #: A driver that cannot must say so: the engine reports the runs for other
     #: languages as blocked rather than failing them for an environment gap.
+    #: ``can_provision_language`` is the per-language answer and is what the
+    #: engine asks; this flag only says the driver can provision *some* language.
     provisions_language: ClassVar[bool] = True
+
+    def can_provision_language(self, language: str) -> bool:
+        """True when ``start()`` can put the app into ``language``.
+
+        Drivers override this when provisioning is per language (a simulator
+        that stores a numeric index for a subset of codes). The default answers
+        from ``RUNNABLE_LANGUAGES`` and the driver-wide flag.
+        """
+        return language in RUNNABLE_LANGUAGES or self.provisions_language
 
     # -- lifecycle ---------------------------------------------------------
     @abc.abstractmethod

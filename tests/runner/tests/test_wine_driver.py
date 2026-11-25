@@ -17,6 +17,7 @@ from typing import Dict, List, Optional, Sequence
 
 import pytest
 
+from e2e.cli import _parse_index_range
 from e2e.config import Device, find_device
 from e2e.contract import (
     FAIL,
@@ -41,6 +42,7 @@ from e2e.sim.wine import (
     ENV_SETTINGS_FILE,
     ENV_STARTUP_TIMEOUT,
     ScreenRect,
+    SimulatorDefinition,
     SimulatorKey,
     WindowTitle,
     classify_ciq_message,
@@ -953,19 +955,113 @@ def test_window_geometry_is_parsed() -> None:
 
 
 def test_mode_and_language_become_ini_updates() -> None:
-    ble = ini_updates("fenix7", "ble", "deu")
+    """`Language` is the numeric simulator index, not a code (Language=7 is German)."""
+    ble = ini_updates("fenix7", "ble", "7")
     assert ble == {
         "LastUsedDevice": "fenix7",
-        "Language": "deu",
+        "Language": "7",
         "BleState": "2",
         "WifiState": "1",
     }
-    wifi = ini_updates("fenix7", "wifi", "eng")
+    wifi = ini_updates("fenix7", "wifi", None)
     assert (wifi["BleState"], wifi["WifiState"]) == ("1", "2")
-    offline = ini_updates("fenix7", "offline", "eng")
+    assert "Language" not in wifi, "the default language is the simulator's own"
+    offline = ini_updates("fenix7", "offline", None)
     assert (offline["BleState"], offline["WifiState"]) == ("1", "0")
     with pytest.raises(DriverError):
-        ini_updates("fenix7", "carrier-pigeon", "eng")
+        ini_updates("fenix7", "carrier-pigeon", None)
+
+
+def test_a_stale_language_index_is_removed_for_the_default_language() -> None:
+    """A leftover `Language=7` from the maintainer's file would run German."""
+    update = update_ini("Language=7\nBleState=0\n", {"BleState": "2"}, remove=("Language",))
+    assert "Language" not in update.text
+    assert "BleState=2" in update.text
+    assert update.removed == ("Language",)
+    assert "Language" in update.keys
+
+
+def test_the_language_index_is_written_for_a_mapped_code(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    driver = _driver(tmp_path)
+    monkeypatch.setattr(
+        "e2e.sim.wine.load_language_index", lambda: {"eng": 0, "deu": 7}
+    )
+    driver._language_index_map = None
+    assert driver._language_ini_value("deu") == "7"
+    assert driver._language_ini_value("eng") is None
+
+
+def test_an_unmapped_language_refuses_to_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    driver = _driver(tmp_path)
+    monkeypatch.setattr("e2e.sim.wine.load_language_index", lambda: {"deu": 7})
+    driver._language_index_map = None
+    with pytest.raises(DriverError) as error:
+        driver._language_ini_value("pol")
+    message = str(error.value)
+    assert "no measured simulator index" in message
+    assert "language-scan" in message
+
+
+def test_the_declared_display_is_checked_against_the_real_window(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """fenix847mm's window is 713x961: a 409x600 assumption is only right for fenix7."""
+    driver = _driver(tmp_path)
+    driver._started = True
+    driver._device = _device("fenix847mm")
+    driver._window = "42"
+    monkeypatch.delenv(ENV_SCREEN_RECT, raising=False)
+    monkeypatch.setattr(
+        driver, "_geometry", lambda window: {"x": 0, "y": 0, "width": 713, "height": 961}
+    )
+    driver._definition = SimulatorDefinition(
+        display=ScreenRect(134, 221, 454, 454), keys=()
+    )
+    driver._verify_window_geometry()
+    log = _driver_log(driver)
+    assert "window geometry: 713x961" in log
+    assert "fits the 713x961 window 1:1" in log
+
+    monkeypatch.setattr(
+        driver, "_geometry", lambda window: {"x": 0, "y": 0, "width": 409, "height": 600}
+    )
+    with pytest.raises(DriverError) as error:
+        driver._verify_window_geometry()
+    message = str(error.value)
+    assert "does not fit inside it" in message
+    assert "1:1" in message
+    assert "E2E_WINE_SCREEN_RECT" in message
+
+
+def test_a_pinned_screen_rect_skips_the_window_fit_check(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    driver = _driver(tmp_path)
+    driver._device = _device("fenix847mm")
+    driver._window = "42"
+    driver._definition = SimulatorDefinition(
+        display=ScreenRect(134, 221, 454, 454), keys=()
+    )
+    monkeypatch.setenv(ENV_SCREEN_RECT, "10,20,300,300")
+    monkeypatch.setattr(
+        driver, "_geometry", lambda window: {"x": 0, "y": 0, "width": 409, "height": 600}
+    )
+    driver._verify_window_geometry()  # no raise: the pin is the operator's call
+    assert "is pinned" in _driver_log(driver)
+
+
+def test_parse_index_range_accepts_ranges_and_lists() -> None:
+    assert _parse_index_range("0-3") == [0, 1, 2, 3]
+    assert _parse_index_range("0,3,7") == [0, 3, 7]
+    assert _parse_index_range("0-2,2-3") == [0, 1, 2, 3]
+    with pytest.raises(ValueError):
+        _parse_index_range("5-3")
+    with pytest.raises(ValueError):
+        _parse_index_range("")
 
 
 def test_existing_ini_keys_are_rewritten_case_insensitively() -> None:
@@ -1604,8 +1700,14 @@ def test_input_delivery_probe_calls_a_silent_press_an_app_problem(
     assert "logs/driver.log" in message
 
 
-def test_only_the_wine_driver_cannot_provision_a_language() -> None:
-    assert WineSimulatorDriver.provisions_language is False
+def test_the_wine_driver_provisions_languages_with_a_measured_index(
+    tmp_path: Path,
+) -> None:
+    """`Language` is a numeric index, so provisioning is per code, not per driver."""
+    driver = _driver(tmp_path)
+    assert driver.can_provision_language("eng") is True  # the simulator default
+    assert driver.can_provision_language("deu") is True  # indexed in the checked-in map
+    assert driver.can_provision_language("pol") is False  # no measured index yet
     assert SimulatorDriver.provisions_language is True
 
 
@@ -1680,19 +1782,35 @@ def test_wait_ready_warns_on_a_different_device_title(tmp_path: Path) -> None:
     assert "Edge 540" in log
 
 
-def test_wait_ready_warns_when_the_language_cannot_be_provisioned(
+def test_wait_ready_fails_when_the_provisioned_language_is_not_applied(
     tmp_path: Path,
 ) -> None:
-    """A language mismatch is recorded, not failed: the harness cannot set it."""
+    """A wrong index must stop the run: asserting another language proves nothing."""
     driver = _ready_driver(tmp_path)
     driver._events = [
         (0.0, "E2E:LANGUAGE;code=eng"),
         (0.0, "E2E:VIEW;category=sitemap;view=HomepageMenu;depth=2"),
     ]
+    with pytest.raises(DriverError) as error:
+        driver.wait_ready(5.0)
+    message = str(error.value)
+    assert "requested 'deu'" in message
+    assert "language-scan" in message
+
+
+def test_wait_ready_records_a_probed_index_without_expecting_a_code(
+    tmp_path: Path,
+) -> None:
+    """`language-scan` launches with an explicit index and only reads the result."""
+    driver = _ready_driver(tmp_path, language="index:17")
+    driver._expect_language = False
+    driver._events = [
+        (0.0, "E2E:LANGUAGE;code=ita"),
+        (0.0, "E2E:VIEW;category=sitemap;view=HomepageMenu;depth=2"),
+    ]
     driver.wait_ready(5.0)
-    log = _driver_log(driver)
-    assert "requested 'deu'" in log
-    assert "cannot provision" in log
+    assert driver.last_language == "ita"
+    assert "probed language" in _driver_log(driver)
 
 
 def test_wait_ready_confirms_the_requested_language_when_it_matches(

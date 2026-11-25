@@ -75,6 +75,7 @@ from .coverage import (
 from .engine import run_scenario
 from .fixtures import FixtureError
 from .health import EXIT_INVALID_ENVIRONMENT, HealthError
+from .languages import LANGUAGE_INDEX_FILE, load_language_index, write_language_index
 from .openhab import OpenHabClient, OpenHabError
 from .paths import repo_root, tests_root
 from .preflight import parse_skip, run_preflight
@@ -757,6 +758,109 @@ def _cmd_contract_test(args: argparse.Namespace) -> int:
     return contract_exit_code(cases)
 
 
+def _parse_index_range(spec: str) -> List[int]:
+    """Parse ``0-24`` or ``0,1,2`` into a list of simulator language indices."""
+    indices: List[int] = []
+    for part in str(spec).replace(" ", "").split(","):
+        if not part:
+            continue
+        start, separator, end = part.partition("-")
+        if separator:
+            first, last = int(start), int(end)
+            if last < first:
+                raise ValueError(f"--indices {spec}: {part} counts down")
+            indices.extend(range(first, last + 1))
+        else:
+            indices.append(int(part))
+    seen: List[int] = []
+    for index in indices:
+        if index not in seen:
+            seen.append(index)
+    if not seen:
+        raise ValueError(f"--indices {spec!r} names no index")
+    return seen
+
+
+def _cmd_language_scan(args: argparse.Namespace) -> int:
+    """Enumerate the simulator's numeric ``Language`` index by launching the app."""
+    if args.driver != "wine":
+        return _fail(
+            "language-scan needs a real simulator; use --driver wine on the guest"
+        )
+    prg = Path(args.prg)
+    if not prg.is_file():
+        return _fail(f"--prg {prg} is not a file")
+    derived = device_from_prg(prg)
+    device_id = args.device or (derived.id if derived is not None else None)
+    if not device_id:
+        return _fail(
+            f"cannot derive a device from {prg.name}; pass --device <id> "
+            "(the PRG names the build's device as openhab-garmin-<device>.prg)"
+        )
+    try:
+        indices = _parse_index_range(args.indices)
+    except ValueError as error:
+        return _fail(str(error))
+    device = find_device(device_id)
+    settings = load_settings(args.settings)
+    workdir = _artifacts_dir(args) / "language-scan"
+    driver = create_driver(
+        "wine",
+        layout=load_layout(),
+        artifact_dir=workdir,
+        log=lambda message: print(message),
+    )
+    measured: Dict[str, int] = {}
+    rejected: List[int] = []
+    print(f"device: {device.id} ({device.product}); probing indices {args.indices}")
+    driver.prepare(prg)
+    for index in indices:
+        try:
+            code = driver.probe_language(
+                index,
+                device,
+                settings,
+                mode=args.mode,
+                timeout_s=args.timeout,
+            )
+        except Exception as error:  # noqa: BLE001 - a failed probe is a data point
+            rejected.append(index)
+            print(f"  index {index:>3}: rejected ({type(error).__name__}: {error})")
+            continue
+        finally:
+            driver.stop()
+        if code == "unknown":
+            rejected.append(index)
+            print(f"  index {index:>3}: no E2E:LANGUAGE line")
+            continue
+        measured.setdefault(code, index)
+        print(f"  index {index:>3}: {code}")
+    driver.stop()
+
+    document = {
+        code: index for code, index in sorted(measured.items(), key=lambda item: item[1])
+    }
+    print("\nmeasured:")
+    for code, index in document.items():
+        print(f"  {code}: {index}")
+    if rejected:
+        print(f"rejected indices (no language reported): {rejected}")
+    if args.write:
+        merged = dict(load_language_index())
+        merged.update(document)
+        target = write_language_index(merged)
+        print(f"\nwrote {target} ({len(merged)} codes)")
+    elif document:
+        print(
+            "\nre-run with --write to persist this map in "
+            f"{LANGUAGE_INDEX_FILE}; until then the driver treats these codes as "
+            "unprovisionable and reports the runs blocked."
+        )
+    if args.json:
+        _emit_json({"measured": document, "rejected": rejected})
+    return 0 if document else 1
+
+
 def _cmd_preflight(args: argparse.Namespace) -> int:
     report = run_preflight(
         skip=parse_skip(args.skip),
@@ -1167,6 +1271,36 @@ def build_parser() -> argparse.ArgumentParser:
     )
     contract.add_argument("--json", action="store_true")
     contract.set_defaults(handler=_cmd_contract_test)
+
+    scan = subparsers.add_parser(
+        "language-scan",
+        help="measure the simulator's numeric Language index per language code",
+        description=(
+            "The simulator stores its device language as an index (Language=7 is "
+            "German), and its order is not documented. Launch the app once per "
+            "index, read E2E:LANGUAGE;code=... and record the mapping, which is "
+            "what makes a non-English scenario runnable. Run it on the guest."
+        ),
+    )
+    scan.add_argument("--driver", choices=DRIVER_NAMES, default="wine")
+    scan.add_argument("--prg", required=True, help="compiled PRG (build one with `e2e build`)")
+    scan.add_argument("--device", help="device id; defaults to the PRG's name")
+    scan.add_argument(
+        "--indices",
+        default="0-24",
+        help="index ranges to probe, e.g. 0-24 or 0,3,7 (default: 0-24)",
+    )
+    scan.add_argument("--mode", default="ble", help="communication mode (default: ble)")
+    scan.add_argument("--settings", default="default", help="fixture whose properties the PRG was built with")
+    scan.add_argument("--timeout", type=float, default=90.0, help="seconds per index")
+    scan.add_argument(
+        "--write",
+        action="store_true",
+        help=f"merge the measurement into {LANGUAGE_INDEX_FILE}",
+    )
+    scan.add_argument("--json", action="store_true")
+    scan.add_argument("--artifacts")
+    scan.set_defaults(handler=_cmd_language_scan)
 
     preflight = subparsers.add_parser(
         "preflight",

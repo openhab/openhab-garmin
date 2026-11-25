@@ -122,6 +122,47 @@ def test_dry_run_passes_the_scenario_language_to_the_driver(
     assert seen["language"] == "deu"
 
 
+def test_a_driver_that_provisions_the_language_runs_it(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Provisioning is per language: a measured index runs, an unmeasured one skips."""
+    seen = {}
+
+    class IndexDriver(NullDriver):
+        name = "wine"
+
+        def can_provision_language(self, language: str) -> bool:
+            return language in ("eng", "deu")
+
+        def start(self, device, settings, mode="ble", language="eng") -> None:
+            seen["language"] = language
+            super().start(device, settings, mode=mode, language=language)
+
+    monkeypatch.setattr(engine, "create_driver", lambda *args, **kwargs: IndexDriver())
+    scenario = find_scenario("extended/localisation-sitemap-deu")
+    result = run_scenario(
+        scenario,
+        find_device(default_device_id()),
+        openhab_url="http://openhab.invalid:8080",
+        shim_url="http://shim.invalid:8080",
+        artifacts_dir=tmp_path / "artifacts",
+        dry_run=True,
+    )
+    assert result.status == "passed", result.failures
+    assert seen["language"] == "deu"
+
+    blocked = run_scenario(
+        find_scenario("extended/localisation-sitemap-pol"),
+        find_device(default_device_id()),
+        openhab_url="http://openhab.invalid:8080",
+        shim_url="http://shim.invalid:8080",
+        artifacts_dir=tmp_path / "artifacts",
+        dry_run=True,
+    )
+    assert blocked.status == "skipped"
+    assert "language-scan" in blocked.skip_reason
+
+
 def test_language_that_cannot_be_provisioned_is_reported_as_skipped(
     tmp_path: Path, monkeypatch
 ) -> None:

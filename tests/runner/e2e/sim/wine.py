@@ -61,6 +61,12 @@ from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 import yaml
 
 from ..config import Device
+from ..languages import (
+    DEFAULT_LANGUAGE,
+    LANGUAGE_INDEX_FILE,
+    language_index,
+    load_language_index,
+)
 from ..sdk import (
     SdkLayout,
     find_device_definitions,
@@ -945,13 +951,26 @@ def read_device_keys(devices_root: Optional[Path], product: str) -> Mapping[str,
 # ---------------------------------------------------------------------------
 
 
-def ini_updates(product: str, mode: str, language: str) -> Dict[str, str]:
-    """Startup keys written before the simulator starts."""
+def ini_updates(product: str, mode: str, language_value: Optional[str]) -> Dict[str, str]:
+    """Startup keys written before the simulator starts.
+
+    ``language_value`` is the numeric ``Language`` index the map measured, or
+    ``None`` for the simulator's own default language: the key is then removed
+    rather than written, because writing an unmeasured index would silently run
+    the app in a language nobody asked for.
+    """
     if mode not in MODE_INI_VALUES:
         raise DriverError(f"unknown mode {mode!r}; expected one of {sorted(MODE_INI_VALUES)}")
-    updates: Dict[str, str] = {"LastUsedDevice": product, "Language": language}
+    updates: Dict[str, str] = {"LastUsedDevice": product}
+    if language_value is not None:
+        updates["Language"] = str(language_value)
     updates.update(MODE_INI_VALUES[mode])
     return updates
+
+
+def ini_removals(language_value: Optional[str]) -> Tuple[str, ...]:
+    """Keys to delete: ``Language`` when the default language is requested."""
+    return () if language_value is not None else ("Language",)
 
 
 @dataclass(frozen=True)
@@ -961,22 +980,34 @@ class IniUpdate:
     text: str
     written: Tuple[str, ...] = ()
     appended: Tuple[str, ...] = ()
+    removed: Tuple[str, ...] = ()
 
     @property
     def keys(self) -> Tuple[str, ...]:
-        return tuple(sorted(set(self.written) | set(self.appended)))
+        return tuple(sorted(set(self.written) | set(self.appended) | set(self.removed)))
 
 
-def update_ini(text: Optional[str], updates: Mapping[str, str]) -> IniUpdate:
+def update_ini(
+    text: Optional[str],
+    updates: Mapping[str, str],
+    remove: Sequence[str] = (),
+) -> IniUpdate:
     """Rewrite ``simulator.ini`` in the simulator's own format.
 
     The file the simulator writes is flat ``key=value`` lines with **no section
     header** (for example ``LastFplVersion=9``, ``BleState=2``). Existing keys
     are replaced in place and keep their original spelling, every unrelated key
     is preserved because the simulator rewrites the file itself, and a missing
-    key is appended at the end rather than under an invented section.
+    key is appended at the end rather than under an invented section. Keys in
+    ``remove`` are deleted outright: a stale ``Language`` index from a previous
+    run would otherwise put the app in the wrong language.
     """
-    lines = (text or "").splitlines()
+    removed = {name.lower() for name in remove}
+    lines = [
+        line
+        for line in (text or "").splitlines()
+        if not (line.partition("=")[1] and line.partition("=")[0].strip().lower() in removed)
+    ]
     written: List[str] = []
     pending: Dict[str, str] = {}
     for name, value in updates.items():
@@ -997,6 +1028,7 @@ def update_ini(text: Optional[str], updates: Mapping[str, str]) -> IniUpdate:
         text="\n".join(lines) + "\n" if lines else "",
         written=tuple(written),
         appended=tuple(pending),
+        removed=tuple(sorted(set(remove))),
     )
 
 
@@ -1243,11 +1275,12 @@ class WineSimulatorDriver(SimulatorDriver):
     name: str = "wine"
     supports_events: bool = True
     supports_screenshots: bool = True
-    #: The simulator applies device language from its own UI; writing
-    #: ``Language`` to ``simulator.ini`` is preserved but not applied, so this
-    #: driver cannot provision a language. ``wait_ready`` records the language
-    #: the app reports, and the engine reports other languages as blocked.
-    provisions_language: bool = False
+    #: The simulator's ``Language`` setting is a numeric index, not a code, and
+    #: the index is measured per code (see ``e2e.languages``). Every code with a
+    #: measured index can be provisioned; ``eng`` always can, by removing the key
+    #: and using the simulator's own default. ``can_provision_language()`` is the
+    #: precise question, because this is per language and not per driver.
+    provisions_language: bool = True
 
     def __init__(
         self,
@@ -1285,6 +1318,10 @@ class WineSimulatorDriver(SimulatorDriver):
         self._last_press: Optional[PressResult] = None
         self._mode = "ble"
         self._language = "eng"
+        self._expect_language = True
+        self._language_index_map: Optional[Dict[str, int]] = None
+        #: The language code the app reported at the last ``wait_ready``.
+        self.last_language: Optional[str] = None
         self._display_name = ""
         self._ini_path: Optional[Path] = None
         self._ini_summary: Optional[IniUpdate] = None
@@ -1371,6 +1408,79 @@ class WineSimulatorDriver(SimulatorDriver):
         language: str = "eng",
     ) -> None:
         """Start the simulator for ``device`` and launch the app."""
+        self._start_with(
+            device,
+            settings,
+            mode=mode,
+            language=language,
+            language_value=self._language_ini_value(language),
+        )
+
+    def can_provision_language(self, language: str) -> bool:
+        """True when this driver can put the app into ``language``."""
+        if language == DEFAULT_LANGUAGE:
+            return True
+        return language_index(language, self._language_map()) is not None
+
+    def probe_language(
+        self,
+        index: int,
+        device: Device,
+        settings: AppSettings,
+        mode: str = "ble",
+        timeout_s: float = DEFAULT_READY_TIMEOUT,
+    ) -> str:
+        """Launch with an explicit ``Language`` index and return the reported code.
+
+        ``e2e language-scan`` uses this to enumerate the map: the simulator does
+        not document its language order, so the only honest source is one launch
+        per index plus the ``E2E:LANGUAGE`` line the app prints.
+        """
+        self._start_with(
+            device,
+            settings,
+            mode=mode,
+            language=f"index:{index}",
+            language_value=str(int(index)),
+            expect_language=False,
+        )
+        self.wait_ready(timeout_s)
+        return self.last_language or "unknown"
+
+    def _language_map(self) -> Dict[str, int]:
+        cached = getattr(self, "_language_index_map", None)
+        if cached is None:
+            cached = load_language_index()
+            self._language_index_map = cached
+        return cached
+
+    def _language_ini_value(self, language: str) -> Optional[str]:
+        """The numeric ``Language`` value, or ``None`` for the simulator default."""
+        if language == DEFAULT_LANGUAGE:
+            return None
+        index = language_index(language, self._language_map())
+        if index is None:
+            raise DriverError(
+                f"language {language!r} has no measured simulator index, so it "
+                "cannot be provisioned.\n"
+                "The simulator stores its language as an index (`Language=7` is "
+                "German), and its order is not documented. Measure it once:\n"
+                f"  python -m e2e language-scan --prg <built.prg> --write\n"
+                f"which updates {LANGUAGE_INDEX_FILE}. Until then the scenario is "
+                "reported blocked rather than run in the wrong language."
+            )
+        return str(index)
+
+    def _start_with(
+        self,
+        device: Device,
+        settings: AppSettings,
+        *,
+        mode: str,
+        language: str,
+        language_value: Optional[str],
+        expect_language: bool = True,
+    ) -> None:
         if self._prg is None:
             raise DriverError("prepare() must stage a PRG before start()")
         if mode not in MODE_INI_VALUES:
@@ -1382,6 +1492,8 @@ class WineSimulatorDriver(SimulatorDriver):
         self._settings = settings
         self._mode = mode
         self._language = language
+        self._expect_language = expect_language
+        self.last_language = None
         self._ciq_errors = []
         self._ciq_header = {}
         self._ciq_log = None
@@ -1399,7 +1511,7 @@ class WineSimulatorDriver(SimulatorDriver):
 
         self._ensure_display()
         self._sweep_existing_simulator()
-        self._write_simulator_ini(device, mode, language)
+        self._write_simulator_ini(device, mode, language_value)
         self._start_simulator()
         self._seed_settings(settings)
         self._launch_app(device)
@@ -1415,16 +1527,21 @@ class WineSimulatorDriver(SimulatorDriver):
         parsed = self._wait_for_startup(timeout)
         language = next((event for event in parsed if event.event == "LANGUAGE"), None)
         observed = language.get("code") if language is not None else "unknown"
+        self.last_language = observed
         if observed != self._language:
-            # The simulator applies device language through its own UI, which is
-            # not scripted. The app still reports the language it runs in, so a
-            # mismatch is evidence to record, not a reason to fail a run.
+            if self._expect_language:
+                raise DriverError(
+                    f"the app reported system language {observed!r} but the "
+                    f"scenario requested {self._language!r}, and this driver "
+                    "provisioned it (the numeric simulator index was written).\n"
+                    "That means the index is wrong for this code or the simulator "
+                    "ignored the key: correct the map with\n"
+                    f"  python -m e2e language-scan --prg <built.prg> --write\n"
+                    f"({LANGUAGE_INDEX_FILE}). A run in the wrong language would "
+                    "assert the wrong strings, so it is stopped here."
+                )
             self._record(
-                f"warning: the app reported system language {observed!r} but the "
-                f"scenario requested {self._language!r}; device language is a "
-                "simulator setting the harness cannot provision (the ini key is "
-                "written and preserved, but not applied). tests/docs/"
-                "simulator-driver.md records the measurements."
+                f"probed language: the app reported {observed!r} for this index"
             )
         else:
             self._record(f"language confirmed: {observed}")
@@ -1460,6 +1577,71 @@ class WineSimulatorDriver(SimulatorDriver):
                 "request assertions prove the transition."
             )
         self._record_device_title()
+        self._verify_window_geometry()
+
+    def _verify_window_geometry(self) -> None:
+        """Record the window size and check the declared space fits inside it.
+
+        Each device's ``simulator.json`` is in that device's own art space and
+        maps 1:1 to that device's window, and the size is per device and
+        persisted by the simulator: fenix7's window is 409x600 while
+        fenix847mm's is 713x961. Anything that assumes one of those sizes is only
+        accidentally right for one device, so the size is read per run and the
+        declared screen rectangle is checked against it.
+        """
+        window = self._window
+        if window is None:
+            return
+        display = self._definition.display
+        pinned = parse_screen_rect(os.environ.get(ENV_SCREEN_RECT, ""))
+        try:
+            geometry = self._geometry(window)
+        except DriverError as error:
+            self._record(
+                f"warning: could not read the window geometry, so the declared "
+                f"display.location was not checked against it ({error})"
+            )
+            return
+        if display is not None and pinned is None:
+            # The window can still be resizing right after the app launch, so
+            # give it a moment before declaring the declared space impossible.
+            for _ in range(6):
+                if (
+                    display.x + display.width <= geometry.get("width", 0)
+                    and display.y + display.height <= geometry.get("height", 0)
+                ):
+                    break
+                time.sleep(0.5)
+                geometry = self._geometry(window)
+        width, height = geometry.get("width", 0), geometry.get("height", 0)
+        self._record(
+            f"window geometry: {width}x{height} at "
+            f"(+{geometry.get('x', 0)},+{geometry.get('y', 0)})"
+        )
+        if display is None:
+            return
+        if pinned is not None:
+            self._record(
+                f"{ENV_SCREEN_RECT} is pinned, so the declared "
+                "display.location is not checked against the window"
+            )
+            return
+        if display.x + display.width > width or display.y + display.height > height:
+            product = self._device.product if self._device else "?"
+            raise DriverError(
+                f"the simulator window is {width}x{height}, but {product} declares "
+                f"display.location {display.x},{display.y} "
+                f"{display.width}x{display.height}, which does not fit inside it.\n"
+                "The declared coordinates are in this device's own art space and "
+                "map 1:1 to its own window, so the window is the wrong device's "
+                "size or the simulator ignored the device. Check "
+                "`LastUsedDevice` in simulator.ini, or pin "
+                f"{ENV_SCREEN_RECT}=x,y,width,height from a screenshot."
+            )
+        self._record(
+            f"declared display {display.x},{display.y} {display.width}x"
+            f"{display.height} fits the {width}x{height} window 1:1"
+        )
 
     def _open_app_if_needed(
         self, parsed: Sequence[TraceEvent], deadline: float
@@ -2211,21 +2393,29 @@ class WineSimulatorDriver(SimulatorDriver):
                 candidates.append(self.prefix / hint.format(user=user))
         return candidates
 
-    def _write_simulator_ini(self, device: Device, mode: str, language: str) -> None:
-        updates = ini_updates(device.product, mode, language)
+    def _write_simulator_ini(
+        self, device: Device, mode: str, language_value: Optional[str]
+    ) -> None:
+        updates = ini_updates(device.product, mode, language_value)
         existing = next((path for path in self._ini_candidates() if path.is_file()), None)
         created = existing is None
         path = existing or self._ini_candidates()[0]
         path.parent.mkdir(parents=True, exist_ok=True)
         text = path.read_text(encoding="utf-8", errors="replace") if path.is_file() else ""
-        update = update_ini(text, updates)
+        update = update_ini(text, updates, remove=ini_removals(language_value))
         path.write_text(update.text, encoding="utf-8")
         self._ini_path = path
         self._ini_summary = update
+        language_note = (
+            f"Language={language_value}"
+            if language_value is not None
+            else "Language removed (simulator default)"
+        )
         self._record(
             f"simulator.ini {path}: "
             + ("created" if created else "rewrote")
-            + f" written={list(update.written)} appended={list(update.appended)}"
+            + f" written={list(update.written)} appended={list(update.appended)} "
+            + f"removed={list(update.removed)}; {language_note}"
         )
 
     def _ini_description(self) -> str:
@@ -2235,7 +2425,8 @@ class WineSimulatorDriver(SimulatorDriver):
             return str(self._ini_path)
         return (
             f"{self._ini_path} (written={list(self._ini_summary.written)}, "
-            f"appended={list(self._ini_summary.appended)})"
+            f"appended={list(self._ini_summary.appended)}, "
+            f"removed={list(self._ini_summary.removed)})"
         )
 
     # -- simulator ---------------------------------------------------------

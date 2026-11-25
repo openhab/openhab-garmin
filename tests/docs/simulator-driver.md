@@ -57,8 +57,9 @@ engine reports event and golden assertions as **skipped**, never passed.
 - `input-delivery` presses the declared select once and reports whether the app
   changed a view or its screen area. It does not assume a simulator menu, and it
   verifies the pointer is over the simulator before clicking.
-- The contract starts with `mode=ble, language=deu`. The language is reported
-  and compared, never forced (see "Language cannot be provisioned").
+- The contract starts with `mode=ble, language=deu`. `deu` is provisioned through
+  the measured numeric index and the reported language must match, so a wrong
+  index fails the contract loudly instead of running in English.
 
 ## How the Wine driver works
 
@@ -167,7 +168,7 @@ PIDs instead.
 | `events` | implemented | `monkeydo` stdout/stderr with receipt timestamps; `stdbuf` disables its block buffering when available. |
 | `stop` | implemented | Terminates the app and the simulator by PID; leaks nothing into the next scenario. |
 | mode (`ble`/`wifi`/`offline`) | partial | The startup keys are written and reported. The app always starts in `BLE` and only leaves it after a request fails, so the driver does not claim a runtime mode; the scenario's request-count assertions cover the transition. |
-| language (`eng`/`deu`/...) | implemented, not provisionable | `Language` is written before start but the simulator does not apply it. The reported language is compared and a mismatch is recorded as a warning; the engine skips non-`eng` runs and `coverage.md` marks them blocked. |
+| language (`eng`/`deu`/...) | implemented, per code | `eng` removes the `Language` key (simulator default); every other code writes the **numeric** index from `tests/config/simulator-languages.json` and the reported `E2E:LANGUAGE` must match or the run fails. A code with no measured index raises in `start()` and is reported blocked; `python -m e2e language-scan --write` measures it. |
 | app properties | implemented, verified at build | Compiled into the PRG through a `settings.xml` resource override; `e2e build` asserts the defaults `monkeyc` emitted, and `wait_ready` rejects a `UI:CONFIG` error view. See below. |
 
 ## Application properties
@@ -243,51 +244,52 @@ waiting for a Wi-Fi check that has nothing to talk to. `nightMode=1` and
 `UseHttpsRequirements=0` in that same file confirm the numeric convention; the
 driver does not set them.
 
-Language is written as `Language=<code>` before start and the app's actual
-language is read from `E2E:LANGUAGE` (which comes from
-`System.getDeviceSettings().systemLanguage`). The configuration that was written
-is never used as evidence.
+### Language is a numeric index
 
-### Language cannot be provisioned
+The simulator stores the device language as an **index**, not a code: the
+maintainer's working installation carries `Language=7`, and launching with it
+makes the app report `E2E:LANGUAGE;code=deu`. The mapping lives in one place,
+[`tests/config/simulator-languages.json`](../config/simulator-languages.json),
+because the simulator's language order is undocumented and the only honest
+source is measurement:
 
-Measured on the guest, twice:
-
-```text
-simulator.ini: Language=deu                            -> app: E2E:LANGUAGE;code=eng
-LANG=de_DE.UTF-8 LANGUAGE=de LC_ALL=de_DE.UTF-8 + deu  -> app: E2E:LANGUAGE;code=eng
+```bash
+python -m e2e language-scan --prg <built.prg> --write     # on the guest
 ```
 
-The simulator's own `CIQ_LOG.YML` says `Language-Code: eng` in both cases.
-`GARMIN/Settings/` stays empty, there is no `HKCU\Software\Garmin*` key, and
-`deu` is a language the binary knows (the value survives in `simulator.ini`), so
-this is not a spelling problem: **device language is a device setting the
-simulator applies through its own UI**, and those menus are not scripted.
+`language-scan` starts the simulator once per index (default `0-24`), reads
+`E2E:LANGUAGE;code=...` from the app and merges `code -> index` into that file.
+The checked-in map currently holds the one measured pair, `deu: 7`; every other
+code stays **blocked** until it is measured, rather than guessed.
 
-The consequence is honest reporting, not pretending:
+- `eng` is the simulator's default. The driver **removes** the `Language` key for
+  it, rather than writing an index nobody measured — a stale `Language=7` from a
+  previous run (or the maintainer's own file) would otherwise run every English
+  scenario in German.
+- A code **with** an index is written and then **verified**: `wait_ready` fails
+  the run when the app reports a different language, because a run in the wrong
+  language asserts the wrong strings. The message names `language-scan`.
+- A code **without** an index raises in `start()` and is reported `skipped` by
+  the engine (`can_provision_language()` answers per language, not per driver),
+  so an unprovisionable language can never masquerade as evidence.
+- `tests/docs/coverage.md` counts a variant as blocked only while its code has no
+  measured index; `language-scan --write` is what unblocks it. With `deu: 7` in
+  the map the blocked count drops from 50 to 40 runs.
 
-- `wait_ready` requires that a language is reported and compares it with the
-  request. A mismatch is recorded as a **warning** in `logs/driver.log`
-  (including the requested and reported codes); it does not fail the run,
-  because no driver-side action can change it.
-- The engine skips a run whose language is not `eng` when the driver says it
-  cannot provision a language (`provisions_language = False` on the Wine
-  driver), with `skip_reason` in the report and a `skipped` entry in JUnit. The
-  dry run still exercises those scenarios' wiring with the null driver.
-- `tests/docs/coverage.md` lists every non-English variant as **blocked**
-  instead of counting it as evidence, and the summary counts them.
-
-The future path is one of: script the simulator's Simulation menu (device
-settings), or find a persistence file the simulator actually reads. The SDK
-history notes device-settings change notifications for language; nothing else on
-the guest accepted a language yet.
+The earlier conclusion that "device language cannot be provisioned" was wrong:
+it came from writing `Language=deu`, which the simulator ignores because it wants
+an index. `LANG`/`LC_ALL` on the Wine process make no difference either, and that
+part still holds.
 
 A mode change at runtime (the simulator's `Simulation` and `Connection` menus)
-is likewise **not implemented**. The driver would have to script native Win32
+is **not implemented**. The driver would have to script native Win32
 menus with `Alt+S`/`Alt+C` plus arrow keys and confirm the effect from
 `E2E:CONNECTION`; the spike under [`spike/`](../spike/README.md) exercises that
 path, and its verdict decides whether it is reliable enough for the driver.
 Until then a scenario that needs a mode gets it at startup, and the request-count
-assertions prove the app's behaviour.
+assertions prove the app's behaviour. The guest also shows there is **no menu bar
+to drive**: `xwininfo -root -children` lists only the main window and 1x1 helper
+windows, and `Alt+F`/`Alt+S`/`Alt+M` open nothing.
 
 Night mode, sleep mode and HTTPS requirements are also only available through
 those menus and are not scripted.
@@ -374,6 +376,35 @@ The earlier `GlanceViewDelegate` idea is recorded here so it is not retried:
 as "Invoked when certain glance event occurs, none for now". There is no select
 handling, so a delegate cannot be why the simulator stays in glance mode.
 
+## Window size is per device
+
+The simulator persists a window size per device and sizes the window to that
+device's art: measured on the guest, **fenix7 is 409x600** and **fenix847mm is
+713x961**. Each device's `simulator.json` (`display.location`, `keys[].location`)
+is in that device's own art space and maps **1:1 to its own window**, so the
+driver reads the geometry on every run and never assumes a size.
+
+`wait_ready` records the size and then checks that the declared
+`display.location` fits inside it:
+
+```text
+window geometry: 713x961 at (+0,+0)
+declared display 134,221 454x454 fits the 713x961 window 1:1
+```
+
+If it does not fit, the run stops, because that means the window is another
+device's size or the simulator ignored the device — the failure mode that made a
+409x600 assumption look correct for fenix7 only:
+
+```text
+the simulator window is 409x600, but fenix847mm declares display.location
+134,221 454x454, which does not fit inside it.
+```
+
+An `E2E_WINE_SCREEN_RECT` pin overrides the check (the operator's rectangle wins
+when the definition is wrong). The window position is re-read immediately before
+every click, because it changes between runs.
+
 ## Input
 
 `press` and `tap` first focus the simulator window:
@@ -436,14 +467,38 @@ after, shim `/__requests` polled after every step):
 | mouse click on the `enter` rect, screen centre, 1.5 s hold, double click | 0 | 0 |
 | the same clicks with `matchbox-window-manager`, `windowactivate --sync` and fullscreen-scaled coordinates | 0 | 0 |
 
-**The keyboard reaches the simulator; the mouse is unproven.** Every mouse row
-above was measured _before_ the driver verified the pointer target, and on that
-same guest `xdotool getmouselocation` afterwards reported the root window instead
-of the simulator — so "the mouse is silent" is not an established fact, it is an
-unverified one. The operator's simulator does switch from the glance on a click.
-The driver keeps the mouse path, proves the pointer is over the simulator before
-each click (see "The pointer must be verified, not assumed"), and reports what
-happened; `contract-test` now decides between the two paths with evidence.
+**The keyboard reaches the simulator; button clicks do not (on fenix7).** Every
+mouse row above was measured before the driver verified the pointer, so the guest
+re-measured with `xdotool getmouselocation`: on fenix7 the pointer _is_ over the
+simulator window id when clicking the `enter` hit area and when clicking inside
+the screen, the events reach the window, and still no view changes and no request
+is made. Pointer and focus are therefore not the explanation on this device.
+
+The difference is probably the input model. The maintainer's working installation
+is `fenix9pro47mm`, a **touch** device, where clicking the watch image is a _tap_
+the app handles; on fenix7 (`touch+button`) the same click lands on a bezel hit
+area whose behaviour the simulator does not forward under Wine:
+
+| Input | Pointer verified | Screen change | Requests |
+| --- | --- | --- | --- |
+| click inside the screen | yes, simulator window id | 0 | 0 |
+| click the declared `enter` hit area | yes, simulator window id | 0 | 0 |
+| same clicks without a pointer check | unknown (root window in one trace) | 0 | 0 |
+
+The next measurement is one command, on the touch device whose window is
+713x961:
+
+```bash
+python -m e2e contract-test --driver wine --prg <openhab-garmin-fenix847mm.prg> --shim-url <shim>
+```
+
+`press-effect` already taps the screen centre on a touch device
+(`screen_width // 2`), which maps to (361,448) inside fenix847mm's declared
+`134,221 454x454` display, and reports a different view or a change inside that
+rectangle plus the shim request delta. If that passes while fenix7's bezel press
+does not, the practical conclusion is that clicks work for **touch input only**
+under this Wine/Xvfb, and UI scenarios should prefer touch devices — a
+device-matrix decision, not a driver one.
 
 `press` therefore picks its path and records it:
 
@@ -600,7 +655,8 @@ is enough to act on it.
 | `press[<button>] … effect=none` | the press ran but changed nothing measurable. Reported as evidence (`skipped`); the verdict is `press-sequence` | try `--key <BUTTON>=<keysym>`; check the mechanism and the verified pointer target in `logs/driver.log` |
 | `press-sequence … DOWN, DOWN, UP produced no effect` | no press in the sequence reached the app by any mechanism | read the three mechanisms in the message; if they are mouse presses, check the pointer line above |
 | `the pointer never reached the simulator window` | the click would have gone to the root window or another client, so it was refused | the window moved or is not mapped on this display; re-run, and confirm `xdotool getmouselocation` names the simulator window. This is the failure mode behind every "the mouse is silent" measurement |
-| `the app reported system language …` | `Language` in `simulator.ini` was ignored | see the language section above |
+| `the app reported system language …` | the numeric index was written but the app reports another language, so the index is wrong or was ignored | run `python -m e2e language-scan --prg <prg> --write` and check `tests/config/simulator-languages.json` |
+| `language 'pol' has no measured simulator index` | the code is not in the measured map, so the run would be in another language | measure it with `language-scan --write`; until then the run is reported blocked |
 | `the app showed the configuration error view` | the PRG was built without the requested properties | rebuild with `e2e build --settings <fixture>`, or pass a PRG built that way |
 
 ## The Windows `shell.exe` bridge does not work
@@ -661,6 +717,19 @@ proof is a driver run on the guest, which the operator performs:
    coordinate or keysym change can help; if the pointer is verified and the
    press still does nothing, it is a delivery/coordinate question in that order
    before assuming an app defect.
+1. Measure the language indices once, which is what unblocks the localisation
+   tier: `python -m e2e language-scan --prg <built.prg> --write`. It launches
+   once per index and records `code -> index` in
+   `tests/config/simulator-languages.json`; `deu: 7` comes from the maintainer's
+   installation and has **not** been re-measured by this change. Then run
+   `python -m e2e run extended/localisation-sitemap --driver wine` (and a
+   `-deu` variant) and confirm the app reports the requested language and the
+   `blocked` count in `tests/docs/coverage.md` drops as codes are measured.
+1. Try the touch-input experiment: `python -m e2e contract-test --driver wine
+   --prg <openhab-garmin-fenix847mm.prg> --shim-url <shim>` taps the screen
+   centre in the 713x961 window. A pass there, with fenix7's bezel press failing,
+   means clicks work for touch input only, and UI scenarios should prefer touch
+   devices.
 1. If the log says the app stayed on the glance page, the simulator never
    reached `getInitialView()`. The driver tried the declared select, the menu
    hold, a tap and one relaunch. Next, check whether a second `monkeydo` starts

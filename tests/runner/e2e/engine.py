@@ -38,7 +38,7 @@ from .reporting import ERRORED, FAILED, PASSED, SKIPPED, ScenarioResult, StepRes
 from .scenarios import Scenario, Step
 from .settings import AppSettings, load_settings
 from .shim import ShimClient, ShimError, ShimRequest
-from .sim import Button, DriverError, RUNNABLE_LANGUAGES, SimulatorDriver, create_driver
+from .sim import Button, DriverError, SimulatorDriver, create_driver
 from .sdk import SdkLayout
 from .trace import EventMatch, TraceLog
 
@@ -139,16 +139,15 @@ class ScenarioRunner:
                 artifact_dir=workdir,
                 log=self.log,
             )
-            if (
-                scenario.language not in RUNNABLE_LANGUAGES
-                and not driver.provisions_language
-            ):
+            if not driver.can_provision_language(scenario.language):
                 result.status = SKIPPED
                 result.skip_reason = (
-                    f"language {scenario.language!r} cannot be provisioned: device "
-                    "language is a simulator setting the driver cannot apply, so "
-                    "this run would execute in the simulator's default language "
-                    "and prove nothing. See tests/docs/simulator-driver.md."
+                    f"language {scenario.language!r} cannot be provisioned by "
+                    f"driver {driver.name!r}: it has no measured simulator index, "
+                    "so this run would execute in another language and prove "
+                    "nothing. Measure the index once with "
+                    "`python -m e2e language-scan --prg <built.prg> --write`; "
+                    "see tests/docs/simulator-driver.md."
                 )
                 self.log(f"SKIPPED {scenario.scenario_id}: {result.skip_reason}")
                 return result

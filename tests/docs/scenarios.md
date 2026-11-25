@@ -103,13 +103,15 @@ The `LANGUAGE` trace event is emitted by `OHApp.onStart` from
 `System.getDeviceSettings().systemLanguage`, so asserting it proves which language
 the simulator really started in instead of assuming the requested one. The engine
 passes the scenario language to
-`SimulatorDriver.start(device, settings, mode, language)`. A driver declares
-`provisions_language`; when it is false and the language is not `eng`, the engine
-reports the run as **skipped** (with `skip_reason` in the report) instead of
-executing it in the wrong language. The Wine driver cannot provision a device
-language, so only `eng` runs today; the measurements are in
-[simulator-driver.md](simulator-driver.md#language-cannot-be-provisioned) and
-[coverage.md](coverage.md) marks the rest blocked.
+`SimulatorDriver.start(device, settings, mode, language)`. A driver answers
+`can_provision_language(language)` per code; when it cannot, the engine reports
+the run as **skipped** (with `skip_reason` in the report) instead of executing it
+in the wrong language. The Wine driver provisions a language with the simulator's
+numeric `Language` index, taken from the measured map in
+`tests/config/simulator-languages.json` (currently `deu: 7`); codes without a
+measured index stay blocked until `python -m e2e language-scan --write` measures
+them. See [simulator-driver.md](simulator-driver.md#language-is-a-numeric-index)
+and the blocked-variant count in [coverage.md](coverage.md).
 
 ## Scope coverage
 

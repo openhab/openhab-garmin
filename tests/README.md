@@ -284,6 +284,7 @@ See [docs/simulator-driver.md](docs/simulator-driver.md#glance-the-build-profile
 | `variants` | the resolved build-variant table and device coverage; exits non-zero on a gap |
 | `coverage` | map #140 scope entries to scenarios; `--write` regenerates `docs/coverage.md`, `--check` fails on a gap or a stale document |
 | `contract-test` | exercise a simulator driver against the driver contract; `--prg` adds the cases that need a launched application and its name selects the device (a disagreeing `--device` is refused). `--key BUTTON=KEYSYM` tries a different input key; `--shim-url` adds the shim requests each measured press caused |
+| `language-scan` | measure the simulator's numeric `Language` index per language code on the guest (`--prg`, `--indices 0-24`, `--write`) and record it in `tests/config/simulator-languages.json`; this is what makes a non-English scenario runnable |
 | `preflight` | read-only host check before the stack starts; `--skip` a group and `--json` for automation |
 | `validate-compose` | static Compose validation; `--check-pins` also requires digests |
 | `network-env` | render or verify the generated loopback network block in `compose/.env.example` |

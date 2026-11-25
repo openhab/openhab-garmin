@@ -25,6 +25,14 @@ and the loader expands it into one run per language (`...-eng` through
 each run, which is what makes a single file assert `E2E:LANGUAGE;code=<lang>`.
 The schema is documented in [scenarios.md](scenarios.md).
 
+A language is only runnable once its index is measured: the simulator stores the
+device language as a numeric `simulator.ini` value (`Language=7` is German), so
+the driver writes that index and fails the run when the app reports another
+language. The map is `tests/config/simulator-languages.json` and
+`python -m e2e language-scan --prg <built.prg> --write` measures the rest; until
+a code has an index its runs are reported **blocked**, not guessed. See
+[simulator-driver.md](simulator-driver.md#language-is-a-numeric-index).
+
 | Scenario | Surface | Machine-asserted | Review-only |
 | --- | --- | --- | --- |
 | `localisation-sitemap` | homepage title, frame labels, control labels, connection indicator, Settings entry, Player control view | language, views, no error view | text fit and wrapping |
