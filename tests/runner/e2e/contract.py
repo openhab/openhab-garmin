@@ -23,7 +23,7 @@ from typing import Callable, Dict, List, Optional, Sequence
 from .config import Device, load_devices
 from .settings import load_settings
 from .sim.base import Button, SimulatorDriver
-from .trace import parse_line, parse_lines
+from .trace import parse_lines
 
 PASS = "pass"
 FAIL = "fail"
@@ -269,10 +269,10 @@ def run_contract(
     def press_effect() -> None:
         """A press must change what the app does, not just call xdotool.
 
-        A keystroke the simulator ignores and a click that misses its hit area
-        both look like success unless the effect is observed. A new view or a
-        substantial screen change (a focus/selection change) counts; a ticking
-        clock does not.
+        A repeated line for the same view is not an effect: the glance can
+        re-render on its own clock, and the app's first draw can land late. Only
+        a **different** view (category or name) or, once the app has left the
+        glance, a substantial change inside its screen area counts.
         """
         pixel = getattr(driver, "pixel_difference", None)
         region_pixel = getattr(driver, "region_pixel_difference", None)
@@ -280,6 +280,17 @@ def run_contract(
         region = None
         if screen_region is not None:
             region = screen_region()
+        parsed_before = parse_lines(list(driver.events()))
+        known = {
+            (event.get("category"), event.get("view"))
+            for event in parsed_before
+            if event.event == "VIEW"
+        }
+        current = next(
+            (event for event in reversed(parsed_before) if event.event == "VIEW"), None
+        )
+        on_glance = current is not None and current.get("category") == "glance"
+
         actions: List[tuple] = [
             ("ENTER", lambda: driver.press(Button.ENTER, 1)),
             ("MENU", lambda: driver.press(Button.MENU, 1)),
@@ -299,7 +310,7 @@ def run_contract(
         attempts: List[str] = []
         for label, action in actions:
             before = None
-            if driver.supports_screenshots:
+            if driver.supports_screenshots and not on_glance:
                 before = shots / f"{label}-before.png"
                 driver.screenshot(before)
             mark = len(driver.events())
@@ -307,9 +318,13 @@ def run_contract(
             deadline = time.monotonic() + PRESS_EFFECT_TIMEOUT
             changed = None
             while time.monotonic() < deadline:
-                for line in list(driver.events())[mark:]:
-                    event = parse_line(line)
-                    if event is not None and event.event in ("VIEW", "ERRORVIEW"):
+                for event in parse_lines(list(driver.events())[mark:]):
+                    if event.event == "ERRORVIEW":
+                        return
+                    if event.event != "VIEW":
+                        continue
+                    signature = (event.get("category"), event.get("view"))
+                    if signature not in known and event.get("category") != "glance":
                         return
                 if before is not None and pixel is not None:
                     after = shots / f"{label}-after.png"
@@ -322,16 +337,21 @@ def run_contract(
                         return
                 time.sleep(0.25)
             attempts.append(f"{label} ({changed!r} px)")
+        reason = (
+            " The app is still on the glance page, so its screen changes are not "
+            "counted; fix the glance transition first."
+            if on_glance
+            else ""
+        )
         raise AssertionError(
             "pressing ENTER, MENU and DOWN"
             + (" and tapping the screen" if device.supports_touch else "")
-            + " produced no new VIEW or ERRORVIEW and no screen change at or above "
-            f"{PRESS_PIXEL_THRESHOLD} px: {'; '.join(attempts)}.\n"
+            + " produced no different VIEW (a repeated view does not count), no "
+            f"ERRORVIEW and no screen change at or above {PRESS_PIXEL_THRESHOLD} "
+            f"px: {'; '.join(attempts)}.{reason}\n"
             "logs/driver.log names the mechanism and window point for each press. "
-            "If the input-delivery case also failed, input never reached the "
-            "simulator (focus/delivery), which no coordinate fix can solve; if it "
-            "passed, compare the logged point with the device definition's "
-            "keys[].location and the window's client origin."
+            "Compare that point with the device definition's keys[].location and "
+            "the window's client origin."
         )
 
     if driver.supports_events:

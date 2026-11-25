@@ -61,8 +61,25 @@ class BuildError(RuntimeError):
 
 
 #: Build profile names, printed by ``e2e build`` and at the top of a run.
+#:
+#: A widget shown on the glance page is started in **glance mode** (32 KB
+#: budget) and only enters ``getInitialView()`` when it is selected, which this
+#: simulator does not do for us. ``watch-app`` therefore declares the app as a
+#: plain watch app in a harness-owned copy of ``manifest.xml`` (the only valid
+#: plain-app type in ``monkeybrains.jar``'s ``AppTypeManager`` is ``watch-app``),
+#: so the simulator launches the initial view directly. The widget and glance
+#: modes stay explicitly unverified (#396).
+PROFILE_WATCH_APP = "watch-app"
 PROFILE_WITH_GLANCE = "with-glance"
 PROFILE_WITHOUT_GLANCE = "without-glance"
+PROFILES: Tuple[str, ...] = (
+    PROFILE_WATCH_APP,
+    PROFILE_WITHOUT_GLANCE,
+    PROFILE_WITH_GLANCE,
+)
+
+#: The manifest's application type the profiles switch between.
+_MANIFEST_TYPE = re.compile(r'(<iq:application\b[^>]*\btype=")widget(")')
 
 #: The app's glance view, relative to the checkout. This is the file the
 #: ``without-glance`` profile stubs out; a guard test compares it with the
@@ -106,17 +123,54 @@ class GlanceSitemapView extends WatchUi.GlanceView {
 '''
 
 
-def describe_profile(include_glance: bool) -> str:
+def describe_profile(profile: str) -> str:
     """One line naming the profile and what it means for coverage."""
-    if include_glance:
+    if profile not in PROFILES:
+        raise BuildError(f"unknown build profile {profile!r}; expected {', '.join(PROFILES)}")
+    if profile == PROFILE_WITH_GLANCE:
         return (
             f"{PROFILE_WITH_GLANCE}: the app's own glance view is compiled; the "
             "glance is exercised (and may crash, issue #396)"
         )
+    if profile == PROFILE_WITHOUT_GLANCE:
+        return (
+            f"{PROFILE_WITHOUT_GLANCE}: the glance view is replaced by an empty "
+            "stub and draws nothing; the app is still a widget, so the simulator "
+            "may start it in glance mode; the glance is NOT covered (issue #396)"
+        )
     return (
-        f"{PROFILE_WITHOUT_GLANCE}: the glance view is replaced by an empty stub "
-        "and draws nothing; the glance is NOT covered (issue #396)"
+        f"{PROFILE_WATCH_APP}: the app is declared as a plain watch app in a "
+        "generated manifest and its glance view is stubbed, so the simulator "
+        "launches getInitialView() directly; widget and glance modes are NOT "
+        "covered (issue #396)"
     )
+
+
+def write_watch_app_manifest(source_root: Path, output_dir: Path) -> Path:
+    """Write a manifest declaring the app as a plain watch app.
+
+    The checkout's ``manifest.xml`` stays untouched: the copy lives in the build
+    output and the generated jungle's ``project.manifest`` points at it. That is
+    what stops the simulator from starting the app in glance mode.
+    """
+    source = Path(source_root) / "manifest.xml"
+    try:
+        text = source.read_text(encoding="utf-8")
+    except OSError as error:
+        raise BuildError(f"cannot read {source}: {error}") from None
+    replaced, count = _MANIFEST_TYPE.subn(r"\g<1>watch-app\g<2>", text)
+    if count == 0:
+        raise BuildError(
+            f"{source} has no <iq:application ... type=\"widget\"> entry to "
+            "switch to the watch-app profile"
+        )
+    target = Path(output_dir) / "manifest-watch-app.xml"
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(replaced, encoding="utf-8")
+    except OSError as error:
+        raise BuildError(f"cannot write {target}: {error}") from None
+    return target
 
 
 @dataclass(frozen=True)
@@ -361,7 +415,7 @@ def build_prg(
     settings_source: Optional[Path] = None,
     extra_args: Sequence[str] = (),
     env: Optional[dict] = None,
-    include_glance: bool = True,
+    profile: str = PROFILE_WITH_GLANCE,
 ) -> BuildResult:
     """Compile the app for one device.
 
@@ -375,11 +429,18 @@ def build_prg(
     ``monkeyc`` rejects qualifiers the SDK does not define. ``jungle`` is the
     ``--jungle`` escape hatch for a complete SDK.
 
-    ``include_glance`` selects the build profile. ``False`` (the CLI default for
-    scenarios) copies ``source/`` under ``output_dir`` with ``GlanceSitemapView``
-    stubbed out and rebases the generated jungle's ``sourcePath`` onto that copy,
-    so the app launches without the simulator-crashing glance draw (issue #396).
-    It requires the generated jungle, because an explicit one cannot be rebased.
+    ``profile`` selects the build profile:
+
+    - ``watch-app`` (the CLI default for scenarios) copies ``source/`` with the
+      glance view stubbed and writes a manifest declaring ``type="watch-app"``,
+      so the simulator launches ``getInitialView()`` instead of starting the
+      widget in glance mode (#396);
+    - ``without-glance`` only stubs the glance view;
+    - ``with-glance`` compiles the app's own glance view (it may crash the
+      simulator, #396).
+
+    The two non-glance profiles require the generated jungle, because an
+    explicit one cannot be rebased onto the stubbed source.
 
     ``settings`` compiles the app's property defaults in: a modified
     ``settings.xml`` is written next to the generated jungle and appended to the
@@ -389,10 +450,13 @@ def build_prg(
     """
     if not layout.monkeyc.is_file():
         raise BuildError(f"monkeyc not found at {layout.monkeyc}")
+    if profile not in PROFILES:
+        raise BuildError(f"unknown build profile {profile!r}; expected {', '.join(PROFILES)}")
 
-    profile = PROFILE_WITH_GLANCE if include_glance else PROFILE_WITHOUT_GLANCE
-    profile_note = describe_profile(include_glance)
+    include_glance = profile == PROFILE_WITH_GLANCE
+    profile_note = describe_profile(profile)
     rebase: Optional[Mapping[Path, Path]] = None
+    manifest: Optional[Path] = None
 
     if jungle is None:
         source = jungle_path()
@@ -401,6 +465,9 @@ def build_prg(
             overlay = write_glance_excluded_source(source_root, output_dir)
             rebase = {source_root / "source": overlay / "source"}
             profile_note += f"; stub in {overlay / GLANCE_VIEW}"
+        if profile == PROFILE_WATCH_APP:
+            manifest = write_watch_app_manifest(source_root, output_dir).resolve()
+            profile_note += f"; manifest {manifest}"
         target = Path(output_dir) / f"{device}.jungle"
         try:
             generated = generate_device_jungle(
@@ -409,6 +476,7 @@ def build_prg(
                 target,
                 settings=settings,
                 settings_source=settings_source,
+                manifest=manifest,
                 environ=env,
                 rebase=rebase,
             )
@@ -440,11 +508,12 @@ def build_prg(
             )
         if not include_glance:
             raise BuildError(
-                f"--jungle cannot carry the {PROFILE_WITHOUT_GLANCE} profile: "
-                "the profile rebases the generated jungle's sourcePath onto a "
-                "stubbed copy of source/, which an explicit jungle cannot "
-                "express. Drop --jungle, or build with --with-glance and accept "
-                "the glance crash (issue #396)."
+                f"--jungle cannot carry the {profile} profile: the profile "
+                "rebases the generated jungle's sourcePath onto a stubbed copy "
+                "of source/ (and may point project.manifest at a generated "
+                "manifest), which an explicit jungle cannot express. Drop "
+                "--jungle, or build with --with-glance and accept the glance "
+                "crash (issue #396)."
             )
         jungle_file = Path(jungle)
         if not jungle_file.is_file():

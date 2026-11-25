@@ -14,7 +14,16 @@ from pathlib import Path
 import pytest
 
 from e2e import build as build_module
-from e2e.build import BuildError, build_prg, read_compiled_settings
+from e2e.build import (
+    BuildError,
+    PROFILE_WATCH_APP,
+    PROFILE_WITHOUT_GLANCE,
+    PROFILE_WITH_GLANCE,
+    build_prg,
+    describe_profile,
+    read_compiled_settings,
+    write_watch_app_manifest,
+)
 from e2e.jungle import (
     JungleError,
     generate_device_jungle,
@@ -350,6 +359,56 @@ def test_explicit_jungle_is_used_verbatim(
     assert result.jungle_generated is False
     assert "explicit" in result.jungle_note
     assert str(explicit) in captured["command"]
+
+
+def test_watch_app_manifest_switches_only_the_type(tmp_path: Path) -> None:
+    checkout = tmp_path / "checkout"
+    checkout.mkdir()
+    (checkout / "manifest.xml").write_text(
+        '<iq:manifest version="3"><iq:application id="x" type="widget" '
+        'name="App" entry="OHApp" launcherIcon="@Drawable/Launcher"/></iq:manifest>',
+        encoding="utf-8",
+    )
+    target = write_watch_app_manifest(checkout, tmp_path / "out")
+    assert target == tmp_path / "out" / "manifest-watch-app.xml"
+    text = target.read_text(encoding="utf-8")
+    assert 'type="watch-app"' in text
+    assert 'entry="OHApp"' in text
+    assert 'launcherIcon="@Drawable/Launcher"' in text
+    assert text.count("iq:application") == 1
+
+
+def test_build_watch_app_profile_points_the_jungle_at_the_manifest(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    captured: dict = {}
+    _fake_monkeyc(monkeypatch, captured)
+
+    result = build_prg(
+        _layout(tmp_path), "fenix847mm", tmp_path / "out", profile=PROFILE_WATCH_APP
+    )
+
+    assert result.profile == PROFILE_WATCH_APP
+    properties = _properties(result.jungle)
+    manifest = Path(properties["project.manifest"])
+    assert manifest.name == "manifest-watch-app.xml"
+    assert manifest.is_file() and 'type="watch-app"' in manifest.read_text(encoding="utf-8")
+    assert (tmp_path / "out" / "source-no-glance").is_dir(), "the glance is stubbed"
+    assert "watch-app" in result.profile_note
+
+
+def test_profiles_describe_what_they_do_not_cover() -> None:
+    for profile in (PROFILE_WATCH_APP, PROFILE_WITHOUT_GLANCE, PROFILE_WITH_GLANCE):
+        assert profile in describe_profile(profile)
+    assert "#396" in describe_profile(PROFILE_WATCH_APP)
+    assert "NOT covered" in describe_profile(PROFILE_WATCH_APP)
+    assert "own glance view" in describe_profile(PROFILE_WITH_GLANCE)
+
+
+def test_unknown_profile_is_rejected(tmp_path: Path) -> None:
+    with pytest.raises(BuildError) as error:
+        build_prg(_layout(tmp_path), "fenix7", tmp_path / "out", profile="nope")
+    assert "unknown build profile" in str(error.value)
 
 
 def test_build_maps_a_qualifier_failure_to_guidance(

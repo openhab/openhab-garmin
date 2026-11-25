@@ -42,6 +42,8 @@ from . import network as network_module
 from . import reporting as reporting_module
 from .build import (
     BuildError,
+    PROFILE_WATCH_APP,
+    PROFILE_WITH_GLANCE,
     PROFILE_WITHOUT_GLANCE,
     build_prg,
     describe_profile,
@@ -347,11 +349,12 @@ def _cmd_run(args: argparse.Namespace) -> int:
     if args.prg:
         print(
             "profile: supplied PRG; the build profile is not applied, so its "
-            f"glance state is unknown (#396). Build with --{PROFILE_WITHOUT_GLANCE} "
-            "or --with-glance instead to record it."
+            "app type and glance state are unknown (#396). Build with "
+            f"--{PROFILE_WATCH_APP} (default), --{PROFILE_WITHOUT_GLANCE} or "
+            "--with-glance instead to record it."
         )
     else:
-        print(f"profile: {describe_profile(args.glance)}")
+        print(f"profile: {describe_profile(args.build_profile)}")
 
     layout = None
     if not dry_run:
@@ -393,7 +396,7 @@ def _cmd_run(args: argparse.Namespace) -> int:
                             jungle=_jungle_override(args),
                             developer_key=developer_key,
                             settings=settings,
-                            include_glance=args.glance,
+                            profile=args.build_profile,
                         )
                         print(f"jungle: {built_prg.jungle_note}")
                         print(f"profile: {built_prg.profile_note}")
@@ -444,21 +447,17 @@ def _cmd_run(args: argparse.Namespace) -> int:
         print(f"{name}: {path}")
 
     if args.json:
-        profile_name = (
-            "supplied-prg"
-            if args.prg
-            else ("with-glance" if args.glance else "without-glance")
-        )
+        profile_name = "supplied-prg" if args.prg else args.build_profile
         profile_note = (
             "the PRG was supplied with --prg, so the build profile was not applied"
             if args.prg
-            else describe_profile(args.glance)
+            else describe_profile(args.build_profile)
         )
         _emit_json(
             {
                 "profile": {
                     "name": profile_name,
-                    "glance": bool(args.glance) and not args.prg,
+                    "glance": args.build_profile == PROFILE_WITH_GLANCE and not args.prg,
                     "note": profile_note,
                 },
                 "counts": report.counts(),
@@ -842,7 +841,7 @@ def _cmd_build(args: argparse.Namespace) -> int:
                 release=args.release,
                 developer_key=developer_key,
                 settings=settings,
-                include_glance=args.glance,
+                profile=args.build_profile,
             )
             print(f"{device.id}: profile {result.profile_note}")
             print(f"{device.id}: command {' '.join(result.command)}")
@@ -900,30 +899,48 @@ def build_parser() -> argparse.ArgumentParser:
 
         ``monkeyc -x glance`` cannot be used here: ``-x`` is incompatible with
         ``-f``, and the manifest entry class ``OHApp`` carries ``(:glance)``
-        too, so excluding the annotation removes the entry point. The
-        ``without-glance`` profile therefore stubs only the glance view in a
-        generated copy of ``source/`` (issue #396).
+        too, so excluding the annotation removes the entry point.
+
+        The ``watch-app`` default writes a harness-owned manifest declaring
+        ``type="watch-app"`` and stubs the glance view in a generated copy of
+        ``source/``. That is what stops the simulator from starting the widget
+        in glance mode, where ``getInitialView()`` never runs (#396). The widget
+        and glance modes stay explicitly unverified either way.
         """
         group = sub.add_mutually_exclusive_group()
         group.add_argument(
-            "--without-glance",
-            dest="glance",
-            action="store_false",
+            f"--{PROFILE_WATCH_APP}",
+            dest="build_profile",
+            action="store_const",
+            const=PROFILE_WATCH_APP,
             help=(
-                "build with the glance view replaced by an empty stub "
-                "(default); the glance is not covered, see issue #396"
+                "declare the app as a plain watch app in a generated manifest "
+                "and stub the glance view (default); the simulator launches "
+                "getInitialView() directly, widget and glance modes are not "
+                "covered (#396)"
+            ),
+        )
+        group.add_argument(
+            f"--{PROFILE_WITHOUT_GLANCE}",
+            dest="build_profile",
+            action="store_const",
+            const=PROFILE_WITHOUT_GLANCE,
+            help=(
+                "keep the widget manifest and replace the glance view by an "
+                "empty stub; the app may still start in glance mode (#396)"
             ),
         )
         group.add_argument(
             "--with-glance",
-            dest="glance",
-            action="store_true",
+            dest="build_profile",
+            action="store_const",
+            const=PROFILE_WITH_GLANCE,
             help=(
                 "compile the app's real glance view instead; the simulator "
                 "crashes on its first glance draw until #396 is resolved"
             ),
         )
-        sub.set_defaults(glance=False)
+        sub.set_defaults(build_profile=PROFILE_WATCH_APP)
 
     status = subparsers.add_parser("status", help="show the health of every component")
     add_common(status)

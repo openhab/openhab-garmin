@@ -319,19 +319,26 @@ Two cases seen on the guest, recorded so neither is filed as an app bug:
   `monkey.jungle`. See the next section and
   [#396](https://github.com/openhab/openhab-garmin/issues/396).
 
-### Glance: the profile that keeps runs alive
+### Glance: the build profiles
 
-The crash happens before the app can poll, so the glance is **excluded from
-E2E builds by default**. The driver always launches a PRG that draws no glance
-text:
+The app is a **widget**, and a widget that the simulator shows as part of the
+glance page is started **in glance mode** (32 KB budget) until it is selected.
+This simulator does not select it, so `getInitialView()` never runs and no
+request is made. On top of that, the app's real glance crashes the simulator on
+its first draw (`Invalid Font Specified`, #396). Three profiles exist:
 
-- `run` and `build` use the `without-glance` profile unless `--with-glance` is
-  passed. The generated jungle's `sourcePath` is rebased onto
-  `<artifacts>/build/source-no-glance/source`, a copy of the checkout's
-  `source/` in which `source/main/user-interface/features/glance/GlanceSitemapView.mc`
-  is replaced by an empty stub. Nothing in the checkout changes, and
-  `OHApp.getGlanceView()` still returns a valid (but blank) view, so the app
-  proceeds to its normal initial view.
+| Profile | What it does | What it proves |
+| --- | --- | --- |
+| `watch-app` (default) | Stubs the glance view **and** writes `<artifacts>/build/manifest-watch-app.xml` with `type="watch-app"`, pointing the generated jungle's `project.manifest` at it | The simulator launches `getInitialView()` directly. Widget and glance modes are **not** covered. |
+| `without-glance` | Stubs the glance view, keeps the widget manifest | Compiles, but the simulator still starts the widget in glance mode, so scenarios do not reach the initial view on this simulator. |
+| `with-glance` | Compiles the app's own glance view | Nothing green: the simulator crashes on the first glance draw (#396). |
+
+`watch-app` is the only valid plain-app type in `monkeybrains.jar`
+(`AppTypeManager`: `audio-content-provider-app`, `background`, `datafield`,
+`glance`, `watch-app`, `watchface`, `widget`, `barrel`); `app` and `watchapp`
+are rejected as `Unknown app type`. The checkout's `manifest.xml` is never
+edited: the copy lives in the build output.
+
 - The profile and the full `monkeyc` command are printed for every build, so a
   run is explainable from its log. There is no `-x` in that command:
   `monkeyc -x` is rejected together with `-f` (`The -f command line option is
@@ -340,10 +347,10 @@ text:
   and shared classes such as `SitemapStore`, `E2ETrace` and `AppLifecycle`,
   which are annotated `(:glance)` too. The build then fails with
   `Cannot find entry point class '$.OHApp'`.
-- A green run therefore says **nothing** about the glance. The glance-related
-  scope entries are marked **blocked** in
+- A green `watch-app` run says **nothing** about the widget or glance modes.
+  Those scope entries are marked **blocked** in
   [coverage.md](coverage.md#summary) with a link to #396, not waived.
-- Re-enable it when the hardware question is answered:
+- Re-enable the app's own glance when #396 is answered:
 
   ```bash
   python -m e2e run smoke/launch-and-poll --with-glance
@@ -352,6 +359,11 @@ text:
 
   If it still crashes there, the evidence belongs in #396; do not "fix" the
   glance to make the suite green.
+
+The earlier `GlanceViewDelegate` idea is recorded here so it is not retried:
+`Toybox.WatchUi.GlanceViewDelegate` has one method, `onGlanceEvent`, documented
+as "Invoked when certain glance event occurs, none for now". There is no select
+handling, so a delegate cannot be why the simulator stays in glance mode.
 
 ## Input
 
@@ -457,14 +469,12 @@ changes the view, it **relaunches the PRG once** (the `monkeydo` console log is
 appended, not replaced). Everything is bounded by the readiness budget, and every
 attempt plus its mapped window point is in `logs/driver.log`.
 
-None of those transitions the app on the guest. The candidates, in the order
-worth checking:
+None of those transitions the app on the guest while it is still built as a
+widget. With the `watch-app` profile (the default) the simulator launches
+`getInitialView()` directly, so a run that still shows `category=glance` means
+the profile was not applied — check the printed profile and the generated
+manifest. If the app is a widget again, the remaining candidates are:
 
-1. **The glance delegate.** `OHApp.getGlanceView()` returns
-   `[ new GlanceSitemapView() ]` with no `GlanceViewDelegate`, although the SDK
-   allows `[ GlanceView, GlanceViewDelegate ]`. Whether the system needs a
-   delegate to make the glance selectable is an **app** question; the harness
-   must not change app source.
 1. **Glance memory.** Glance mode has a 32 KB budget on most devices. The font
    error seen only on the glance (`Invalid Font Specified`) and the missing
    transition may share that cause; #396 records the measurement.
@@ -472,6 +482,8 @@ worth checking:
    (`xwininfo -root -children` lists only the main window plus 1x1 helper
    windows, and no `Alt+…` accelerator opens anything), so there is no menu
    action to drive.
+1. **The glance API itself.** `GlanceViewDelegate` is not a candidate: it only
+   has `onGlanceEvent`, documented as "none for now".
 
 The contract keeps this honest: `app-entry` fails while the app is still on the
 glance, `input-delivery` fails because the declared select press changes neither

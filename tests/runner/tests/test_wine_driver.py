@@ -1520,9 +1520,11 @@ class _FakeDriver(SimulatorDriver):
         fail_start: bool = False,
         press_changes_view: bool = True,
         start_category: str = "sitemap",
+        repeat_view: bool = False,
     ) -> None:
         self.fail_start = fail_start
         self.press_changes_view = press_changes_view
+        self.repeat_view = repeat_view
         self.stopped = False
         self._lines: List[str] = [
             f"E2E:VIEW;category={start_category};view=StartView;depth=1"
@@ -1543,7 +1545,11 @@ class _FakeDriver(SimulatorDriver):
         self.stopped = True
 
     def press(self, button: Button, count: int = 1) -> None:
-        if self.press_changes_view and button is Button.ENTER:
+        if not self.press_changes_view or button is not Button.ENTER:
+            return
+        if self.repeat_view:
+            self._lines.append(self._lines[-1])
+        else:
             self._lines.append("E2E:VIEW;category=sitemap;view=ActionMenu;depth=3")
 
     def tap(self, x: int, y: int, count: int = 1) -> None:
@@ -1666,6 +1672,24 @@ def test_contract_passes_app_entry_on_a_real_view(tmp_path: Path) -> None:
     assert by_name["app-entry"].status == PASS
 
 
+def test_contract_fails_a_press_that_repeats_the_same_view(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A re-rendered glance is not evidence that a press did anything."""
+    import e2e.contract as contract_module
+
+    monkeypatch.setattr(contract_module, "PRESS_EFFECT_TIMEOUT", 0.05)
+    prg = tmp_path / "openhab-garmin-fenix7.prg"
+    prg.write_bytes(b"prg")
+    cases = run_contract(
+        _FakeDriver(repeat_view=True), tmp_path, prg=prg, device_id=None
+    )
+    by_name = {case.name: case for case in cases}
+    assert by_name["press-effect"].status == FAIL
+    assert "no different VIEW" in by_name["press-effect"].detail
+    assert "repeated view does not count" in by_name["press-effect"].detail
+
+
 def test_contract_fails_a_press_that_has_no_effect(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1680,6 +1704,5 @@ def test_contract_fails_a_press_that_has_no_effect(
     )
     by_name = {case.name: case for case in cases}
     assert by_name["press-effect"].status == FAIL
-    assert "no new VIEW or ERRORVIEW" in by_name["press-effect"].detail
-    assert "input-delivery" in by_name["press-effect"].detail
+    assert "no different VIEW" in by_name["press-effect"].detail
     assert exit_code(cases) == 1
