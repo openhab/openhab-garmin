@@ -230,12 +230,11 @@ def run_contract(
     def app_entry() -> None:
         """`wait_ready` must leave the app on a real view, not the glance.
 
-        Under the simulator the glance is requested in the app's own process,
-        and `OHApp.getGlanceView()` calls `AppLifecycle.setGlance()`, which
-        latches glance mode for that process: the lifecycle guards bail out and
-        `getInitialView()` never runs. No harness-side action can undo that, so
-        this case names the app-side cause instead of hiding it behind a view
-        timeout.
+                The app reaches the sitemap when the glance is selected, which is what a
+                click does on a working simulator. Here no synthetic input arrives at
+                the simulator at all (measured against an idle baseline), so the glance
+                cannot be selected and this case records the environment rather than
+                pretending the initial view ran.
         """
         parsed = parse_lines(list(driver.events()))
         view = next((event for event in reversed(parsed) if event.event == "VIEW"), None)
@@ -244,14 +243,17 @@ def run_contract(
             raise AssertionError(
                 "the app is still showing the glance (`VIEW;category=glance`), so "
                 "getInitialView() never ran and no request is made.\n"
-                "Under the simulator the glance is requested in the app's own "
-                "process, and OHApp.getGlanceView() calls AppLifecycle.setGlance(), "
-                "which latches glance mode for that process: every lifecycle guard "
-                "then bails out, so getInitialView() yields no view and "
-                "SitemapRequest.start() is never reached. No harness-side change "
-                "(device, manifest type, input, coordinates) can undo that latch; it "
-                "is the app-side cause tracked in #396, and the watch-app build "
-                "profile should start working unchanged once it is released. See "
+                        "The glance is left by selecting it, and on this guest no "
+                        "synthetic input reaches the simulator at all: pointer-verified "
+                        "clicks at the declared hit areas and inside the screen, every "
+                        "candidate keysym, with and without a window manager, and inside "
+                        "a Wine virtual desktop, all measure 0 px against an idle "
+                        "baseline. No coordinate, keysym, focus or window-manager change "
+                        "can fix that.\n"
+                        "If you need UI assertions, run the simulator on Windows or fix "
+                        "Wine input; the harness cannot. The app-side glance latch "
+                        "(OHApp.getGlanceView -> AppLifecycle.setGlance, #396) is a "
+                        "separate concern and is not what this run demonstrates. See "
                 "tests/docs/simulator-driver.md."
             )
         if category is None:
@@ -407,8 +409,10 @@ def run_contract(
             f"(empty-screen baseline {baseline} px): {'; '.join(attempts)}."
             f"{reason}{calibrate}\n"
             "logs/driver.log names the mechanism and window point for each press. "
-            "Compare that point with the device definition's keys[].location and "
-            "the window's client origin."
+            "If the pointer is verified and nothing moves, the environment is not "
+            "delivering input: if you need UI assertions, run the simulator on "
+            "Windows or fix Wine input; the harness cannot. See "
+            "tests/docs/simulator-driver.md."
         )
 
     if driver.supports_events:
@@ -472,9 +476,12 @@ def run_contract(
         raise AssertionError(
             "a sequence of DOWN, DOWN, UP produced no effect on any press:\n  "
             + "\n  ".join(seen)
-            + "\nThe mechanism each press used is above; a silent mouse and an "
-            "ignored keysym both look like this. Try another keysym with "
-            "`--key DOWN=<keysym>`, and check the pointer target in logs/driver.log."
+            + "\nThe mechanism each press used is above. If the pointer was "
+            "verified over the simulator window, this is the environment and not "
+            "a coordinate or keysym problem: no synthetic input reaches the "
+            "simulator under Wine here.\n"
+            "If you need UI assertions, run the simulator on Windows or fix Wine "
+            "input; the harness cannot. See tests/docs/simulator-driver.md."
         )
 
     cases.append(_run_case("press-sequence", press_sequence))

@@ -2047,8 +2047,9 @@ def test_contract_reports_a_glance_only_app_as_app_entry_failure(
     assert by_name["app-entry"].status == FAIL
     detail = by_name["app-entry"].detail
     assert "glance" in detail
-    assert "AppLifecycle.setGlance()" in detail
-    assert "#396" in detail
+    assert "no synthetic input reaches the simulator" in detail
+    assert "run the simulator on Windows" in detail
+    assert "#396" in detail, "the separate app-side latch is still named"
 
 
 def test_contract_passes_app_entry_on_a_real_view(tmp_path: Path) -> None:
@@ -2113,7 +2114,8 @@ def test_contract_marks_a_no_effect_press_as_evidence_not_a_failure(
     sequence = by_name["press-sequence"]
     assert sequence.status == FAIL
     assert "DOWN, DOWN, UP produced no effect" in sequence.detail
-    assert "--key DOWN=" in sequence.detail
+    assert "run the simulator on Windows" in sequence.detail
+    assert "the harness cannot" in sequence.detail
 
 
 def test_contract_press_sequence_passes_when_a_later_press_moves(
