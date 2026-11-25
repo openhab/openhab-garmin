@@ -189,7 +189,8 @@ then, treat "network is faked, not awaited" as the design rule.
 | Does the -402 boundary sit at 16,384 bytes? | E2E (`limits-near` / `limits-over`), measurement recorded in [fixture-limits.md](fixture-limits.md) |
 | Do all devices compile, and does the glance still exist? | CI matrix (`ci-build.yaml`) |
 
-The E2E harness does **not** depend on this tier and was not changed. There is no
+The E2E harness does **not** depend on this tier, and none of its code was
+changed. There is no
 `python -m e2e unit` command: the unit tier needs no Docker, no openHAB, no shim
 and no scenario schema, so a sibling script is the natural home. The two tiers
 share only the SDK pin (`tests/config/sdk.version`) and the SDK-layout rules in
@@ -209,7 +210,7 @@ basis alone.
 | `source/test/UnitTestFixtures.mc` | – | the shared payload, shaped like `garmin_e2e.sitemap` |
 | `source/test/SitemapModelTests.mc` | homepage title and widget types; label/state split; Frame and linked page nesting; empty page; unsupported type; item type/unit/state rules | a change to `JsonAdapter`, `SitemapHomepage`, the factory or `Item` that breaks the REST contract |
 | `source/test/ErrorClassificationTests.mc` | -402/-403/-1001/404 are full-screen; BLE codes are no-phone and not full-screen; `S:`/`C:` prefixes; empty-response suppression for -400 and null bodies | an error code silently changing class, or the user-facing code changing |
-| `source/test/SitemapParameterTests.mc` | Setpoint/Slider defaults, invalid step/range/step-count, releaseOnly default, numeric formatting, ON/OFF mapping normalization, switch display state, named and hex colors | a parameter rule silently relaxing or a mapping/colour silently regressing |
+| `source/test/SitemapParameterTests.mc` | Setpoint/Slider defaults, invalid step/range/step-count, releaseOnly default, numeric formatting, ON/OFF mapping normalization, switch display state, named and hex colours | a parameter rule silently relaxing or a mapping/colour silently regressing |
 
 Notes on the pilot data:
 
