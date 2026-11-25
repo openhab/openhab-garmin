@@ -39,6 +39,15 @@ engine reports event and golden assertions as **skipped**, never passed.
   an unrecognised PRG name needs an explicit `--device`: launching one device's
   build as another produced a `Symbol Not Found` and a pointless `tap` failure
   on the guest, which is a false result rather than a test.
+- `app-entry` requires the app to have left the glance: `wait_ready` runs it, and
+  a widget still in glance mode fails with the delegate/memory pointers instead
+  of a generic timeout.
+- `press-effect` proves the input path: it presses ENTER, MENU and DOWN (and
+  taps on touch devices) and requires a new view **or** a change inside the
+  screen rectangle. A pass means the app reacted, not that `xdotool` ran; the
+  simulator's bezel highlight cannot satisfy it.
+- `input-delivery` presses the declared select once and reports whether the app
+  changed a view or its screen area. It does not assume a simulator menu.
 - The contract starts with `mode=ble, language=deu`. The language is reported
   and compared, never forced (see "Language cannot be provisioned").
 
@@ -143,7 +152,7 @@ PIDs instead.
 | `prepare` | implemented | Validates the external tools and copies the PRG. Runs before anything touches Wine. |
 | `start` | implemented | Display check, `simulator.ini`, simulator-window wait, property seeding and `monkeydo` launch. The device name is expected to appear only after the launch. |
 | `wait_ready` | implemented | First view **and** the reported language, both from the trace stream. A dead app fails with the console tail. The first view may be the glance (`category=glance`) on a plain `monkeydo` launch; reaching the sitemap is the app's behaviour and the scenario asserts it, not the driver. |
-| `press` | implemented | Keysym per semantic button; the device definition's `simulator.json` is preferred over the defaults. |
+| `press` | implemented, verified by effect | Clicks the declared `keys[].location` hit area (hold where `isHold`) as real X input; keysym only as an override/fallback. The contract proves delivery (`input-delivery`) and effect (`press-effect`). |
 | `tap` | implemented | The window is focused first. The screen rectangle comes from the device definition's `display.location` (`simulator.json`), with `E2E_WINE_SCREEN_RECT` as the override; a centred fit is only the last resort for an SDK without `simulator.json`. |
 | `screenshot` | implemented | Captures the simulator window. Fails when the capture is not a usable PNG instead of returning a blank image. |
 | `events` | implemented | `monkeydo` stdout/stderr with receipt timestamps; `stdbuf` disables its block buffering when available. |
@@ -310,19 +319,26 @@ Two cases seen on the guest, recorded so neither is filed as an app bug:
   `monkey.jungle`. See the next section and
   [#396](https://github.com/openhab/openhab-garmin/issues/396).
 
-### Glance: the profile that keeps runs alive
+### Glance: the build profiles
 
-The crash happens before the app can poll, so the glance is **excluded from
-E2E builds by default**. The driver always launches a PRG that draws no glance
-text:
+The app is a **widget**, and a widget that the simulator shows as part of the
+glance page is started **in glance mode** (32 KB budget) until it is selected.
+This simulator does not select it, so `getInitialView()` never runs and no
+request is made. On top of that, the app's real glance crashes the simulator on
+its first draw (`Invalid Font Specified`, #396). Three profiles exist:
 
-- `run` and `build` use the `without-glance` profile unless `--with-glance` is
-  passed. The generated jungle's `sourcePath` is rebased onto
-  `<artifacts>/build/source-no-glance/source`, a copy of the checkout's
-  `source/` in which `source/main/user-interface/features/glance/GlanceSitemapView.mc`
-  is replaced by an empty stub. Nothing in the checkout changes, and
-  `OHApp.getGlanceView()` still returns a valid (but blank) view, so the app
-  proceeds to its normal initial view.
+| Profile | What it does | What it proves |
+| --- | --- | --- |
+| `watch-app` (default) | Stubs the glance view **and** writes `<artifacts>/build/manifest-watch-app.xml` with `type="watch-app"`, pointing the generated jungle's `project.manifest` at it | The right app type for a direct launch. Today the app's own glance latch (#396) still keeps it on the glance page, so the initial view does not run; this is the profile to keep and it should start working unchanged once the latch is released. Widget and glance modes are **not** covered. |
+| `without-glance` | Stubs the glance view, keeps the widget manifest | Compiles, but the simulator still starts the widget in glance mode. |
+| `with-glance` | Compiles the app's own glance view | Nothing green: the simulator crashes on the first glance draw (#396). |
+
+`watch-app` is the only valid plain-app type in `monkeybrains.jar`
+(`AppTypeManager`: `audio-content-provider-app`, `background`, `datafield`,
+`glance`, `watch-app`, `watchface`, `widget`, `barrel`); `app` and `watchapp`
+are rejected as `Unknown app type`. The checkout's `manifest.xml` is never
+edited: the copy lives in the build output.
+
 - The profile and the full `monkeyc` command are printed for every build, so a
   run is explainable from its log. There is no `-x` in that command:
   `monkeyc -x` is rejected together with `-f` (`The -f command line option is
@@ -331,10 +347,10 @@ text:
   and shared classes such as `SitemapStore`, `E2ETrace` and `AppLifecycle`,
   which are annotated `(:glance)` too. The build then fails with
   `Cannot find entry point class '$.OHApp'`.
-- A green run therefore says **nothing** about the glance. The glance-related
-  scope entries are marked **blocked** in
+- A green `watch-app` run says **nothing** about the widget or glance modes.
+  Those scope entries are marked **blocked** in
   [coverage.md](coverage.md#summary) with a link to #396, not waived.
-- Re-enable it when the hardware question is answered:
+- Re-enable the app's own glance when #396 is answered:
 
   ```bash
   python -m e2e run smoke/launch-and-poll --with-glance
@@ -343,6 +359,11 @@ text:
 
   If it still crashes there, the evidence belongs in #396; do not "fix" the
   glance to make the suite green.
+
+The earlier `GlanceViewDelegate` idea is recorded here so it is not retried:
+`Toybox.WatchUi.GlanceViewDelegate` has one method, `onGlanceEvent`, documented
+as "Invoked when certain glance event occurs, none for now". There is no select
+handling, so a delegate cannot be why the simulator stays in glance mode.
 
 ## Input
 
@@ -359,21 +380,128 @@ and is sufficient for synthetic key and pointer events. If `windowfocus` fails,
 the driver raises: without focus the events would land on another window, and a
 "passing" run would have pressed keys into the void.
 
-Button bindings come from the device definition's `simulator.json` (`keys` as
-Windows virtual-key codes) when the SDK ships one, and otherwise from these
-defaults: `START=ctrl+s`, `UP=Up`, `DOWN=Down`, `ENTER=Return`,
-`BACK=Escape`, `MENU=ctrl+m`. Override any of them with
-`E2E_WINE_KEY_<BUTTON>`. A device whose definition does not confirm the title
-only produces a warning, so a missing definition does not fail a run over a
-name it cannot compare.
+Button definitions are **hit areas, not keyboard keys**. `simulator.json`
+declares each physical button as a rectangle with a behaviour, for example
+`fenix7`:
+
+```json
+"keys": [
+  {"behavior": "onSelect",     "id": "enter", "location": {"x": 356, "y": 145, "width": 44, "height": 69}},
+  {"behavior": "previousPage", "id": "up",    "location": {"x": 1,   "y": 244, "width": 44, "height": 69}},
+  {"behavior": "onMenu",       "id": "menu",  "isHold": true, "location": {"x": 1, "y": 244, "width": 44, "height": 69}},
+  {"behavior": "nextPage",     "id": "down",  "location": {"x": 21,  "y": 336, "width": 44, "height": 69}},
+  {"behavior": "onBack",       "id": "esc",   "location": {"x": 356, "y": 336, "width": 44, "height": 69}}
+]
+```
+
+`press` maps the semantic button (`onSelect` → `ENTER`, `previousPage` → `UP`,
+`nextPage` → `DOWN`, `onBack` → `BACK`, `onMenu` → `MENU`) and **clicks the
+declared rectangle**, with `isHold` producing a press-and-hold (mouse down,
+`HOLD_MS`, mouse up).
+
+The declared rectangles are already in the window's **client space**, so there
+is no window-size scaling. Measured on the guest: the client area is
+`409x600`, and `fenix7` declares `display.location = {79,149,266,266}` — the
+260 px screen drawn at 266 px by the simulator itself, inside a 409-wide client
+area. Multiplying those numbers by `window/declared` was wrong and moved a
+click off the bezel; `press` and `tap` now share one `CoordinateMapper`, so a
+tap and a click of the same declared point land on the same pixel. A test
+asserts exactly that agreement.
+
+`E2E_WINE_SCREEN_RECT` is the only transform: it pins the screen rectangle and
+the same scale/offset re-anchors the key hit areas, for a window that really is
+showing a different rectangle. `logs/driver.log` records the mechanism for every
+press: the clicked window point and the mapper source, or the keysym.
+
+### Proving that input is delivered
+
+A click that lands correctly and a click the simulator never receives look the
+same in a log, so the driver separates the two from the simulator's chrome:
+
+- The pointer moves to **absolute root coordinates** (`window origin + point`)
+  and the click is generated with XTEST; keys go to the **focused** window
+  instead of `xdotool key --window`, because `XSendEvent` is ignored by many
+  toolkits. Both keep the window-targeted form as a fallback if the first
+  command fails.
+- `probe_input_delivery()` presses the declared `onSelect` area once and
+  requires a new `E2E:VIEW`/`ERRORVIEW` **or** a change inside the
+  `display.location` rectangle. The contract case `input-delivery` fails with
+  "delivery to the app or the app not reacting" when neither happens — it does
+  **not** try a simulator menu: the guest's simulator has no menu bar, and no
+  `Alt+F`/`Alt+S`/`Alt+M` opens a window there.
+- `press-effect` accepts a new view or a change in the **screen rectangle** at or
+  above the pixel threshold. The simulator highlights its own bezel buttons, so
+  a whole-window difference would pass while the app never reacted; the screen
+  region is therefore the only area measured. It presses ENTER, MENU and DOWN,
+  and taps the screen centre on a touch device.
+
+Both cases are red on the guest exactly while the app sits on the glance page:
+the simulator receives the clicks, but the app does not react (see "Opening the
+app from the glance page"). That is the accurate state, not a coordinate bug.
+
+Keystrokes are only a fallback:
+
+- `E2E_WINE_KEY_<BUTTON>=<keysym>` always wins and sends a key instead;
+- an SDK whose `keys` is a mapping of action → Windows virtual-key code (the
+  older shape) also produces keysyms;
+- the documented defaults (`START=ctrl+s`, `UP=Up`, `DOWN=Down`,
+  `ENTER=Return`, `BACK=Escape`, `MENU=ctrl+m`) are the last resort.
+
+A keystroke the simulator ignores is indistinguishable from a successful press
+unless the effect is observed, so the contract test does not stop at "the call
+succeeded": `press-effect` presses ENTER, then MENU, then DOWN and requires a
+new `E2E:VIEW` or `E2E:ERRORVIEW` within a few seconds. Without one, input never
+reached the app and the case fails, naming both mechanisms.
+
+### Why the app stays on the glance page
+
+**This is the cause of every "no request" and every red input case, and it is
+app-side.** Under the simulator the glance is requested **in the app's own
+process**, and `OHApp.getGlanceView()` calls `AppLifecycle.setGlance()`. That
+flag is process-wide and latched, so the lifecycle guards
+
+```monkeyc
+if( AppLifecycle.isGlance() ) { return; }   // onStart, onActive, ...
+```
+
+bail out for the rest of the process: `getInitialView()` yields no view and
+`SitemapRequest.start()` is never reached. On hardware the glance really is a
+separate process and the flag only affects that process; the simulator does not
+give it one.
+
+Three builds on the guest confirm it:
+
+| Build | App source | Result |
+| --- | --- | --- |
+| `watch-app`, glance stubbed | unchanged | glance only, no request |
+| `watch-app` | `getGlanceView()` returns `null`, `setGlance()` kept | still `LANGUAGE` + `category=glance` |
+| `watch-app` | `getGlanceView()` returns `null` with no `setGlance()` | `LANGUAGE` only, `monkeydo` exits 0: no first view at all |
+
+So no device, manifest type, input event or coordinate change can fix it. The
+harness must **not** patch the latch in a build profile: a test build that
+changes lifecycle semantics would test a different application. The fix belongs
+to the app and is tracked in #396; the `watch-app` profile and the `app-entry`,
+`input-delivery` and `press-effect` cases are already the right shape and should
+start working unchanged once the latch is released.
+
+`wait_ready` still tries select, the `onMenu` hold, a second select (two taps on
+touch devices) and one PRG relaunch when the first view is the glance. Those are
+defensive: they matter on hardware or after the app-side fix, and each attempt
+plus its mapped window point is logged.
+
+Two related measurements, so they are not repeated: replacing the glance with a
+cleared background changed nothing, and `GlanceViewDelegate` is not a candidate
+(it only has `onGlanceEvent`, "none for now"). A widget left in glance mode also
+has a 32 KB budget, which is why the glance-only `Invalid Font Specified` may
+share the cause.
 
 `tap(x, y)` takes **device screen pixels**. The driver maps them into the
 window through the watch-screen rectangle declared by the device definition:
 `simulator.json`'s `display.location` (`x`, `y`, `width`, `height`) is the
-authoritative screen position, so the bezel offset is not guessed. For example
-`fenix847mm` declares `{x: 134, y: 221, width: 454, height: 454}`; the same file
-declares `display.isTouch` and the `tap → onSelect` key, which is how the button
-bindings are resolved too.
+authoritative screen position, already in window client space. For example
+`fenix847mm` declares `{x: 134, y: 221, width: 454, height: 454}`. The same
+mapper and the same optional pin are used as for the key hit areas, so a tap and
+a press cannot disagree about where the window is.
 
 `E2E_WINE_SCREEN_RECT=x,y,width,height` overrides the declared rectangle when a
 build's window differs. A centred, aspect-preserving fit is only the last
@@ -396,6 +524,9 @@ is enough to act on it.
 | `device title … does not match` / `does not name a device` | **warning only**; the trace stream already proved the app is running | check `LastUsedDevice` in `simulator.ini` if results look wrong |
 | `monkeydo exited with code …` | wrong PRG or device name | read `logs/console.log` |
 | `app-ready … no console line` | the app started but produced no `E2E:` line | check the PRG is a debug build and the device wiring (`link-devices` is accurate here) |
+| `warning: the app is still on the glance page` | a widget in glance mode; `getInitialView()` did not run, so no request is made | an app-side transition question: the glance delegate and the 32 KB glance budget, see below |
+| `app-entry … still showing the glance` | the app latched glance mode in its own process (`AppLifecycle.setGlance()` set by `getGlanceView()`), so `getInitialView()` never runs | app-side, tracked in #396; the harness must not patch lifecycle semantics in a build profile |
+| `press-effect … no different VIEW` | the press produced a repeated view or none; while the app is on the glance, screen changes are not counted | the app is on the glance, so see `app-entry`; otherwise compare the logged point with `keys[].location` |
 | `the app reported system language …` | `Language` in `simulator.ini` was ignored | see the language section above |
 | `the app showed the configuration error view` | the PRG was built without the requested properties | rebuild with `e2e build --settings <fixture>`, or pass a PRG built that way |
 
@@ -448,6 +579,16 @@ proof is a driver run on the guest, which the operator performs:
    classified errors.
 1. Run one language scenario (`extended/localisation-sitemap`) and one mode
    scenario (`extended/wifi-mode`) to confirm the verification paths.
+1. With the app open, check a press reaches it: the contract's `input-delivery`
+   case proves synthetic input changes the simulator at all, and `press-effect`
+   proves a press changes the app. `logs/driver.log` shows the clicked window
+   point. If either fails, treat it as a delivery/coordinate question in that
+   order before assuming an app defect.
+1. If the log says the app stayed on the glance page, the simulator never
+   reached `getInitialView()`. The driver tried the declared select, the menu
+   hold, a tap and one relaunch. Next, check whether a second `monkeydo` starts
+   another process, and whether the PRG's manifest app types include the watch
+   app. Record what worked here so the launch path can stop guessing.
 1. If taps miss, compare a screenshot with `display.location` in the device's
    `simulator.json` and pin `E2E_WINE_SCREEN_RECT` for the next run; record the
    value for the device in this document.

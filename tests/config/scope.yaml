@@ -279,11 +279,14 @@ blocked:
     issue: 396
     reason: >-
       The app crashes the simulator on its first glance draw (`Invalid Font
-      Specified` in `GlanceSitemapView.onUpdate`), before any HTTP request. E2E
-      builds therefore use the `without-glance` profile, which replaces the
-      glance view with an empty stub, so no glance content or refresh can be
-      inspected or asserted. Re-enable with `--with-glance` once #396 is
-      resolved.
+      Specified` in `GlanceSitemapView.onUpdate`), before any HTTP request, and
+      the glance latch is the deeper cause: `getGlanceView()` sets
+      `AppLifecycle.setGlance()`, and in the simulator's single process that
+      flag makes every lifecycle guard bail out, so `getInitialView()` never
+      runs. E2E builds use the `watch-app` profile (generated manifest, stubbed
+      glance view), which is the right app type but cannot undo the latch.
+      Widget and glance content therefore cannot be inspected or asserted.
+      Re-enable the real glance with `--with-glance` once #396 is resolved.
   - id: devices.capabilities
     issue: 396
     reason: >-
@@ -422,7 +425,7 @@ waivers:
   - id: devices.source-variants
     reason: >-
       Every source/config variant is assigned to a matrix device; the
-      GlanceConfig variants still compile in the `without-glance` profile (only
+      GlanceConfig variants still compile in the `watch-app` profile (only
       the glance view itself is stubbed), and `e2e variants` proves the
       assignment.
     verified_by: python -m e2e variants

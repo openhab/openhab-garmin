@@ -236,24 +236,30 @@ python -m e2e run smoke/launch-and-poll --dry-run
 A dry run uses the null driver, skips every network-dependent step, and reports
 those steps as **skipped**. It never reports them as passed.
 
-### Build profile: the glance is excluded by default
+### Build profiles: the app is a plain watch app for tests
 
-The app crashes the simulator on its first glance draw
-(`Invalid Font Specified` in `GlanceSitemapView.onUpdate`, tracked as
-[#396](https://github.com/openhab/openhab-garmin/issues/396)). Every `run` and
-`build` therefore uses the **`without-glance`** profile unless told otherwise:
-the generated jungle is rebased onto a copy of `source/` in which
-`GlanceSitemapView` is replaced by an empty stub. The checkout is never
-modified, and the app's normal initial view (and polling) is unaffected.
+The app is a widget, and a widget shown on the glance page starts in **glance
+mode** (32 KB budget) until it is selected; this simulator does not select it,
+so `getInitialView()` never runs. On top of that, the real glance crashes the
+simulator on its first draw (`Invalid Font Specified`, tracked as
+[#396](https://github.com/openhab/openhab-garmin/issues/396)).
 
-Each run prints the profile, so a green result cannot be mistaken for glance
-coverage:
+Every `run` and `build` therefore uses the **`watch-app`** profile unless told
+otherwise: the generated jungle is rebased onto a copy of `source/` in which
+`GlanceSitemapView` is replaced by an empty stub, and `project.manifest` points
+at a generated copy of `manifest.xml` declaring `type="watch-app"`. That is the
+right app type for a direct launch. It does not yet produce one: the app's own
+glance latch (`AppLifecycle.setGlance()` set by `getGlanceView()`) keeps the
+process on the glance page under the simulator, which is the app-side cause
+tracked in #396. The checkout is never modified.
 
 ```text
-profile: without-glance: the glance view is replaced by an empty stub and draws nothing; the glance is NOT covered (issue #396)
+profile: watch-app: the app is declared as a plain watch app in a generated manifest and its glance view is stubbed, so the simulator launches getInitialView() directly; widget and glance modes are NOT covered (issue #396)
 ```
 
-Re-include the real glance on hardware, or once the issue is resolved:
+`--without-glance` keeps the widget manifest (the app may still start in glance
+mode), and `--with-glance` compiles the real glance view. Re-include the real
+glance on hardware, or once the issue is resolved:
 
 ```bash
 python -m e2e run smoke/launch-and-poll --with-glance
@@ -263,7 +269,7 @@ python -m e2e build --device fenix847mm --with-glance
 `monkeyc -x glance` is not an alternative: `-x` is rejected together with `-f`,
 and `OHApp` (the manifest entry) plus shared classes are annotated `(:glance)`
 too, so excluding the annotation removes the entry point and fails the build.
-See [docs/simulator-driver.md](docs/simulator-driver.md#glance-the-profile-that-keeps-runs-alive).
+See [docs/simulator-driver.md](docs/simulator-driver.md#glance-the-build-profiles).
 
 ## CLI
 
@@ -285,7 +291,7 @@ See [docs/simulator-driver.md](docs/simulator-driver.md#glance-the-profile-that-
 | `sdk-check` | validate the mounted SDK without starting anything |
 | `link-devices` | copy the SDK's device definitions to `$HOME/.Garmin/ConnectIQ/Devices`, where `monkeyc` looks for them; the runner entrypoint runs it at container start |
 | `health-snapshot` | record the stack's restart counts and memory before/after a run; `--phase after --artifacts` classifies the finished run |
-| `build` | compile the PRG for one or more devices with a jungle generated for that device, compiling the `--settings` fixture's property defaults in (the build asserts the values `monkeyc` emitted; `--jungle` uses a supplied one instead and cannot carry the override; `--developer-key` overrides the throwaway key generated per build) |
+| `build` | compile the PRG for one or more devices with a jungle generated for that device, compiling the `--settings` fixture's property defaults in (the build asserts the values `monkeyc` emitted; `--jungle` uses a supplied one instead and cannot carry the override; `--developer-key` overrides the throwaway key generated per build). `--watch-app` (default), `--without-glance` and `--with-glance` select the build profile (see [Build profiles](#build-profiles-the-app-is-a-plain-watch-app-for-tests)) |
 
 Exit codes: `0` success, `1` scenario failures, `2` configuration or environment
 error, `3` invalid environment (a container restarted or was killed during the

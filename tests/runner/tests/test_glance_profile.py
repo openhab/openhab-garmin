@@ -23,6 +23,7 @@ from e2e import build as build_module
 from e2e.build import (
     GLANCE_STUB,
     GLANCE_VIEW,
+    PROFILE_WATCH_APP,
     PROFILE_WITH_GLANCE,
     PROFILE_WITHOUT_GLANCE,
     BuildError,
@@ -81,22 +82,38 @@ def test_scenarios_and_builds_exclude_the_glance_by_default() -> None:
     parser = build_parser()
 
     run = parser.parse_args(["run", "--all", "--dry-run"])
-    assert run.glance is False, "a run must not compile the crashing glance by default"
+    assert run.build_profile == PROFILE_WATCH_APP, (
+        "a run must not compile the crashing glance by default, and must not "
+        "start the widget in glance mode"
+    )
 
     build = parser.parse_args(["build"])
-    assert build.glance is False, "a build must match the run profile"
+    assert build.build_profile == PROFILE_WATCH_APP, "a build must match the run profile"
 
 
 def test_the_profile_can_be_turned_around_both_ways() -> None:
     parser = build_parser()
 
-    assert parser.parse_args(["run", "--all", "--with-glance"]).glance is True
-    assert parser.parse_args(["run", "--all", "--without-glance"]).glance is False
-    assert parser.parse_args(["build", "--with-glance"]).glance is True
-    assert parser.parse_args(["build", "--without-glance"]).glance is False
+    assert parser.parse_args(["run", "--all", "--with-glance"]).build_profile == (
+        PROFILE_WITH_GLANCE
+    )
+    assert parser.parse_args(["run", "--all", "--without-glance"]).build_profile == (
+        PROFILE_WITHOUT_GLANCE
+    )
+    assert parser.parse_args(["run", "--all", "--watch-app"]).build_profile == (
+        PROFILE_WATCH_APP
+    )
+    assert parser.parse_args(["build", "--with-glance"]).build_profile == (
+        PROFILE_WITH_GLANCE
+    )
+    assert parser.parse_args(["build", "--without-glance"]).build_profile == (
+        PROFILE_WITHOUT_GLANCE
+    )
 
     with pytest.raises(SystemExit):
         parser.parse_args(["run", "--all", "--with-glance", "--without-glance"])
+    with pytest.raises(SystemExit):
+        parser.parse_args(["run", "--all", "--watch-app", "--with-glance"])
 
 
 # ---------------------------------------------------------------------------
@@ -108,7 +125,7 @@ def test_without_glance_rebases_the_jungle_onto_the_stub(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     captured: dict = {}
-    result = _build(tmp_path, monkeypatch, captured, include_glance=False)
+    result = _build(tmp_path, monkeypatch, captured, profile=PROFILE_WITHOUT_GLANCE)
 
     overlay = tmp_path / "out" / "source-no-glance"
     stub = overlay / GLANCE_VIEW
@@ -134,7 +151,7 @@ def test_the_checkout_glance_is_not_modified(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     real = (repo_root() / GLANCE_VIEW).read_text(encoding="utf-8")
-    _build(tmp_path, monkeypatch, {}, include_glance=False)
+    _build(tmp_path, monkeypatch, {}, profile=PROFILE_WITHOUT_GLANCE)
     assert (repo_root() / GLANCE_VIEW).read_text(encoding="utf-8") == real
 
 
@@ -142,7 +159,7 @@ def test_with_glance_compiles_the_checkout(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     captured: dict = {}
-    result = _build(tmp_path, monkeypatch, captured, include_glance=True)
+    result = _build(tmp_path, monkeypatch, captured, profile=PROFILE_WITH_GLANCE)
 
     assert result.profile == PROFILE_WITH_GLANCE
     assert not (tmp_path / "out" / "source-no-glance").exists()
@@ -160,7 +177,7 @@ def test_without_glance_needs_the_generated_jungle(tmp_path: Path) -> None:
             "fenix7",
             tmp_path / "out",
             jungle=explicit,
-            include_glance=False,
+            profile=PROFILE_WITHOUT_GLANCE,
         )
 
     assert "--jungle" in str(error.value)
@@ -177,7 +194,7 @@ def test_a_dry_run_prints_the_profile(tmp_path: Path, capsys: pytest.CaptureFixt
     output = capsys.readouterr().out
 
     assert "profile:" in output
-    assert PROFILE_WITHOUT_GLANCE in output
+    assert PROFILE_WATCH_APP in output
     assert "NOT covered" in output
 
 
@@ -227,7 +244,8 @@ def test_coverage_marks_the_glance_entries_blocked() -> None:
     blocked = {entry.id: entry for entry in scope.blocked}
 
     assert blocked["lifecycle.glance-widget"].issue == 396
-    assert "without-glance" in blocked["lifecycle.glance-widget"].reason
+    assert "watch-app" in blocked["lifecycle.glance-widget"].reason
+    assert "setGlance" in blocked["lifecycle.glance-widget"].reason
     assert blocked["devices.capabilities"].issue == 396
 
     report = build_report()
@@ -243,15 +261,17 @@ def test_the_documents_keep_claiming_the_exclusion() -> None:
     assert "Blocked by a tracked issue" in coverage
     assert "`lifecycle.glance-widget`" in coverage
     assert "#396" in coverage
-    assert "without-glance" in coverage
+    assert "watch-app" in coverage
 
     for name in ("scenarios.md", "simulator-driver.md"):
         text = (_tests_root() / "docs" / name).read_text(encoding="utf-8")
         assert "without-glance" in text, name
+        assert "watch-app" in text, name
         assert "--with-glance" in text, name
         assert "#396" in text, name
 
     readme = (_tests_root() / "README.md").read_text(encoding="utf-8")
     assert "without-glance" in readme
+    assert "watch-app" in readme
     assert "--with-glance" in readme
     assert "#396" in readme

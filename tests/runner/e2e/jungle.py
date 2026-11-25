@@ -347,6 +347,7 @@ def generate_device_jungle(
     *,
     settings: Optional[AppSettings] = None,
     settings_source: Optional[Path] = None,
+    manifest: Optional[Path] = None,
     environ: Optional[Mapping[str, str]] = None,
     rebase: Optional[Mapping[Path, Path]] = None,
 ) -> DeviceJungle:
@@ -362,6 +363,9 @@ def generate_device_jungle(
     after ``$(resBase)``. That is how the app's compiled property defaults are
     set: properties are built into the app at compile time and follow resource
     overrides, so no simulator-side settings file is involved.
+
+    ``manifest`` points ``project.manifest`` at a harness-generated manifest
+    (the ``watch-app`` build profile). The checkout's manifest is never edited.
 
     ``rebase`` replaces checkout path prefixes with generated ones (for example
     a copied ``source/`` tree whose glance view is stubbed out). It is applied
@@ -426,6 +430,9 @@ def generate_device_jungle(
         )
         kept = _inject_resource_override(kept, device, resource_override)
 
+    if manifest is not None:
+        kept = _set_manifest(kept, Path(manifest))
+
     try:
         output.parent.mkdir(parents=True, exist_ok=True)
         with output.open("w", encoding="utf-8", newline="\n") as generated:
@@ -439,6 +446,22 @@ def generate_device_jungle(
         source=source,
         sections=tuple(sections),
         resource_override=resource_override,
+    )
+
+
+def _set_manifest(lines: Sequence[str], manifest: Path) -> List[str]:
+    """Point ``project.manifest`` at a generated manifest."""
+    for index, line in enumerate(lines):
+        match = _ASSIGNMENT.match(line)
+        if match is None:
+            continue
+        if match.group("prefix").split("=", 1)[0].strip() != "project.manifest":
+            continue
+        rewritten = f"{match.group('prefix')}{manifest}{match.group('trailing')}"
+        return lines[:index] + [rewritten] + lines[index + 1 :]
+    raise JungleError(
+        "monkey.jungle does not define project.manifest, so the generated "
+        "watch-app manifest cannot be used"
     )
 
 

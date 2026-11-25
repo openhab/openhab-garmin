@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import inspect
 import re
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Sequence
@@ -22,11 +23,17 @@ from typing import Callable, Dict, List, Optional, Sequence
 from .config import Device, load_devices
 from .settings import load_settings
 from .sim.base import Button, SimulatorDriver
+from .trace import parse_lines
 
 PASS = "pass"
 FAIL = "fail"
 SKIPPED = "skipped"
 NOT_IMPLEMENTED = "not-implemented"
+
+#: How long one press may take to show a new view, in the `press-effect` case.
+PRESS_EFFECT_TIMEOUT = 4.0
+#: Window pixels that must change for a press to count as having had an effect.
+PRESS_PIXEL_THRESHOLD = 2000
 
 
 class ContractError(RuntimeError):
@@ -211,6 +218,151 @@ def run_contract(
         _run_case("wait_ready", lambda: driver.wait_ready(ready_timeout_s))
     )
 
+    def app_entry() -> None:
+        """`wait_ready` must leave the app on a real view, not the glance.
+
+        Under the simulator the glance is requested in the app's own process,
+        and `OHApp.getGlanceView()` calls `AppLifecycle.setGlance()`, which
+        latches glance mode for that process: the lifecycle guards bail out and
+        `getInitialView()` never runs. No harness-side action can undo that, so
+        this case names the app-side cause instead of hiding it behind a view
+        timeout.
+        """
+        parsed = parse_lines(list(driver.events()))
+        view = next((event for event in reversed(parsed) if event.event == "VIEW"), None)
+        category = view.get("category") if view is not None else None
+        if category == "glance":
+            raise AssertionError(
+                "the app is still showing the glance (`VIEW;category=glance`), so "
+                "getInitialView() never ran and no request is made.\n"
+                "Under the simulator the glance is requested in the app's own "
+                "process, and OHApp.getGlanceView() calls AppLifecycle.setGlance(), "
+                "which latches glance mode for that process: every lifecycle guard "
+                "then bails out, so getInitialView() yields no view and "
+                "SitemapRequest.start() is never reached. No harness-side change "
+                "(device, manifest type, input, coordinates) can undo that latch; it "
+                "is the app-side cause tracked in #396, and the watch-app build "
+                "profile should start working unchanged once it is released. See "
+                "tests/docs/simulator-driver.md."
+            )
+        if category is None:
+            raise AssertionError(
+                "no VIEW event was observed, so the app's initial view never "
+                "rendered; see logs/console.log."
+            )
+
+    if driver.supports_events:
+        cases.append(_run_case("app-entry", app_entry))
+
+    def input_delivery() -> None:
+        """Prove synthetic input reaches the simulator, independently of the app.
+
+        The driver opens one of the simulator's own menus and looks for a large
+        window change. This separates "input is not delivered" from "the device
+        coordinates are wrong": a coordinate fix cannot help the former.
+        """
+        probe = getattr(driver, "probe_input_delivery", None)
+        if probe is None:
+            raise NotImplementedError(
+                f"{driver.name} cannot probe input delivery (no simulator menu "
+                "accelerator or no pixel comparison)"
+            )
+        probe()
+
+    if driver.supports_screenshots:
+        cases.append(_run_case("input-delivery", input_delivery))
+
+    def press_effect() -> None:
+        """A press must change what the app does, not just call xdotool.
+
+        A repeated line for the same view is not an effect: the glance can
+        re-render on its own clock, and the app's first draw can land late. Only
+        a **different** view (category or name) or, once the app has left the
+        glance, a substantial change inside its screen area counts.
+        """
+        pixel = getattr(driver, "pixel_difference", None)
+        region_pixel = getattr(driver, "region_pixel_difference", None)
+        screen_region = getattr(driver, "screen_region", None)
+        region = None
+        if screen_region is not None:
+            region = screen_region()
+        parsed_before = parse_lines(list(driver.events()))
+        known = {
+            (event.get("category"), event.get("view"))
+            for event in parsed_before
+            if event.event == "VIEW"
+        }
+        current = next(
+            (event for event in reversed(parsed_before) if event.event == "VIEW"), None
+        )
+        on_glance = current is not None and current.get("category") == "glance"
+
+        actions: List[tuple] = [
+            ("ENTER", lambda: driver.press(Button.ENTER, 1)),
+            ("MENU", lambda: driver.press(Button.MENU, 1)),
+            ("DOWN", lambda: driver.press(Button.DOWN, 1)),
+        ]
+        if device.supports_touch:
+            actions.append(
+                (
+                    "tap",
+                    lambda: driver.tap(
+                        device.screen_width // 2, device.screen_height // 2, 1
+                    ),
+                )
+            )
+        shots = workdir / "input"
+        shots.mkdir(parents=True, exist_ok=True)
+        attempts: List[str] = []
+        for label, action in actions:
+            before = None
+            if driver.supports_screenshots and not on_glance:
+                before = shots / f"{label}-before.png"
+                driver.screenshot(before)
+            mark = len(driver.events())
+            action()
+            deadline = time.monotonic() + PRESS_EFFECT_TIMEOUT
+            changed = None
+            while time.monotonic() < deadline:
+                for event in parse_lines(list(driver.events())[mark:]):
+                    if event.event == "ERRORVIEW":
+                        return
+                    if event.event != "VIEW":
+                        continue
+                    signature = (event.get("category"), event.get("view"))
+                    if signature not in known and event.get("category") != "glance":
+                        return
+                if before is not None and pixel is not None:
+                    after = shots / f"{label}-after.png"
+                    driver.screenshot(after)
+                    if region is not None and region_pixel is not None:
+                        changed = region_pixel(before, after, region)
+                    else:
+                        changed = pixel(before, after)
+                    if changed is not None and changed >= PRESS_PIXEL_THRESHOLD:
+                        return
+                time.sleep(0.25)
+            attempts.append(f"{label} ({changed!r} px)")
+        reason = (
+            " The app is still on the glance page, so its screen changes are not "
+            "counted; fix the glance transition first."
+            if on_glance
+            else ""
+        )
+        raise AssertionError(
+            "pressing ENTER, MENU and DOWN"
+            + (" and tapping the screen" if device.supports_touch else "")
+            + " produced no different VIEW (a repeated view does not count), no "
+            f"ERRORVIEW and no screen change at or above {PRESS_PIXEL_THRESHOLD} "
+            f"px: {'; '.join(attempts)}.{reason}\n"
+            "logs/driver.log names the mechanism and window point for each press. "
+            "Compare that point with the device definition's keys[].location and "
+            "the window's client origin."
+        )
+
+    if driver.supports_events:
+        cases.append(_run_case("press-effect", press_effect))
+
     for button in Button:
         cases.append(
             _run_case(f"press[{button.value}]", lambda button=button: driver.press(button, 1))
@@ -257,7 +409,7 @@ def run_contract(
 
 def _launch_cases() -> List[str]:
     """Names of the cases that need a launched application, in order."""
-    names = ["start", "wait_ready"]
+    names = ["start", "wait_ready", "app-entry", "input-delivery", "press-effect"]
     names.extend(f"press[{button.value}]" for button in Button)
     names.extend(["tap", "screenshot", "events"])
     return names

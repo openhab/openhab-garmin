@@ -56,7 +56,7 @@ import time
 import unicodedata
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 
 import yaml
 
@@ -91,6 +91,15 @@ DEFAULT_STARTUP_TIMEOUT = 120.0
 DEFAULT_READY_TIMEOUT = 90.0
 #: Delay between repeated xdotool events, so the app can process each one.
 DEFAULT_KEY_DELAY_MS = 150
+#: How long a declared ``isHold`` key stays pressed.
+HOLD_MS = 900
+#: Accelerators for the simulator's own menus, kept for diagnostics only: the
+#: guest's simulator has no menu bar, so the driver does not rely on one.
+INPUT_PROBE_KEYS: Tuple[str, ...] = ("alt+s", "alt+c")
+#: Window pixels that must change for a press to count as having had an effect.
+#: A glance clock ticking changes a few hundred; an opened menu or a new view
+#: changes thousands.
+PIXEL_CHANGE_THRESHOLD = 2000
 #: TCP transport ``monkeydo`` connects to; the simulator listens on it after
 #: start. Waiting for it avoids racing the push against the simulator's start-up.
 SIMULATOR_TCP_HOST = "127.0.0.1"
@@ -369,6 +378,29 @@ def xdotool_focus_commands(window: str) -> List[List[str]]:
 
 
 def xdotool_key_command(
+    keys: str,
+    count: int = 1,
+    delay_ms: int = DEFAULT_KEY_DELAY_MS,
+) -> List[str]:
+    """Type a key as real X input (XTEST) to the focused window.
+
+    ``xdotool key --window <id>`` uses ``XSendEvent``, which many toolkits
+    (wxWidgets among them) ignore; the focused-window path generates genuine
+    key events. The window-targeted form is kept as a fallback.
+    """
+    return [
+        "xdotool",
+        "key",
+        "--clearmodifiers",
+        "--repeat",
+        str(max(1, int(count))),
+        "--delay",
+        str(max(0, int(delay_ms))),
+        keys,
+    ]
+
+
+def xdotool_key_to_window_command(
     window: str,
     keys: str,
     count: int = 1,
@@ -389,6 +421,27 @@ def xdotool_key_command(
 
 
 def xdotool_click_command(
+    x: int,
+    y: int,
+    count: int = 1,
+    delay_ms: int = DEFAULT_KEY_DELAY_MS,
+) -> List[str]:
+    """Click at absolute root coordinates, as real X input (XTEST)."""
+    return [
+        "xdotool",
+        "mousemove",
+        str(int(x)),
+        str(int(y)),
+        "click",
+        "--repeat",
+        str(max(1, int(count))),
+        "--delay",
+        str(max(0, int(delay_ms))),
+        "1",
+    ]
+
+
+def xdotool_click_to_window_command(
     window: str,
     x: int,
     y: int,
@@ -408,6 +461,52 @@ def xdotool_click_command(
         "--delay",
         str(max(0, int(delay_ms))),
         "1",
+    ]
+
+
+def xdotool_mousedown_command(x: int, y: int) -> List[str]:
+    """Press the primary button at absolute root coordinates (a device hold)."""
+    return [
+        "xdotool",
+        "mousemove",
+        str(int(x)),
+        str(int(y)),
+        "mousedown",
+        "1",
+    ]
+
+
+def xdotool_mousedown_to_window_command(window: str, x: int, y: int) -> List[str]:
+    return [
+        "xdotool",
+        "mousemove",
+        "--window",
+        window,
+        str(int(x)),
+        str(int(y)),
+        "mousedown",
+        "1",
+    ]
+
+
+def xdotool_mouseup_command() -> List[str]:
+    return ["xdotool", "mouseup", "1"]
+
+
+def compare_command(before: Path, after: Path) -> List[str]:
+    """ImageMagick absolute pixel difference between two captures."""
+    return ["compare", "-metric", "AE", str(before), str(after), "null:"]
+
+
+def crop_command(source: Path, rect: ScreenRect, target: Path) -> List[str]:
+    """Crop a capture to a declared rectangle, in window pixels."""
+    return [
+        "convert",
+        str(source),
+        "-crop",
+        f"{rect.width}x{rect.height}+{rect.x}+{rect.y}",
+        "+repage",
+        str(target),
     ]
 
 
@@ -559,12 +658,199 @@ def key_bindings(
 
 
 @dataclass(frozen=True)
+class SimulatorKey:
+    """One declared device key: a hit area and the behaviour it triggers.
+
+    A device definition's ``simulator.json`` describes the physical buttons as
+    clickable rectangles, not keyboard keys. ``fenix7`` for example declares
+    ``{"behavior": "onSelect", "id": "enter", "location": {x: 356, y: 145, ...}}``.
+    The driver clicks that rectangle; keystrokes are only a fallback.
+    """
+
+    button: Button
+    location: ScreenRect
+    is_hold: bool = False
+    source: str = ""
+
+    def describe(self) -> str:
+        hold = " (hold)" if self.is_hold else ""
+        return (
+            f"{self.button.value} via {self.source or 'key'}{hold} at "
+            f"{self.location.x},{self.location.y} "
+            f"{self.location.width}x{self.location.height}"
+        )
+
+
+#: ``behavior`` values a device definition uses for the semantic buttons.
+_BEHAVIOUR_BUTTONS: Mapping[str, Button] = {
+    "onselect": Button.ENTER,
+    "select": Button.ENTER,
+    "previouspage": Button.UP,
+    "nextpage": Button.DOWN,
+    "onback": Button.BACK,
+    "back": Button.BACK,
+    "onmenu": Button.MENU,
+    "menu": Button.MENU,
+    "onstart": Button.START,
+    "start": Button.START,
+}
+
+#: ``id`` values a device definition uses for the semantic buttons.
+_KEY_ID_BUTTONS: Mapping[str, Button] = {
+    "enter": Button.ENTER,
+    "select": Button.ENTER,
+    "up": Button.UP,
+    "down": Button.DOWN,
+    "esc": Button.BACK,
+    "back": Button.BACK,
+    "menu": Button.MENU,
+    "start": Button.START,
+    "lap": Button.START,
+}
+
+
+def _location_rect(value: Any) -> Optional[ScreenRect]:
+    if not isinstance(value, Mapping):
+        return None
+    try:
+        return ScreenRect(
+            x=int(value["x"]),
+            y=int(value["y"]),
+            width=int(value["width"]),
+            height=int(value["height"]),
+        )
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
+def key_area(entry: Mapping[str, Any]) -> Optional[SimulatorKey]:
+    """Parse one ``keys[]`` entry of a device definition."""
+    location = _location_rect(entry.get("location"))
+    if location is None:
+        return None
+    name = str(entry.get("id") or "").strip()
+    behaviour = str(entry.get("behavior") or entry.get("behaviour") or "").strip()
+    button = _KEY_ID_BUTTONS.get(name.lower()) or _BEHAVIOUR_BUTTONS.get(
+        behaviour.lower()
+    )
+    if button is None:
+        return None
+    return SimulatorKey(
+        button=button,
+        location=location,
+        is_hold=bool(entry.get("isHold") or entry.get("is_hold")),
+        source=behaviour or name,
+    )
+
+
+def reference_size(
+    display: Optional[ScreenRect],
+    keys: Sequence[SimulatorKey],
+) -> Optional[Tuple[int, int]]:
+    """The far edge of the declared rectangles, kept for diagnostics only.
+
+    The SDK's ``simulator.json`` already expresses ``display.location`` and
+    ``keys[].location`` in the simulator window's client space: on the guest a
+    260 px screen is declared as a 266 px rectangle at (79,149) inside a
+    409x600 client area, because that is how the simulator draws it. Scaling
+    those numbers against the window is therefore wrong; this helper only
+    reports the declared extent.
+    """
+    rights: List[int] = []
+    bottoms: List[int] = []
+    if display is not None:
+        rights.append(display.x + display.width)
+        bottoms.append(display.y + display.height)
+    for key in keys:
+        rights.append(key.location.x + key.location.width)
+        bottoms.append(key.location.y + key.location.height)
+    if not rights:
+        return None
+    return (max(rights), max(bottoms))
+
+
+@dataclass(frozen=True)
+class CoordinateMapper:
+    """One mapping from declared simulator coordinates to window pixels.
+
+    Both ``press`` and ``tap`` use this object, so a click and a tap of the same
+    declared point land on the same pixel. The declared coordinates are already
+    in window client space, so the default is the identity; a pinned
+    ``E2E_WINE_SCREEN_RECT`` re-anchors both the screen and the key hit areas
+    when the window really is showing a different rectangle.
+    """
+
+    display: Optional[ScreenRect] = None
+    scale: float = 1.0
+    offset_x: int = 0
+    offset_y: int = 0
+    source: str = "declared coordinates (1:1 with the window)"
+
+    def point(self, location: ScreenRect) -> Tuple[int, int]:
+        """Centre of a declared rectangle, in window pixels."""
+        return (
+            self.offset_x + round((location.x + location.width / 2.0) * self.scale),
+            self.offset_y + round((location.y + location.height / 2.0) * self.scale),
+        )
+
+    def rect(self, location: ScreenRect) -> ScreenRect:
+        """A declared rectangle in window pixels."""
+        return ScreenRect(
+            x=self.offset_x + round(location.x * self.scale),
+            y=self.offset_y + round(location.y * self.scale),
+            width=max(1, round(location.width * self.scale)),
+            height=max(1, round(location.height * self.scale)),
+        )
+
+    def screen_point(
+        self, x: int, y: int, screen: Tuple[int, int]
+    ) -> Tuple[int, int]:
+        """A device screen pixel in window pixels (``tap``'s mapping)."""
+        if self.display is None:
+            raise DriverError(
+                "cannot map a tap without the device definition's display.location"
+            )
+        rect = self.rect(self.display)
+        return window_point(x, y, rect, screen)
+
+
+def coordinate_mapper(
+    display: Optional[ScreenRect],
+    pinned: Optional[ScreenRect],
+) -> CoordinateMapper:
+    """The mapper for this run: declared 1:1, or re-anchored by the screen pin.
+
+    The declared space is the window's client space, so no window-size scaling
+    is applied. ``E2E_WINE_SCREEN_RECT`` says the screen is somewhere else in
+    the window; the same scale and offset then move the key hit areas with it,
+    so one pin corrects taps and buttons together.
+    """
+    if pinned is not None and display is not None and display.width > 0:
+        scale = pinned.width / display.width
+        return CoordinateMapper(
+            display=display,
+            scale=scale,
+            offset_x=pinned.x - round(display.x * scale),
+            offset_y=pinned.y - round(display.y * scale),
+            source=ENV_SCREEN_RECT,
+        )
+    return CoordinateMapper(display=display)
+
+
+@dataclass(frozen=True)
 class SimulatorDefinition:
     """Facts the SDK's ``simulator.json`` declares for one device."""
 
     keys: Mapping[str, Any] = field(default_factory=dict)
+    key_areas: Tuple[SimulatorKey, ...] = ()
     display: Optional["ScreenRect"] = None
     is_touch: bool = True
+
+    def key_for(self, button: Button) -> Optional[SimulatorKey]:
+        for key in self.key_areas:
+            if key.button == button:
+                return key
+        return None
 
 
 def read_simulator_definition(
@@ -572,9 +858,11 @@ def read_simulator_definition(
 ) -> "SimulatorDefinition":
     """The ``keys``/``display`` facts from ``<devices>/<product>/simulator.json``.
 
-    ``display.location`` is the watch screen's rectangle inside the simulator
-    window and ``display.isTouch`` says whether the screen accepts taps. Both
-    are declared data, so ``tap`` does not have to guess the bezel offset.
+    Two ``keys`` shapes exist across SDK builds: a mapping of action names to
+    Windows virtual-key codes (keystrokes), and a list of hit areas with a
+    ``behavior`` and an ``isHold`` flag (clicks). Both are kept; ``press``
+    prefers the declared hit area because it is what the simulator actually
+    listens to.
     """
     if devices_root is None:
         return SimulatorDefinition()
@@ -586,34 +874,36 @@ def read_simulator_definition(
     if not isinstance(document, Mapping):
         return SimulatorDefinition()
 
-    keys = document.get("keys")
+    keys_document = document.get("keys")
+    legacy_keys: Mapping[str, Any] = (
+        keys_document if isinstance(keys_document, Mapping) else {}
+    )
+    key_areas: List[SimulatorKey] = []
+    if isinstance(keys_document, list):
+        for entry in keys_document:
+            if isinstance(entry, Mapping):
+                parsed = key_area(entry)
+                if parsed is not None:
+                    key_areas.append(parsed)
+
     display_rect: Optional[ScreenRect] = None
     is_touch = True
     display = document.get("display")
     if isinstance(display, Mapping):
-        location = display.get("location")
-        if isinstance(location, Mapping):
-            try:
-                display_rect = ScreenRect(
-                    x=int(location["x"]),
-                    y=int(location["y"]),
-                    width=int(location["width"]),
-                    height=int(location["height"]),
-                )
-            except (KeyError, TypeError, ValueError):
-                display_rect = None
+        display_rect = _location_rect(display.get("location"))
         touch = display.get("isTouch")
         if isinstance(touch, bool):
             is_touch = touch
     return SimulatorDefinition(
-        keys=keys if isinstance(keys, Mapping) else {},
+        keys=legacy_keys,
+        key_areas=tuple(key_areas),
         display=display_rect,
         is_touch=is_touch,
     )
 
 
 def read_device_keys(devices_root: Optional[Path], product: str) -> Mapping[str, Any]:
-    """The ``keys`` object of ``<devices_root>/<product>/simulator.json``."""
+    """The legacy ``keys`` mapping of ``<devices_root>/<product>/simulator.json``."""
     return read_simulator_definition(devices_root, product).keys
 
 
@@ -958,7 +1248,7 @@ class WineSimulatorDriver(SimulatorDriver):
         self._settings: Optional[AppSettings] = None
         self._settings_file: Optional[Path] = None
         self._keys: Dict[Button, str] = dict(DEFAULT_KEYS)
-        self._declared_screen: Optional[ScreenRect] = None
+        self._definition = SimulatorDefinition()
         self._mode = "ble"
         self._language = "eng"
         self._display_name = ""
@@ -1062,10 +1352,16 @@ class WineSimulatorDriver(SimulatorDriver):
         self._ciq_header = {}
         self._ciq_log = None
         devices_root = find_device_definitions(self.layout.root)
-        definition = read_simulator_definition(devices_root, device.product)
+        self._definition = read_simulator_definition(devices_root, device.product)
         self._display_name = read_device_display_name(devices_root, device.product)
-        self._keys = key_bindings(definition.keys)
-        self._declared_screen = definition.display
+        self._keys = key_bindings(self._definition.keys)
+        self._record(
+            "device definition: "
+            + (
+                ", ".join(key.describe() for key in self._definition.key_areas)
+                or "no declared key hit areas (keystrokes only)"
+            )
+        )
 
         self._ensure_display()
         self._sweep_existing_simulator()
@@ -1081,6 +1377,7 @@ class WineSimulatorDriver(SimulatorDriver):
             raise DriverError("wait_ready() called before start()")
 
         timeout = timeout_s if timeout_s and timeout_s > 0 else DEFAULT_READY_TIMEOUT
+        deadline = time.monotonic() + min(timeout, DEFAULT_READY_TIMEOUT * 2)
         parsed = self._wait_for_startup(timeout)
         language = next((event for event in parsed if event.event == "LANGUAGE"), None)
         observed = language.get("code") if language is not None else "unknown"
@@ -1097,6 +1394,8 @@ class WineSimulatorDriver(SimulatorDriver):
             )
         else:
             self._record(f"language confirmed: {observed}")
+
+        parsed = self._open_app_if_needed(parsed, deadline)
 
         if self._settings is not None and self._settings.url:
             for event in parsed:
@@ -1127,6 +1426,111 @@ class WineSimulatorDriver(SimulatorDriver):
                 "request assertions prove the transition."
             )
         self._record_device_title()
+
+    def _open_app_if_needed(
+        self, parsed: Sequence[TraceEvent], deadline: float
+    ) -> List[TraceEvent]:
+        """Open the app when the simulator left the glance page on screen.
+
+        ``monkeydo`` can leave the device on the glance carousel: only
+        ``E2E:VIEW;category=glance`` appears and ``getInitialView()`` never
+        runs, so no request is made. The physical select button is what opens
+        the app on the device, so the driver presses the declared ``onSelect``
+        hit area, then the ``onMenu`` hold, then select again — with the
+        declared hit areas, not keystrokes. If none of that works the run
+        continues and the log says the app never left the glance.
+        """
+        current = next(
+            (event for event in reversed(parsed) if event.event == "VIEW"), None
+        )
+        if current is None or current.get("category") != "glance":
+            return list(parsed)
+
+        self._record(
+            "the app started on the glance page (`VIEW;category=glance`); pressing "
+            "select to open it and run the initial view"
+        )
+        device = self._device
+        actions: List[Tuple[str, Callable[[], None]]] = []
+        if device is not None and device.supports_buttons:
+            actions = [
+                ("the declared onSelect hit area", lambda: self.press(Button.ENTER, 1)),
+                ("the declared onMenu hold", lambda: self.press(Button.MENU, 1)),
+                ("a second select after the hold", lambda: self.press(Button.ENTER, 1)),
+            ]
+        elif device is not None:
+            centre_x = device.screen_width // 2
+            centre_y = device.screen_height // 2
+            actions = [
+                ("a tap on the screen", lambda: self.tap(centre_x, centre_y, 1)),
+                ("a second tap", lambda: self.tap(centre_x, centre_y, 1)),
+            ]
+        for label, action in actions:
+            if time.monotonic() >= deadline:
+                break
+            mark = len(self.events())
+            try:
+                action()
+            except DriverError as error:
+                self._record(f"warning: {label} failed: {error}")
+                continue
+            until = min(time.monotonic() + 5.0, deadline)
+            while time.monotonic() < until:
+                process = self._app_process
+                if process is not None and process.poll() is not None:
+                    return list(parse_lines(self.events()))
+                for event in parse_lines(list(self.events())[mark:]):
+                    if event.event == "ERRORVIEW" or (
+                        event.event == "VIEW" and event.get("category") != "glance"
+                    ):
+                        self._record(f"app opened with {event.describe()} via {label}")
+                        return list(parse_lines(self.events()))
+                time.sleep(0.25)
+            self._record(f"note: {label} did not open the app")
+
+        # Hypothesis from the guest: the simulator may run only the glance entry
+        # point, in which case no input can reach the app. Relaunch once and look
+        # for a non-glance view; the console log is appended, not replaced.
+        if self._device is not None and time.monotonic() < deadline:
+            self._record(
+                "the app is still on the glance page; relaunching the PRG in case "
+                "only the glance process started"
+            )
+            mark = len(self.events())
+            try:
+                self._stop_app()
+                time.sleep(1.0)
+                self._launch_app(
+                    self._device, reset_events=False, append_log=True
+                )
+            except DriverError as error:
+                self._record(f"warning: relaunch failed: {error}")
+            else:
+                until = min(time.monotonic() + 15.0, deadline)
+                while time.monotonic() < until:
+                    process = self._app_process
+                    if process is not None and process.poll() is not None:
+                        break
+                    for event in parse_lines(list(self.events())[mark:]):
+                        if event.event == "ERRORVIEW" or (
+                            event.event == "VIEW" and event.get("category") != "glance"
+                        ):
+                            self._record(
+                                f"relaunch opened the app with {event.describe()}"
+                            )
+                            return list(parse_lines(self.events()))
+                    time.sleep(0.25)
+                self._record("note: the relaunch stayed on the glance page too")
+
+        self._record(
+            "warning: the app is still on the glance page, so its initial view never "
+            "ran and no request will be made. The driver tried every declared way in "
+            "(select and hold on button devices, a tap on touch devices) and one "
+            "relaunch. Check the mapped click points in this log (window coordinates "
+            "plus the client origin), the input-delivery probe, and whether the "
+            "simulator runs the app process at all."
+        )
+        return list(parse_lines(self.events()))
 
     def _record_device_title(self) -> None:
         """Corroborate the requested device from the window title.
@@ -1194,7 +1598,16 @@ class WineSimulatorDriver(SimulatorDriver):
         return self._ciq_log
 
     def press(self, button: Button, count: int = 1) -> None:
-        """Press a device button ``count`` times."""
+        """Press a device button ``count`` times.
+
+        A device definition declares its physical buttons as clickable hit
+        areas (``keys[].location`` with a ``behavior``), not keyboard keys, so
+        the driver clicks the declared rectangle. An ``E2E_WINE_KEY_<BUTTON>``
+        override, or an SDK that still declares virtual-key codes, falls back to
+        ``xdotool key``; the log says which mechanism was used, because a
+        keystroke the simulator ignores is indistinguishable from a successful
+        press unless it is recorded.
+        """
         device = self._require_started()
         if not device.supports_buttons:
             raise DriverError(
@@ -1203,15 +1616,117 @@ class WineSimulatorDriver(SimulatorDriver):
             )
         window = self._require_window()
         self._focus_window(window)
+
+        override = os.environ.get(f"{ENV_KEY_PREFIX}{button.value}")
+        if override:
+            self._send_keys(window, button, override.strip(), count, "environment override")
+            return
+
+        declared = self._definition.key_for(button)
+        if declared is not None:
+            self._click_declared_key(window, declared, count)
+            return
+
         keysym = self._keys.get(button)
         if not keysym:
             raise DriverError(
-                f"no key binding for {button.value}; set "
+                f"no declared hit area and no key binding for {button.value}; set "
                 f"{ENV_KEY_PREFIX}{button.value}=<keysym>"
             )
-        command = xdotool_key_command(window, keysym, count)
-        self._run(command, check=True, action=f"press {button.value}")
-        self._record(f"press {button.value} x{count} -> {keysym}")
+        self._send_keys(window, button, keysym, count, "no declared hit area")
+
+    def _send_keys(
+        self, window: str, button: Button, keysym: str, count: int, why: str
+    ) -> None:
+        try:
+            self._run(
+                xdotool_key_command(keysym, count),
+                check=True,
+                action=f"press {button.value}",
+            )
+            mechanism = "XTEST key to the focused window"
+        except DriverError:
+            self._run(
+                xdotool_key_to_window_command(window, keysym, count),
+                check=True,
+                action=f"press {button.value} (window-targeted fallback)",
+            )
+            mechanism = "window-targeted key (XSendEvent)"
+        self._record(
+            f"press {button.value} x{count} -> keysym {keysym!r} ({mechanism}; "
+            f"{why}); the simulator may ignore keyboard input"
+        )
+
+    def _click_declared_key(
+        self, window: str, key: SimulatorKey, count: int
+    ) -> None:
+        geometry = self._geometry(window)
+        mapper = self._mapper()
+        x, y = mapper.point(key.location)
+        if not (0 <= x < geometry["width"] and 0 <= y < geometry["height"]):
+            raise DriverError(
+                f"the declared {key.describe()} maps to window ({x},{y}), outside "
+                f"the {geometry['width']}x{geometry['height']} simulator window.\n"
+                "The device definition's coordinates and the window disagree; pin "
+                f"{ENV_SCREEN_RECT}=x,y,width,height to the screen rectangle from a "
+                f"screenshot, or {ENV_KEY_PREFIX}{key.button.value} with a keysym."
+            )
+        for _ in range(max(1, int(count))):
+            if key.is_hold:
+                self._pointer_down(window, x, y, action=f"press {key.button.value} (hold)")
+                time.sleep(HOLD_MS / 1000.0)
+                self._pointer_up()
+            else:
+                self._click_at(window, x, y, action=f"press {key.button.value}")
+            time.sleep(DEFAULT_KEY_DELAY_MS / 1000.0)
+        self._record(
+            f"press {key.button.value} x{count} -> clicked {key.describe()} at "
+            f"window ({x},{y}) ({mapper.source})"
+        )
+
+    def _mapper(self) -> CoordinateMapper:
+        """The one mapper both ``press`` and ``tap`` use."""
+        return coordinate_mapper(
+            self._definition.display,
+            parse_screen_rect(os.environ.get(ENV_SCREEN_RECT, "")),
+        )
+
+    # -- pointer and keyboard delivery -------------------------------------
+    def _pointer_down(
+        self, window: str, x: int, y: int, *, action: str
+    ) -> None:
+        """Press the pointer at a window point, as real X input (XTEST)."""
+        abs_x, abs_y = self._absolute(window, x, y)
+        try:
+            self._run(
+                xdotool_mousedown_command(abs_x, abs_y),
+                check=True,
+                action=action,
+            )
+        except DriverError:
+            self._run(
+                xdotool_mousedown_to_window_command(window, x, y),
+                check=True,
+                action=f"{action} (window-targeted fallback)",
+            )
+
+    def _pointer_up(self) -> None:
+        self._run(xdotool_mouseup_command(), check=True, action="release")
+
+    def _click_at(self, window: str, x: int, y: int, *, action: str) -> None:
+        abs_x, abs_y = self._absolute(window, x, y)
+        try:
+            self._run(xdotool_click_command(abs_x, abs_y, 1), check=True, action=action)
+        except DriverError:
+            self._run(
+                xdotool_click_to_window_command(window, x, y, 1),
+                check=True,
+                action=f"{action} (window-targeted fallback)",
+            )
+
+    def _absolute(self, window: str, x: int, y: int) -> Tuple[int, int]:
+        geometry = self._geometry(window)
+        return geometry.get("x", 0) + int(x), geometry.get("y", 0) + int(y)
 
     def tap(self, x: int, y: int, count: int = 1) -> None:
         """Tap a device screen coordinate ``count`` times."""
@@ -1223,10 +1738,19 @@ class WineSimulatorDriver(SimulatorDriver):
             )
         window = self._require_window()
         self._focus_window(window)
-        rect = self._resolve_screen_rect(window, device)
-        px, py = window_point(x, y, rect, (device.screen_width, device.screen_height))
-        command = xdotool_click_command(window, px, py, count)
-        self._run(command, check=True, action="tap")
+        mapper = self._mapper()
+        rect = self._screen_rect_for(window, device)
+        if mapper.display is not None:
+            px, py = mapper.screen_point(
+                x, y, (device.screen_width, device.screen_height)
+            )
+        else:
+            px, py = window_point(
+                x, y, rect, (device.screen_width, device.screen_height)
+            )
+        for _ in range(max(1, int(count))):
+            self._click_at(window, px, py, action="tap")
+            time.sleep(DEFAULT_KEY_DELAY_MS / 1000.0)
         self._record(
             f"tap device=({x},{y}) window=({px},{py}) x{count} "
             f"screen={rect.x},{rect.y},{rect.width},{rect.height}"
@@ -1254,6 +1778,115 @@ class WineSimulatorDriver(SimulatorDriver):
             raise DriverError(f"{target}: {reason}")
         self._record(f"screenshot -> {target}")
         return target
+
+    def pixel_difference(self, before: Path, after: Path) -> Optional[int]:
+        """Absolute pixel difference between two captures, or ``None``.
+
+        ``None`` means ImageMagick's ``compare`` is unavailable or the metric
+        could not be read; callers must then rely on the trace stream instead.
+        """
+        compare = shutil.which("compare")
+        if compare is None:
+            return None
+        try:
+            completed = self._run(
+                compare_command(Path(before), Path(after)),
+                check=False,
+                timeout=60,
+                action="compare",
+            )
+        except DriverError:
+            return None
+        match = re.search(r"(-?\d+(?:\.\d+)?)", completed.stderr or "")
+        return int(float(match.group(1))) if match else None
+
+    def probe_input_delivery(self, timeout_s: float = 8.0) -> str:
+        """Prove a bezel press reaches the app, measured on the app's screen.
+
+        The guest's simulator has no menu bar, so a menu accelerator cannot be
+        the probe. This presses the declared ``onSelect`` area once and requires
+        a new ``E2E:VIEW``/``ERRORVIEW`` or a change inside the declared
+        ``display.location`` rectangle. Measuring the screen, never the whole
+        window, keeps the simulator's own bezel graphics from counting.
+        """
+        if shutil.which("compare") is None:
+            raise DriverError(
+                "ImageMagick 'compare' is not installed, so input delivery cannot "
+                "be proved with pixels. Install ImageMagick in the runner image."
+            )
+        window = self._require_window()
+        self._focus_window(window)
+        region = self.screen_region(window)
+        if region is None:
+            raise DriverError(
+                "no display.location in the device definition, so a press effect "
+                "cannot be measured on the screen; add the definition or set "
+                f"{ENV_SCREEN_RECT}"
+            )
+        before = self.artifact_dir / "logs" / "input-probe-before.png"
+        after = self.artifact_dir / "logs" / "input-probe-after.png"
+        self.screenshot(before)
+        mark = len(self.events())
+        self.press(Button.ENTER, 1)
+        deadline = time.monotonic() + timeout_s
+        difference: Optional[int] = None
+        while time.monotonic() < deadline:
+            for event in parse_lines(list(self.events())[mark:]):
+                if event.event in ("VIEW", "ERRORVIEW"):
+                    return (
+                        f"the declared {Button.ENTER.value} press produced "
+                        f"{event.describe()}, so input reaches the app"
+                    )
+            self.screenshot(after)
+            difference = self.region_pixel_difference(before, after, region)
+            if difference is not None and difference >= PIXEL_CHANGE_THRESHOLD:
+                return (
+                    f"the declared {Button.ENTER.value} press changed the screen "
+                    f"area by {difference} px, so input reaches the app"
+                )
+            time.sleep(0.25)
+        raise DriverError(
+            "the declared select press changed neither a view nor the screen area "
+            f"({region.x},{region.y} {region.width}x{region.height}; last pixel "
+            f"difference {difference!r}).\n"
+            "The press was clicked inside the window, so this is either delivery "
+            "to the app or the app not reacting: check `logs/driver.log` for the "
+            "clicked point, whether the app is stuck on the glance page (a widget "
+            "started in glance mode has to be selected to launch), and the "
+            "focus/delivery notes in tests/docs/simulator-driver.md."
+        )
+
+    def screen_region(self, window: Optional[str] = None) -> Optional[ScreenRect]:
+        """The declared screen rectangle in window pixels, for pixel checks."""
+        mapper = self._mapper()
+        if mapper.display is None:
+            return None
+        return mapper.rect(mapper.display)
+
+    def region_pixel_difference(
+        self,
+        before: Path,
+        after: Path,
+        region: ScreenRect,
+    ) -> Optional[int]:
+        """Pixel difference restricted to ``region``.
+
+        The simulator highlights its own bezel buttons; a whole-window
+        difference would count that and could pass while the app never reacted.
+        """
+        convert = shutil.which("convert")
+        if convert is None:
+            return self.pixel_difference(before, after)
+        crops: List[Path] = []
+        for label, source in (("crop-before", before), ("crop-after", after)):
+            target = self.artifact_dir / "logs" / f"input-{label}.png"
+            self._run(
+                crop_command(Path(source), region, target),
+                check=True,
+                action="crop for the screen difference",
+            )
+            crops.append(target)
+        return self.pixel_difference(crops[0], crops[1])
 
     def events(self) -> Sequence[str]:
         """The app console lines seen so far, oldest first."""
@@ -1558,19 +2191,20 @@ class WineSimulatorDriver(SimulatorDriver):
             )
         return geometry
 
-    def _resolve_screen_rect(self, window: str, device: Device) -> ScreenRect:
-        """The watch screen inside the simulator window.
+    def _screen_rect_for(self, window: str, device: Device) -> ScreenRect:
+        """The watch screen inside the simulator window, for ``tap`` and its log.
 
-        Precedence: ``E2E_WINE_SCREEN_RECT`` (operator pin), the device
-        definition's ``display.location`` (declared data, so the bezel offset is
-        not guessed), then a centred aspect-preserving fit for an SDK that
-        ships no ``simulator.json``.
+        Precedence: the device definition's ``display.location`` through the
+        shared mapper (an ``E2E_WINE_SCREEN_RECT`` pin re-anchors it), then a
+        centred aspect-preserving fit for an SDK that ships no
+        ``simulator.json``.
         """
+        mapper = self._mapper()
+        if mapper.display is not None:
+            return mapper.rect(mapper.display)
         pinned = parse_screen_rect(os.environ.get(ENV_SCREEN_RECT, ""))
         if pinned is not None:
             return pinned
-        if self._declared_screen is not None:
-            return self._declared_screen
         self._record(
             "note: no display.location in the device definition; falling back to a "
             "centred screen rectangle. Pin E2E_WINE_SCREEN_RECT if taps miss."
@@ -1590,7 +2224,9 @@ class WineSimulatorDriver(SimulatorDriver):
             self._simulator_handle = None
 
     # -- app launch --------------------------------------------------------
-    def _launch_app(self, device: Device) -> None:
+    def _launch_app(
+        self, device: Device, *, reset_events: bool = True, append_log: bool = False
+    ) -> None:
         monkeydo = self.layout.monkeydo
         if monkeydo is None:  # guarded by prepare()
             raise DriverError("monkeydo is missing from the SDK layout")
@@ -1598,10 +2234,13 @@ class WineSimulatorDriver(SimulatorDriver):
         stdbuf = shutil.which("stdbuf")
         command = monkeydo_command(monkeydo, self._prg, device.product, stdbuf=stdbuf)
 
-        with self._events_lock:
-            self._events = []
+        if reset_events:
+            with self._events_lock:
+                self._events = []
         self.console_log.parent.mkdir(parents=True, exist_ok=True)
-        self._console_handle = self.console_log.open("w", encoding="utf-8")
+        self._console_handle = self.console_log.open(
+            "a" if append_log else "w", encoding="utf-8"
+        )
         self._app_process = subprocess.Popen(
             command,
             stdout=subprocess.PIPE,
