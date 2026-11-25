@@ -1316,8 +1316,14 @@ def test_ciq_log_absent_is_not_an_error(tmp_path: Path) -> None:
 
 def _probe_driver(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, difference: int):
     driver = _driver(tmp_path)
+    driver._started = True
+    driver._device = _device("fenix7")
     driver._window = "42"
+    driver._definition = _definition(tmp_path)
     monkeypatch.setattr(driver, "_window_name", lambda window: "CIQ Simulator - Fenix 7")
+    monkeypatch.setattr(
+        driver, "_geometry", lambda window: {"x": 0, "y": 0, "width": 409, "height": 600}
+    )
     monkeypatch.setattr(
         "e2e.sim.wine.shutil.which", lambda name: f"/usr/bin/{name}"
     )
@@ -1329,29 +1335,32 @@ def _probe_driver(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, difference: i
         return Path(path)
 
     monkeypatch.setattr(driver, "screenshot", fake_screenshot)
-    monkeypatch.setattr(driver, "pixel_difference", lambda before, after: difference)
+    monkeypatch.setattr(
+        driver, "region_pixel_difference", lambda before, after, region: difference
+    )
     driver._run = FakeRun()  # type: ignore[method-assign]
     return driver
 
 
-def test_input_delivery_probe_reports_a_changed_window(
+def test_input_delivery_probe_reports_a_changed_screen(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     driver = _probe_driver(tmp_path, monkeypatch, difference=5000)
     detail = driver.probe_input_delivery()
-    assert "alt+s" in detail and "5000" in detail
-    assert "input reaches it" in detail
+    assert "changed the screen area by 5000 px" in detail
+    assert "input reaches the app" in detail
 
 
-def test_input_delivery_probe_calls_a_dead_window_a_delivery_problem(
+def test_input_delivery_probe_calls_a_silent_press_an_app_problem(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     driver = _probe_driver(tmp_path, monkeypatch, difference=0)
     with pytest.raises(DriverError) as error:
-        driver.probe_input_delivery()
+        driver.probe_input_delivery(timeout_s=0.05)
     message = str(error.value)
-    assert "delivery problem" in message
-    assert "coordinate problem" in message
+    assert "delivery to the app" in message
+    assert "glance" in message
+    assert "logs/driver.log" in message
 
 
 def test_only_the_wine_driver_cannot_provision_a_language() -> None:
@@ -1506,12 +1515,17 @@ class _FakeDriver(SimulatorDriver):
     supports_events = True
     supports_screenshots = True
 
-    def __init__(self, fail_start: bool = False, press_changes_view: bool = True) -> None:
+    def __init__(
+        self,
+        fail_start: bool = False,
+        press_changes_view: bool = True,
+        start_category: str = "sitemap",
+    ) -> None:
         self.fail_start = fail_start
         self.press_changes_view = press_changes_view
         self.stopped = False
         self._lines: List[str] = [
-            "E2E:VIEW;category=sitemap;view=HomepageMenu;depth=2"
+            f"E2E:VIEW;category={start_category};view=StartView;depth=1"
         ]
 
     def prepare(self, prg: Path) -> None:
@@ -1542,8 +1556,16 @@ class _FakeDriver(SimulatorDriver):
     def pixel_difference(self, before: Path, after: Path) -> int:
         return 0
 
+    def region_pixel_difference(
+        self, before: Path, after: Path, region: ScreenRect
+    ) -> int:
+        return 0
+
+    def screen_region(self, window: Optional[str] = None) -> ScreenRect:
+        return ScreenRect(0, 0, 4, 4)
+
     def probe_input_delivery(self, timeout_s: float = 8.0) -> str:
-        return "the fake simulator menu opened"
+        return "the fake select press changed the screen"
 
     def events(self) -> Sequence[str]:
         return tuple(self._lines)
@@ -1619,6 +1641,29 @@ def test_contract_accepts_an_unrecognised_name_with_an_explicit_device(
     prg.write_bytes(b"prg")
     cases = run_contract(_FakeDriver(), tmp_path, prg=prg, device_id="fenix7")
     assert {case.status for case in cases} == {PASS}
+
+
+def test_contract_reports_a_glance_only_app_as_app_entry_failure(
+    tmp_path: Path,
+) -> None:
+    prg = tmp_path / "openhab-garmin-fenix7.prg"
+    prg.write_bytes(b"prg")
+    cases = run_contract(
+        _FakeDriver(start_category="glance"), tmp_path, prg=prg, device_id=None
+    )
+    by_name = {case.name: case for case in cases}
+    assert by_name["app-entry"].status == FAIL
+    detail = by_name["app-entry"].detail
+    assert "glance" in detail
+    assert "GlanceViewDelegate" in detail
+
+
+def test_contract_passes_app_entry_on_a_real_view(tmp_path: Path) -> None:
+    prg = tmp_path / "openhab-garmin-fenix7.prg"
+    prg.write_bytes(b"prg")
+    cases = run_contract(_FakeDriver(), tmp_path, prg=prg, device_id=None)
+    by_name = {case.name: case for case in cases}
+    assert by_name["app-entry"].status == PASS
 
 
 def test_contract_fails_a_press_that_has_no_effect(

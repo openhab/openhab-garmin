@@ -23,7 +23,7 @@ from typing import Callable, Dict, List, Optional, Sequence
 from .config import Device, load_devices
 from .settings import load_settings
 from .sim.base import Button, SimulatorDriver
-from .trace import parse_line
+from .trace import parse_line, parse_lines
 
 PASS = "pass"
 FAIL = "fail"
@@ -218,6 +218,36 @@ def run_contract(
         _run_case("wait_ready", lambda: driver.wait_ready(ready_timeout_s))
     )
 
+    def app_entry() -> None:
+        """`wait_ready` must leave the app on a real view, not the glance.
+
+        A widget that starts as part of the glance page runs in glance mode with
+        a 32 KB budget and only enters its initial view when it is selected.
+        If it stays there, no request is made and every UI scenario is
+        meaningless, so this is its own case with its own message.
+        """
+        parsed = parse_lines(list(driver.events()))
+        view = next((event for event in reversed(parsed) if event.event == "VIEW"), None)
+        category = view.get("category") if view is not None else None
+        if category == "glance":
+            raise AssertionError(
+                "the app is still showing the glance (`VIEW;category=glance`), so "
+                "getInitialView() never ran and no request is made.\n"
+                "A widget in glance mode must be selected to launch; the driver "
+                "tries the declared select/menu keys, taps and one relaunch. Check "
+                "whether the glance needs a `GlanceViewDelegate` to be selectable, "
+                "and whether the 32 KB glance budget stops the transition. See "
+                "tests/docs/simulator-driver.md."
+            )
+        if category is None:
+            raise AssertionError(
+                "no VIEW event was observed, so the app's initial view never "
+                "rendered; see logs/console.log."
+            )
+
+    if driver.supports_events:
+        cases.append(_run_case("app-entry", app_entry))
+
     def input_delivery() -> None:
         """Prove synthetic input reaches the simulator, independently of the app.
 
@@ -245,6 +275,11 @@ def run_contract(
         clock does not.
         """
         pixel = getattr(driver, "pixel_difference", None)
+        region_pixel = getattr(driver, "region_pixel_difference", None)
+        screen_region = getattr(driver, "screen_region", None)
+        region = None
+        if screen_region is not None:
+            region = screen_region()
         actions: List[tuple] = [
             ("ENTER", lambda: driver.press(Button.ENTER, 1)),
             ("MENU", lambda: driver.press(Button.MENU, 1)),
@@ -279,7 +314,10 @@ def run_contract(
                 if before is not None and pixel is not None:
                     after = shots / f"{label}-after.png"
                     driver.screenshot(after)
-                    changed = pixel(before, after)
+                    if region is not None and region_pixel is not None:
+                        changed = region_pixel(before, after, region)
+                    else:
+                        changed = pixel(before, after)
                     if changed is not None and changed >= PRESS_PIXEL_THRESHOLD:
                         return
                 time.sleep(0.25)
@@ -345,7 +383,7 @@ def run_contract(
 
 def _launch_cases() -> List[str]:
     """Names of the cases that need a launched application, in order."""
-    names = ["start", "wait_ready", "input-delivery", "press-effect"]
+    names = ["start", "wait_ready", "app-entry", "input-delivery", "press-effect"]
     names.extend(f"press[{button.value}]" for button in Button)
     names.extend(["tap", "screenshot", "events"])
     return names

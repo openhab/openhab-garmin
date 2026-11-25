@@ -93,8 +93,8 @@ DEFAULT_READY_TIMEOUT = 90.0
 DEFAULT_KEY_DELAY_MS = 150
 #: How long a declared ``isHold`` key stays pressed.
 HOLD_MS = 900
-#: Accelerators for the simulator's own menus, used to prove that synthetic
-#: input reaches the window at all (a menu overlay changes many pixels).
+#: Accelerators for the simulator's own menus, kept for diagnostics only: the
+#: guest's simulator has no menu bar, so the driver does not rely on one.
 INPUT_PROBE_KEYS: Tuple[str, ...] = ("alt+s", "alt+c")
 #: Window pixels that must change for a press to count as having had an effect.
 #: A glance clock ticking changes a few hundred; an opened menu or a new view
@@ -496,6 +496,18 @@ def xdotool_mouseup_command() -> List[str]:
 def compare_command(before: Path, after: Path) -> List[str]:
     """ImageMagick absolute pixel difference between two captures."""
     return ["compare", "-metric", "AE", str(before), str(after), "null:"]
+
+
+def crop_command(source: Path, rect: ScreenRect, target: Path) -> List[str]:
+    """Crop a capture to a declared rectangle, in window pixels."""
+    return [
+        "convert",
+        str(source),
+        "-crop",
+        f"{rect.width}x{rect.height}+{rect.x}+{rect.y}",
+        "+repage",
+        str(target),
+    ]
 
 
 def import_command(display: str, window: str, path: Path) -> List[str]:
@@ -1789,13 +1801,13 @@ class WineSimulatorDriver(SimulatorDriver):
         return int(float(match.group(1))) if match else None
 
     def probe_input_delivery(self, timeout_s: float = 8.0) -> str:
-        """Prove that synthetic input changes the simulator, without the app.
+        """Prove a bezel press reaches the app, measured on the app's screen.
 
-        Opens the simulator's own Simulation/Connection menu with a key
-        accelerator and looks for a substantial window change. This answers the
-        question "is input delivered at all?" separately from "are the device
-        coordinates right?": if no menu can be opened, no coordinate fix will
-        help, and the error says so.
+        The guest's simulator has no menu bar, so a menu accelerator cannot be
+        the probe. This presses the declared ``onSelect`` area once and requires
+        a new ``E2E:VIEW``/``ERRORVIEW`` or a change inside the declared
+        ``display.location`` rectangle. Measuring the screen, never the whole
+        window, keeps the simulator's own bezel graphics from counting.
         """
         if shutil.which("compare") is None:
             raise DriverError(
@@ -1804,38 +1816,77 @@ class WineSimulatorDriver(SimulatorDriver):
             )
         window = self._require_window()
         self._focus_window(window)
+        region = self.screen_region(window)
+        if region is None:
+            raise DriverError(
+                "no display.location in the device definition, so a press effect "
+                "cannot be measured on the screen; add the definition or set "
+                f"{ENV_SCREEN_RECT}"
+            )
         before = self.artifact_dir / "logs" / "input-probe-before.png"
+        after = self.artifact_dir / "logs" / "input-probe-after.png"
         self.screenshot(before)
-        tried: List[str] = []
-        try:
-            for keys in INPUT_PROBE_KEYS:
-                tried.append(keys)
-                self._run(
-                    xdotool_key_command(keys, 1),
-                    check=True,
-                    action=f"input probe {keys}",
-                )
-                time.sleep(0.6)
-                after = self.artifact_dir / "logs" / f"input-probe-{keys.replace('+', '-')}.png"
-                self.screenshot(after)
-                difference = self.pixel_difference(before, after)
-                if difference is not None and difference >= PIXEL_CHANGE_THRESHOLD:
-                    self._run(xdotool_key_command("Escape", 1), check=False)
+        mark = len(self.events())
+        self.press(Button.ENTER, 1)
+        deadline = time.monotonic() + timeout_s
+        difference: Optional[int] = None
+        while time.monotonic() < deadline:
+            for event in parse_lines(list(self.events())[mark:]):
+                if event.event in ("VIEW", "ERRORVIEW"):
                     return (
-                        f"{keys!r} changed the simulator window by {difference} px, "
-                        "so synthetic input reaches it"
+                        f"the declared {Button.ENTER.value} press produced "
+                        f"{event.describe()}, so input reaches the app"
                     )
-        finally:
-            self._run(xdotool_key_command("Escape", 1), check=False)
+            self.screenshot(after)
+            difference = self.region_pixel_difference(before, after, region)
+            if difference is not None and difference >= PIXEL_CHANGE_THRESHOLD:
+                return (
+                    f"the declared {Button.ENTER.value} press changed the screen "
+                    f"area by {difference} px, so input reaches the app"
+                )
+            time.sleep(0.25)
         raise DriverError(
-            "no simulator menu opened: "
-            f"{', '.join(tried)} left the window unchanged, so synthetic input did "
-            "not reach the simulator.\n"
-            "This is a delivery problem, not a coordinate problem: check that the "
-            "window is focused (xdotool windowfocus), that Xvfb has no competing "
-            "grab, and whether Wine needs a window manager for menu accelerators. "
-            "Device coordinates cannot fix it."
+            "the declared select press changed neither a view nor the screen area "
+            f"({region.x},{region.y} {region.width}x{region.height}; last pixel "
+            f"difference {difference!r}).\n"
+            "The press was clicked inside the window, so this is either delivery "
+            "to the app or the app not reacting: check `logs/driver.log` for the "
+            "clicked point, whether the app is stuck on the glance page (a widget "
+            "started in glance mode has to be selected to launch), and the "
+            "focus/delivery notes in tests/docs/simulator-driver.md."
         )
+
+    def screen_region(self, window: Optional[str] = None) -> Optional[ScreenRect]:
+        """The declared screen rectangle in window pixels, for pixel checks."""
+        mapper = self._mapper()
+        if mapper.display is None:
+            return None
+        return mapper.rect(mapper.display)
+
+    def region_pixel_difference(
+        self,
+        before: Path,
+        after: Path,
+        region: ScreenRect,
+    ) -> Optional[int]:
+        """Pixel difference restricted to ``region``.
+
+        The simulator highlights its own bezel buttons; a whole-window
+        difference would count that and could pass while the app never reacted.
+        """
+        convert = shutil.which("convert")
+        if convert is None:
+            return self.pixel_difference(before, after)
+        crops: List[Path] = []
+        for label, source in (("crop-before", before), ("crop-after", after)):
+            target = self.artifact_dir / "logs" / f"input-{label}.png"
+            self._run(
+                crop_command(Path(source), region, target),
+                check=True,
+                action="crop for the screen difference",
+            )
+            crops.append(target)
+        return self.pixel_difference(crops[0], crops[1])
 
     def events(self) -> Sequence[str]:
         """The app console lines seen so far, oldest first."""

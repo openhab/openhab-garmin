@@ -39,12 +39,15 @@ engine reports event and golden assertions as **skipped**, never passed.
   an unrecognised PRG name needs an explicit `--device`: launching one device's
   build as another produced a `Symbol Not Found` and a pointless `tap` failure
   on the guest, which is a false result rather than a test.
+- `app-entry` requires the app to have left the glance: `wait_ready` runs it, and
+  a widget still in glance mode fails with the delegate/memory pointers instead
+  of a generic timeout.
 - `press-effect` proves the input path: it presses ENTER, MENU and DOWN (and
-  taps on touch devices) and requires a new view **or** a screen change above the
-  pixel threshold. A pass means the app reacted, not that `xdotool` ran.
-- `input-delivery` proves synthetic input reaches the simulator at all, by
-  opening one of its own menus and measuring the window change. If it fails, no
-  device-coordinate change can help.
+  taps on touch devices) and requires a new view **or** a change inside the
+  screen rectangle. A pass means the app reacted, not that `xdotool` ran; the
+  simulator's bezel highlight cannot satisfy it.
+- `input-delivery` presses the declared select once and reports whether the app
+  changed a view or its screen area. It does not assume a simulator menu.
 - The contract starts with `mode=ble, language=deu`. The language is reported
   and compared, never forced (see "Language cannot be provisioned").
 
@@ -401,22 +404,28 @@ press: the clicked window point and the mapper source, or the keysym.
 ### Proving that input is delivered
 
 A click that lands correctly and a click the simulator never receives look the
-same in a log, so the driver proves delivery separately from the coordinates:
+same in a log, so the driver separates the two from the simulator's chrome:
 
 - The pointer moves to **absolute root coordinates** (`window origin + point`)
   and the click is generated with XTEST; keys go to the **focused** window
   instead of `xdotool key --window`, because `XSendEvent` is ignored by many
   toolkits. Both keep the window-targeted form as a fallback if the first
   command fails.
-- `probe_input_delivery()` opens the simulator's own `Alt+S`/`Alt+C` menu and
-  looks for a substantial window change (ImageMagick `compare -metric AE`,
-  threshold `PIXEL_CHANGE_THRESHOLD`). The contract case `input-delivery` fails
-  with "this is a delivery problem, not a coordinate problem" when no menu
-  appears — that is the case to fix before touching coordinates.
-- `press-effect` accepts a new `E2E:VIEW`/`ERRORVIEW` **or** a screen change at
-  or above the threshold (a focus/selection change); a glance clock ticking does
-  not reach it. It presses ENTER, MENU and DOWN, and taps the screen centre on a
-  touch device.
+- `probe_input_delivery()` presses the declared `onSelect` area once and
+  requires a new `E2E:VIEW`/`ERRORVIEW` **or** a change inside the
+  `display.location` rectangle. The contract case `input-delivery` fails with
+  "delivery to the app or the app not reacting" when neither happens — it does
+  **not** try a simulator menu: the guest's simulator has no menu bar, and no
+  `Alt+F`/`Alt+S`/`Alt+M` opens a window there.
+- `press-effect` accepts a new view or a change in the **screen rectangle** at or
+  above the pixel threshold. The simulator highlights its own bezel buttons, so
+  a whole-window difference would pass while the app never reacted; the screen
+  region is therefore the only area measured. It presses ENTER, MENU and DOWN,
+  and taps the screen centre on a touch device.
+
+Both cases are red on the guest exactly while the app sits on the glance page:
+the simulator receives the clicks, but the app does not react (see "Opening the
+app from the glance page"). That is the accurate state, not a coordinate bug.
 
 Keystrokes are only a fallback:
 
@@ -434,26 +443,42 @@ reached the app and the case fails, naming both mechanisms.
 
 ### Opening the app from the glance page
 
-`monkeydo` can leave the device on the glance carousel: only
-`E2E:VIEW;category=glance` appears, `getInitialView()` never runs and no request
-is made. `wait_ready` therefore checks the first view and, when it is the
-glance, presses the declared `onSelect` hit area, then the `onMenu` hold, then
-`onSelect` again; on a touch-only device it taps the screen centre twice
-instead. If none of that changes the view, it **relaunches the PRG once** (the
-`monkeydo` console log is appended, not replaced) — the guest evidence suggests
-the simulator may be running only the glance entry point, in which case input
-cannot reach the app at all. Everything is bounded by the readiness budget and
-every attempt plus its mapped window point is in `logs/driver.log`.
+The app is a **widget**, and a widget that the simulator shows as part of the
+glance page is started **in glance mode**, with a hard 32 KB memory budget; the
+SDK documents that selecting it launches the widget in its standard mode. So the
+simulator is behaving correctly when only
+`E2E:VIEW;category=glance` appears: `getInitialView()` has not run and no
+request is made.
 
-If the app is still on the glance afterwards, the log says the initial view
-never ran, and the scenario's first view/request assertion fails with that
-context. Scenarios must not paper over it with a request assertion — the
-assertion stays, and a glance-only run must fail it. Two measurements narrow the
-cause: replacing the glance with a cleared background changed nothing, and the
-glance runs "in a separate process" by design. Check, in this order: whether the
-menu input probe reaches the window at all, whether the relaunch starts another
-process, and whether the PRG's manifest app types include the watch app the
-simulator should be running.
+`wait_ready` therefore checks the first view and, when it is the glance, presses
+the declared `onSelect` hit area, then the `onMenu` hold, then `onSelect` again;
+on a touch-only device it taps the screen centre twice instead. If none of that
+changes the view, it **relaunches the PRG once** (the `monkeydo` console log is
+appended, not replaced). Everything is bounded by the readiness budget, and every
+attempt plus its mapped window point is in `logs/driver.log`.
+
+None of those transitions the app on the guest. The candidates, in the order
+worth checking:
+
+1. **The glance delegate.** `OHApp.getGlanceView()` returns
+   `[ new GlanceSitemapView() ]` with no `GlanceViewDelegate`, although the SDK
+   allows `[ GlanceView, GlanceViewDelegate ]`. Whether the system needs a
+   delegate to make the glance selectable is an **app** question; the harness
+   must not change app source.
+1. **Glance memory.** Glance mode has a 32 KB budget on most devices. The font
+   error seen only on the glance (`Invalid Font Specified`) and the missing
+   transition may share that cause; #396 records the measurement.
+1. **The simulator's own widget entry.** No simulator menu exists on the guest
+   (`xwininfo -root -children` lists only the main window plus 1x1 helper
+   windows, and no `Alt+…` accelerator opens anything), so there is no menu
+   action to drive.
+
+The contract keeps this honest: `app-entry` fails while the app is still on the
+glance, `input-delivery` fails because the declared select press changes neither
+a view nor the screen, and `press-effect` fails for the same reason. A scenario
+must not paper over it with a request assertion. Replacing the glance with a
+cleared background changed nothing either, so "the glance cannot be selected
+because it draws nothing" is not the cause.
 
 `tap(x, y)` takes **device screen pixels**. The driver maps them into the
 window through the watch-screen rectangle declared by the device definition:
@@ -484,9 +509,10 @@ is enough to act on it.
 | `device title … does not match` / `does not name a device` | **warning only**; the trace stream already proved the app is running | check `LastUsedDevice` in `simulator.ini` if results look wrong |
 | `monkeydo exited with code …` | wrong PRG or device name | read `logs/console.log` |
 | `app-ready … no console line` | the app started but produced no `E2E:` line | check the PRG is a debug build and the device wiring (`link-devices` is accurate here) |
-| `warning: the app is still on the glance page` | the simulator never left the glance carousel, so `getInitialView()` did not run and no request is made | read the preceding click lines (window points and scale); check the glance crash fix and the simulator's own app entry |
-| `press-effect … no new VIEW or ERRORVIEW` | the press reached nothing: a keysym the simulator ignored, or a click outside the declared hit area | the log names the mechanism and the point; compare it with `keys[].location`. If `input-delivery` also failed, fix delivery first |
-| `no simulator menu opened: … synthetic input did not reach the simulator` | `Alt+S`/`Alt+C` left the window unchanged | delivery problem: check focus, Xvfb grabs, and whether Wine needs a window manager; coordinates are not the cause |
+| `warning: the app is still on the glance page` | a widget in glance mode; `getInitialView()` did not run, so no request is made | an app-side transition question: the glance delegate and the 32 KB glance budget, see below |
+| `app-entry … still showing the glance` | a widget started in glance mode; selecting it should launch it, but nothing transitions it | check the glance delegate (`getGlanceView()` returns no `GlanceViewDelegate`) and the 32 KB glance budget; app-side, not harness-side |
+| `no simulator menu opened: … synthetic input did not reach the simulator` | legacy text from the removed menu probe | replaced: `input-delivery` now presses select and measures the screen |
+| `press-effect … no new VIEW or ERRORVIEW and no screen change` | the press reached nothing or the app did not react | the log names the mechanism and point; if `input-delivery` and `app-entry` also failed, the app is on the glance, not a coordinate bug |
 | `the app reported system language …` | `Language` in `simulator.ini` was ignored | see the language section above |
 | `the app showed the configuration error view` | the PRG was built without the requested properties | rebuild with `e2e build --settings <fixture>`, or pass a PRG built that way |
 
