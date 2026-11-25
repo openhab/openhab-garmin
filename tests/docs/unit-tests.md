@@ -16,8 +16,10 @@ The E2E harness under [`tests/`](../README.md) does the environment side well:
 it builds the app, loads fixtures, splits responses for the simulator's 16 KiB
 limit, provisions languages, collects the `E2E:` trace and reports honest
 coverage. What it cannot do is **drive the app**: on the pinned simulator under
-Wine, synthetic input is dropped, so the app never leaves its glance page and no
-scenario can assert behaviour ([#396](https://github.com/openhab/openhab-garmin/issues/396)).
+Wine, `Up`/`Down` move the screen but no synthetic click or select keysym
+reaches the app, so it never leaves its glance page and no scenario can assert
+behaviour ([#396](https://github.com/openhab/openhab-garmin/issues/396),
+[#399](https://github.com/openhab/openhab-garmin/pull/399)).
 
 Most of what #140 asks for does not need input at all. Parsing, classification,
 validation and formatting are pure functions over JSON. Those are exactly what a
@@ -326,8 +328,9 @@ Cheap and high value, in order:
 
 **Adopt, narrowly, and expand only along the list above.** The tier costs
 nothing on pull requests (the compile gate already exists), runs in seconds, and
-covers exactly the protocol code that the E2E tier cannot reach while input is
-broken. It does not replace any E2E work, and it does not remove any waiver.
+covers exactly the protocol code that the E2E tier cannot reach while the app
+cannot be driven past its glance page. It does not replace any E2E work, and it
+does not remove any waiver.
 
 Do not drop it: the pilot already asserts colour parsing, range validation and
 mapping normalization that are otherwise unverifiable. Do not grow it into a
