@@ -53,6 +53,12 @@ LOG_CONTEXT_LINES = 12
 DEFAULT_WAIT_S = 30.0
 DEFAULT_INTERVAL_S = 2.0
 
+#: Measured on Connect IQ 9.3.0: a 16384-byte JSON response is accepted and a
+#: 16385-byte response returns Communications.NETWORK_RESPONSE_TOO_LARGE
+#: (-402). See tests/docs/fixture-limits.md. The manifest may override this for
+#: a future SDK, but the limit fixtures are checked against it in CI.
+SIMULATOR_JSON_LIMIT_BYTES = 16384
+
 #: The declarations this repository's fixtures use. The guard only needs the
 #: names, not a full DSL parser; anything it cannot recognise is caught by the
 #: expected-set comparison in the other direction.
@@ -80,6 +86,11 @@ class ExpectedFixtures:
     sitemaps: frozenset[str]
     source: Path
     staged_root: Path
+    max_sitemap_bytes: Optional[int] = None
+    budget_exempt: frozenset[str] = frozenset()
+    simulator_json_limit_bytes: int = SIMULATOR_JSON_LIMIT_BYTES
+    near_limit_sitemap: Optional[str] = None
+    over_limit_sitemap: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -90,6 +101,7 @@ class FixtureReport:
     items: int
     sitemaps: int
     warnings: Tuple[str, ...] = ()
+    sitemap_bytes: Tuple[Tuple[str, int], ...] = ()
 
     def summary(self) -> str:
         return (
@@ -279,6 +291,49 @@ def load_expected(
         sitemap_profiles.get(profile), f"{source}: sitemaps.{profile}"
     )
 
+    max_sitemap_bytes = document.get("max_sitemap_bytes")
+    if max_sitemap_bytes is not None:
+        if not isinstance(max_sitemap_bytes, int) or max_sitemap_bytes <= 0:
+            raise FixtureError(
+                f"{source}: max_sitemap_bytes must be a positive integer, "
+                f"got {max_sitemap_bytes!r}"
+            )
+    budget_exempt: frozenset[str] = frozenset()
+    raw_exempt = document.get("budget_exempt")
+    if raw_exempt is not None:
+        budget_exempt = _string_set(raw_exempt, f"{source}: budget_exempt")
+        unknown_exempt = sorted(budget_exempt - set(sitemaps))
+        if unknown_exempt:
+            raise FixtureError(
+                f"{source}: budget_exempt names sitemap(s) not in "
+                f"sitemaps.{profile}: {_join(unknown_exempt)}"
+            )
+
+    simulator_limit = document.get(
+        "simulator_json_limit_bytes", SIMULATOR_JSON_LIMIT_BYTES
+    )
+    if not isinstance(simulator_limit, int) or simulator_limit <= 0:
+        raise FixtureError(
+            f"{source}: simulator_json_limit_bytes must be a positive integer, "
+            f"got {simulator_limit!r}"
+        )
+    near_limit: Optional[str] = None
+    over_limit: Optional[str] = None
+    limit_fixtures = document.get("limit_fixtures")
+    if limit_fixtures is not None:
+        if not isinstance(limit_fixtures, dict):
+            raise FixtureError(f"{source}: limit_fixtures must be a mapping")
+        near_limit = limit_fixtures.get("near")
+        over_limit = limit_fixtures.get("over")
+        for role, value in (("near", near_limit), ("over", over_limit)):
+            if value is None:
+                continue
+            if not isinstance(value, str) or value not in sitemaps:
+                raise FixtureError(
+                    f"{source}: limit_fixtures.{role} must name a sitemap in "
+                    f"sitemaps.{profile}, got {value!r}"
+                )
+
     declared_items, declared_sitemaps = declared_sets(staged, profile)
     if declared_items != set(items):
         raise FixtureError(
@@ -301,6 +356,11 @@ def load_expected(
         sitemaps=sitemaps,
         source=source,
         staged_root=staged,
+        max_sitemap_bytes=max_sitemap_bytes,
+        budget_exempt=budget_exempt,
+        simulator_json_limit_bytes=simulator_limit,
+        near_limit_sitemap=near_limit,
+        over_limit_sitemap=over_limit,
     )
 
 
@@ -445,6 +505,8 @@ def verify(
     log_paths: Sequence[Path] = (),
     log_dir: Optional[Path] = None,
     strict: bool = False,
+    check_sizes: bool = False,
+    dump_dir: Optional[Path] = None,
     wait_s: float = DEFAULT_WAIT_S,
     interval_s: float = DEFAULT_INTERVAL_S,
 ) -> FixtureReport:
@@ -457,6 +519,12 @@ def verify(
     ``strict`` additionally fails when the sets match but openHAB still logged
     a DSL error. CI uses it on a fresh container; an in-stack run does not,
     because an old boot's warning remains in the userdata log across a restart.
+
+    ``check_sizes`` fetches each sitemap and records its raw REST body size. When
+    the manifest sets ``max_sitemap_bytes``, a sitemap above that budget fails
+    unless it is listed in ``budget_exempt``. The simulator's network limit is
+    measured in tests/docs/fixture-limits.md; a normal fixture must stay well
+    below it so a routine element addition does not break every scenario.
     """
 
     staged = _assert_same_tree()
@@ -506,11 +574,80 @@ def verify(
                         warnings=warnings,
                     )
                 )
+            sitemap_bytes: Tuple[Tuple[str, int], ...] = ()
+            if check_sizes:
+                measured = []
+                try:
+                    if dump_dir is not None:
+                        dump_dir.mkdir(parents=True, exist_ok=True)
+                    for name in sorted(expected.sitemaps):
+                        raw = openhab.sitemap_raw(name)
+                        measured.append((name, len(raw)))
+                        if dump_dir is not None:
+                            (dump_dir / f"{name}.json").write_bytes(raw)
+                except OpenHabError as error:
+                    # The collection endpoint can be registered before the
+                    # individual /rest/sitemaps/<name> resources on a cold
+                    # start. Treat the 404 like a not-yet-loaded sitemap.
+                    if time.monotonic() >= deadline:
+                        raise FixtureError(
+                            "openHAB did not expose every expected sitemap "
+                            f"within {wait_s:.0f}s; last error: {error}"
+                        ) from None
+                    time.sleep(max(0.1, interval_s))
+                    continue
+                sitemap_bytes = tuple(measured)
+                by_name = dict(measured)
+                limit = expected.simulator_json_limit_bytes
+                boundary_problems: List[str] = []
+                if expected.near_limit_sitemap is not None:
+                    size = by_name.get(expected.near_limit_sitemap, 0)
+                    if size > limit:
+                        boundary_problems.append(
+                            f"{expected.near_limit_sitemap}={size} is above the "
+                            f"{limit}-byte simulator limit, so the near-limit "
+                            "scenario would receive -402"
+                        )
+                if expected.over_limit_sitemap is not None:
+                    size = by_name.get(expected.over_limit_sitemap, 0)
+                    if size <= limit:
+                        boundary_problems.append(
+                            f"{expected.over_limit_sitemap}={size} is not above "
+                            f"the {limit}-byte simulator limit, so the over-limit "
+                            "scenario would render instead of showing S:-402"
+                        )
+                if boundary_problems:
+                    raise FixtureError(
+                        "the size-limit fixtures do not straddle the measured "
+                        f"simulator limit: {'; '.join(boundary_problems)}. "
+                        "Regenerate them with "
+                        "tests/fixtures/openhab/generate_size_fixtures.py and "
+                        "record the new sizes in tests/docs/fixture-limits.md."
+                    )
+                budget = expected.max_sitemap_bytes
+                if budget is not None:
+                    over = [
+                        (name, size)
+                        for name, size in measured
+                        if size > budget and name not in expected.budget_exempt
+                    ]
+                    if over:
+                        detail = ", ".join(
+                            f"{name}={size}" for name, size in over
+                        )
+                        raise FixtureError(
+                            f"sitemap(s) exceed the fixture byte budget "
+                            f"({budget} bytes): {detail}. The app's simulator "
+                            "rejects a response above 16384 bytes with -402; "
+                            "split the sitemap along scenario boundaries instead "
+                            "of growing it. See tests/docs/fixture-limits.md."
+                        )
             return FixtureReport(
                 profile=profile,
                 items=len(actual_items),
                 sitemaps=len(actual_sitemaps),
                 warnings=warnings,
+                sitemap_bytes=sitemap_bytes,
             )
 
         if time.monotonic() >= deadline:

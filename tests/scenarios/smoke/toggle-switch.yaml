@@ -14,7 +14,7 @@ mode: ble
 fixture: fast-polling
 openhab:
   profile: stable
-  sitemap: garmin_e2e
+  sitemap: garmin_commands
   items:
     E2E_Toggle: "OFF"
 language: eng
@@ -30,21 +30,21 @@ manual_checks:
     Rollershutter and player controls are not driven; only the toggle switch is.
   - The webhook fallback is covered by webhook-command-path, not here.
 
+settings:
+  sitemap_0: garmin_commands
+
 steps:
   - action: launch
 
   - action: wait_for_request
     method: GET
-    path_prefix: /rest/sitemaps/garmin_e2e
+    path_prefix: /rest/sitemaps/garmin_commands
     min_count: 1
     timeout_ms: 30000
 
   - action: reset_shim
 
-  # Widgets frame is the second entry of the homepage; DOWN moves the focus.
-  - action: press
-    button: DOWN
-
+  # Widgets is the first frame of garmin_commands.
   - action: press
     button: ENTER
 

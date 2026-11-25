@@ -98,6 +98,13 @@ different tree. `E2E_REPO_ROOT` only controls the runner's `/work` mount; if it
 points at another checkout the two fixture trees differ and the guard fails
 with an explicit message. Start the stack from the checkout under test.
 
+The sitemaps are deliberately small. The Connect IQ simulator rejects a JSON
+response above 16,384 bytes with `-402`, measured on the pinned SDK; the old
+single `garmin_e2e` payload was 26,609 bytes and could not reach the app. The
+fixtures are split by scenario boundary, the manifest enforces a 12,288-byte
+authoring budget, and two generated fixtures pin the near/over sides of the
+limit for the `limits.*` scenarios. See [fixture-limits.md](fixture-limits.md).
+
 ## Runner start-up
 
 The SDK is mounted read-only at `/opt/ciq-sdk` (Garmin's agreement forbids

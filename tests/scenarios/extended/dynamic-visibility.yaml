@@ -17,7 +17,7 @@ mode: ble
 fixture: fast-polling
 openhab:
   profile: stable
-  sitemap: garmin_e2e
+  sitemap: garmin_dynamic
   items:
     E2E_Visible: "OFF"
     E2E_Temperature: "20.0"
@@ -29,19 +29,22 @@ covers:
   - sitemap.parameters-visibility
   - sitemap.nesting
 
+settings:
+  sitemap_0: garmin_dynamic
+
 steps:
   - action: launch
 
   - action: wait_for_request
     method: GET
-    path_prefix: /rest/sitemaps/garmin_e2e
+    path_prefix: /rest/sitemaps/garmin_dynamic
     min_count: 1
     timeout_ms: 30000
 
-  # Dynamic frame is the tenth entry on the homepage.
+  # Dynamic is the third frame of garmin_dynamic.
   - action: press
     button: DOWN
-    count: 9
+    count: 2
   - action: press
     button: ENTER
 
@@ -64,7 +67,7 @@ steps:
     description: The app kept polling while the visibility changed.
     shim_requests:
       method: GET
-      path_prefix: /rest/sitemaps/garmin_e2e
+      path_prefix: /rest/sitemaps/garmin_dynamic
       min_count: 2
 
   - action: command

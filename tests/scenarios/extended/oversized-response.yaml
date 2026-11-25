@@ -28,8 +28,10 @@ covers:
   - errors.codes-messages
 manual_checks:
   - >-
-    The simulator's lower JSON response limit (#298) is not exercised; the shim
-    serves 2 MiB, above both the simulator and the device limit.
+    This scenario deliberately serves 2 MiB, above both the simulator and the
+    device limit. The measured 16 KiB simulator boundary is covered by
+    `extended/limits-near-limit` and `extended/limits-over-limit`; see
+    tests/docs/fixture-limits.md.
 
 shim:
   rules:

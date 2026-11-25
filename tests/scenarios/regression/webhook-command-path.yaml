@@ -15,7 +15,7 @@ mode: ble
 fixture: webhook-only
 openhab:
   profile: stable
-  sitemap: garmin_e2e
+  sitemap: garmin_commands
   items:
     E2E_Toggle: "OFF"
 language: eng
@@ -30,20 +30,21 @@ manual_checks:
     successful openHAB-side webhook execution.
   - A missing or incorrect webhook identifier is not exercised.
 
+settings:
+  sitemap_0: garmin_commands
+
 steps:
   - action: launch
 
   - action: wait_for_request
     method: GET
-    path_prefix: /rest/sitemaps/garmin_e2e
+    path_prefix: /rest/sitemaps/garmin_commands
     min_count: 1
     timeout_ms: 30000
 
   - action: reset_shim
 
-  # Widgets frame -> Toggle Switch.
-  - action: press
-    button: DOWN
+  # Widgets is the first frame -> Toggle Switch.
   - action: press
     button: ENTER
 

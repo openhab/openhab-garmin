@@ -159,7 +159,7 @@ a second job, `fixtures`, with a `stable` and a `dev` matrix leg:
 1. start the pinned openHAB image and wait for its healthcheck;
 1. read `/openhab/userdata/logs/openhab.log` from the container;
 1. run `python -m e2e verify-fixtures --profile <profile> --log openhab.log
-   --strict --wait 180`.
+   --strict --sizes --dump-dir ../compose/sitemaps --wait 180`.
 
 The job is per pull request, not scheduled. The workflow is already
 path-filtered to `tests/`, `manifest.xml`, `monkey.jungle` and the workflow
@@ -275,8 +275,8 @@ See [docs/simulator-driver.md](docs/simulator-driver.md#glance-the-build-profile
 
 | Command | Purpose |
 | --- | --- |
-| `setup` | validate Compose, SDK, openHAB readiness and the expected fixture sets, then resolve the fixture sitemap |
-| `verify-fixtures` | assert `/rest/items` and `/rest/sitemaps` contain the expected sets; `--strict` also fails on a `DSL model ... has errors` line, `--log` points at the openHAB log |
+| `setup` | validate Compose, SDK, openHAB readiness, the expected fixture sets and the fixture byte budget, then resolve the fixture sitemap |
+| `verify-fixtures` | assert `/rest/items` and `/rest/sitemaps` contain the expected sets; `--strict` also fails on a `DSL model ... has errors` line, `--log` points at the openHAB log, `--sizes` fetches every sitemap and enforces the byte budget, `--dump-dir` writes the payloads |
 | `run` | run scenario names, `--suite`, or `--all`; writes JSON, JUnit XML, Markdown and the stack-health artifact |
 | `reset` | clear the shim's script and request trace (optionally reset item states) |
 | `status` | health of every component, plus pin problems |
@@ -392,6 +392,8 @@ scheduled in CI; only its pure logic is covered by
 | extended | `slow-response` | protocol | slow responses are applied without an error view |
 | extended | `connection-reset` | protocol | dropped connections are temporary errors |
 | extended | `dynamic-visibility` | ui | `visibility` reacts to a state change while the app is open |
+| extended | `limits-near-limit` | ui | a sitemap just below the simulator JSON limit renders normally |
+| extended | `limits-over-limit` | ui | a sitemap above the simulator JSON limit shows the `S:-402` error view |
 | extended | `wifi-mode` | protocol | Wi-Fi mode renders the cached sitemap and does not poll |
 | extended | `offline-mode` | protocol | offline mode sends nothing |
 | extended | `localisation-sitemap` | ui | homepage, control labels and connection indicator in all six languages |
@@ -439,26 +441,39 @@ in [docs/scenarios.md](docs/scenarios.md).
 
 `wifi-mode` and `offline-mode` render a _cached_ sitemap, so they must run after a
 BLE scenario has populated the device cache. Any `smoke/` scenario does that.
+The split `garmin_e2e` payload estimates 24,944 bytes, below the app's 81,920-byte
+storage-cache limit, so it remains cacheable; the network limit (16 KiB) is the
+tighter constraint. See [docs/fixture-limits.md](docs/fixture-limits.md).
 
 ## Fixtures
 
 ```text
-fixtures/openhab/expected.yaml                     expected item and sitemap sets (the guard)
+fixtures/openhab/expected.yaml                     expected sets, byte budget and limit wiring
+fixtures/openhab/generate_size_fixtures.py         regenerates the two limit sitemaps
 fixtures/openhab/conf/items/garmin_e2e.items       every supported item type + one unsupported
-fixtures/openhab/conf/sitemaps/garmin_e2e.sitemap  every supported element and parameter
+fixtures/openhab/conf/sitemaps/garmin_e2e.sitemap  elements, nesting, ranges, icons, empty page
+fixtures/openhab/conf/sitemaps/garmin_commands.sitemap  toggle, mappings, rollershutter, player, gates
+fixtures/openhab/conf/sitemaps/garmin_dynamic.sitemap  group, colors, visibility
 fixtures/openhab/conf/sitemaps/garmin_unsupported.sitemap  the "no supported widget" path
 fixtures/openhab/conf/sitemaps/garmin_localisation.sitemap  stable localisation menu
 fixtures/openhab/conf/sitemaps/garmin_localisation_long.sitemap  long-dynamic-value error path
+fixtures/openhab/conf/sitemaps/garmin_limit_near.sitemap  just below the simulator JSON limit
+fixtures/openhab/conf/sitemaps/garmin_limit_over.sitemap  above the simulator JSON limit
 fixtures/openhab/conf-dev/sitemaps/garmin_confirm.sitemap  dev-only `confirmCmd` case
 fixtures/app/settings/*.yaml                       Connect IQ property sets (`${E2E_SHIM_URL}`)
 ```
 
-The baseline sitemap starts from the one posted in
+The fixture set started from the sitemap posted in
 [#140](https://github.com/openhab/openhab-garmin/issues/140#issuecomment-...) and
 covers `Frame`, `Default`, `Text`, `Group`, `Switch`, `Selection`, `Setpoint`,
 `Slider` (including `releaseOnly`), nesting, `mappings`, `labelcolor`/`valuecolor`,
 `visibility`, `icon`/`staticIcon`, empty pages and the full state/command matrix
-(toggle, generic switch, rollershutter, player).
+(toggle, generic switch, rollershutter, player). It is split into small
+sitemaps because the Connect IQ simulator rejects a JSON response above
+**16,384 bytes** with `-402`; the old single `garmin_e2e` payload was 26,609
+bytes and could never reach the app on the pinned simulator. The measured
+boundary, the simulator-versus-hardware caveat and the full size table are in
+[docs/fixture-limits.md](docs/fixture-limits.md).
 
 ### Stable and dev fixture trees
 
@@ -485,6 +500,14 @@ window, and fail with the openHAB `DSL model ... has errors` lines when the sets
 do not match. The guard derives the declared names from the DSL files and fails
 when the manifest has drifted, so adding a fixture without listing it is caught
 before openHAB is involved.
+
+The manifest also carries `max_sitemap_bytes` (12,288) and the near/over limit
+wiring. `e2e verify-fixtures --sizes` (and `e2e setup`) fetches every sitemap,
+prints its REST body size, fails a normal sitemap above the budget, and asserts
+that `garmin_limit_near` is at or below the measured 16,384-byte simulator limit
+while `garmin_limit_over` is above it. The CI `fixtures` job runs this check and
+uploads the payloads as artifacts. See
+[docs/fixture-limits.md](docs/fixture-limits.md).
 
 The runner reads the manifest from `/e2e-fixtures`, which Compose mounts from
 `../fixtures` relative to `tests/compose` (the same source the staging service
@@ -774,6 +797,8 @@ manual counterpart to `tests/runner/tests/test_compose.py` and
 | openHAB healthy but no sitemap | the `garmin_e2e` fixture failed to parse; `python -m e2e verify-fixtures --strict --log <openhab.log>` prints the `DSL model ... has errors` lines, or check `docker compose logs openhab-stable` |
 | `verify-fixtures` reports `does not match the checkout fixture tree` | `E2E_REPO_ROOT` points the runner at a different checkout than the Compose project's `../fixtures`; start the stack from the checkout under test |
 | `verify-fixtures` reports `missing sitemap(s): garmin_confirm` on a dev scenario | the stack was started without `-f compose.dev.yaml`, so `openhab-dev-init` did not stage the dev overlay |
+| `verify-fixtures --sizes` reports a sitemap above the byte budget | split it along scenario boundaries; the simulator rejects a response above 16,384 bytes with `-402` (see [docs/fixture-limits.md](docs/fixture-limits.md)) |
+| `verify-fixtures --sizes` reports the near/over fixtures no longer straddle the limit | regenerate them with `python tests/fixtures/openhab/generate_size_fixtures.py` and update the measured sizes in `docs/fixture-limits.md` |
 | Everything times out on the dev profile | you started it without `-f compose.dev.yaml` |
 | `compose: services.shim.SHIM_BIND resolves to '0.0.0.0'` | the host overlay was edited to hardcode a bind address; use `${E2E_LOOPBACK_HOST}` |
 | `the generated network block has drifted` | run `python -m e2e network-env --write` after editing `config/network.yaml` |

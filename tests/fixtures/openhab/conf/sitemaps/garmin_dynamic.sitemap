@@ -1,0 +1,36 @@
+// Dynamic sitemap fixture for the openHAB Garmin E2E harness.
+//
+// Contains the Group control, label/value colors and visibility rules. Kept
+// apart from `garmin_e2e.sitemap` so growing the dynamic cases cannot push the
+// element fixture over the simulator's JSON response limit (16 KiB measured;
+// see tests/docs/fixture-limits.md).
+//
+// `Dynamic` is the third homepage frame; the dynamic-visibility scenario
+// presses DOWN twice from the first entry, then ENTER.
+
+sitemap garmin_dynamic label="Dynamic" {
+
+	Frame label="Group" {
+		Group item=E2E_Group label="Group"
+		Group item=E2E_GroundFloorLights label="All Lights|All Lights Switch [%s]"
+		Switch item=E2E_Group label="All"
+		Switch item=E2E_Light label="Switch 1"
+		Switch item=E2E_Light2 label="Switch 2"
+	}
+
+	Frame label="Colors" {
+		Switch item=E2E_TV label="TV A/B" mappings=[0="ABC", 1="BBC", 2="CNN"] labelcolor=[==0="red", ==1="green", ==2="yellow"] valuecolor=[==0="red", ==1="green", ==2="yellow"]
+		Text item=E2E_EntranceGates_Status label="Gate Status" valuecolor=[==OPEN="red", ==CLOSED="green", ==MOVING="yellow"]
+	}
+
+	Frame label="Dynamic" {
+		Text item=E2E_Temperature label="Visible when marker is ON" visibility=[E2E_Visible==ON]
+		Text item=E2E_Temperature label="Hidden when marker is ON" visibility=[E2E_Visible!=ON]
+		// A page whose only child can be hidden: exercising the
+		// "This page is empty" toast. Text rather than a nested Frame,
+		// because openHAB rejects Frame-in-Frame.
+		Text label="Sometimes Empty" {
+			Text item=E2E_Temperature label="Only when marker is ON" visibility=[E2E_Visible==ON]
+		}
+	}
+}

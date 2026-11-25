@@ -1,0 +1,47 @@
+// Command fixture for the openHAB Garmin E2E harness.
+//
+// Kept apart from `garmin_e2e.sitemap` so a command-menu addition cannot push
+// the default element sitemap over the simulator's JSON response limit
+// (16 KiB measured; see tests/docs/fixture-limits.md).
+//
+// The first frame is `Widgets`: the toggle-switch, command-error, hold-time and
+// webhook scenarios open it before selecting the toggle. Keep that frame's
+// position and the order of its first element stable; the scenarios press only
+// ENTER to open it and select the toggle.
+
+sitemap garmin_commands label="Commands" {
+
+	Frame label="Widgets" {
+		Switch item=E2E_Toggle label="Toggle Switch"
+		Slider item=E2E_Dimmer label="Slider" minValue=0 maxValue=100 step=10 icon=light
+		Switch item=E2E_Rollershutter label="Shutters" mappings=[0="Open", 100="Closed"]
+		Switch item=E2E_MediaControl label="Audio"
+	}
+
+	// Sub-pages are Text elements, not nested Frames: openHAB rejects a Frame
+	// inside a Frame, while a Text with a nested page is the supported
+	// submenu construct.
+	Frame label="Generic Switch" {
+		Text label="Mappings" {
+			Switch item=E2E_TV label="TV A" mappings=[0="mABC"]
+			Switch item=E2E_TV label="TV A/B" mappings=[0="mABC", 1="mBBC"]
+			Switch item=E2E_TV label="TV A/B/C" mappings=[0="mABC", 1="mBBC", 2="mCNN"]
+			Switch item=E2E_TV label="TV Empty Label" mappings=[0="", 1="mBBC"]
+		}
+		Text label="Metadata" {
+			// ON/OFF options come from the item, not the sitemap.
+			Switch item=E2E_GarageDoor label="Garage Door"
+			// Five commands force the action menu with a scrollable list.
+			Switch item=E2E_TV label="TV Many" mappings=[0="One", 1="Two", 2="Three", 3="Four", 4="Five"]
+		}
+		Text label="Selection" {
+			Selection item=E2E_TV label="TV (Selection)" mappings=[0="ABC", 1="BBC", 2="CNN"]
+			Selection item=E2E_TV label="TV (Selection, 1)" mappings=[0="Only"]
+		}
+	}
+
+	Frame label="Entrance Gates" {
+		Switch item=E2E_EntranceGates_Power label="Open/Close" mappings=[OFF="", ON="OK"]
+		Text item=E2E_EntranceGates_Status label="Status"
+	}
+}

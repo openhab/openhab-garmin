@@ -1,0 +1,66 @@
+# Extended: a sitemap just below the simulator's JSON response limit.
+#
+# The Connect IQ simulator rejects a sitemap response above 16384 bytes with
+# -402 (measured on Connect IQ 9.3.0; see tests/docs/fixture-limits.md).
+# `garmin_limit_near` is generated to serialize just under that boundary. The
+# app must still receive and render it, proving the limit fixture itself is
+# valid and that normal sitemaps up to the boundary work.
+#
+# The exact REST payload size is reported by `e2e verify-fixtures --sizes` and
+# enforced in the CI fixture job; this scenario asserts the app behaviour.
+
+name: limits-near-limit
+description: A sitemap just below the simulator JSON limit renders normally.
+tier: ui
+suite: extended
+device: fenix7
+mode: ble
+fixture: fast-polling
+openhab:
+  profile: stable
+  sitemap: garmin_limit_near
+language: eng
+timeout_s: 180
+
+covers:
+  - limits.size-limit
+manual_checks:
+  - >-
+    The scenario proves the near-limit payload renders. The exact byte size is
+    checked by the fixture guard and documented in tests/docs/fixture-limits.md;
+    the screenshot is review-only.
+
+settings:
+  sitemap_0: garmin_limit_near
+
+steps:
+  - action: launch
+
+  - action: wait_for_request
+    method: GET
+    path_prefix: /rest/sitemaps/garmin_limit_near
+    min_count: 1
+    timeout_ms: 30000
+
+  - action: wait_for_event
+    description: The near-limit sitemap is parsed and the homepage is shown.
+    event: VIEW
+    fields:
+      category: sitemap
+      view: HomepageMenu
+    timeout_ms: 90000
+
+  - action: screenshot
+    name: near-limit-homepage
+
+  - action: assert
+    description: The response was served and the app did not raise -402.
+    shim_requests:
+      method: GET
+      path_prefix: /rest/sitemaps/garmin_limit_near
+      min_count: 1
+      status: 200
+
+  - action: assert
+    description: A payload below the limit never shows the full-screen error.
+    never_error_view: true
