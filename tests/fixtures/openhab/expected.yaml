@@ -44,13 +44,31 @@ items:
 
 sitemaps:
   stable:
+    - garmin_commands
+    - garmin_dynamic
     - garmin_e2e
+    - garmin_limit_near
+    - garmin_limit_over
     - garmin_localisation
     - garmin_localisation_long
     - garmin_unsupported
   dev:
+    - garmin_commands
     - garmin_confirm
+    - garmin_dynamic
     - garmin_e2e
+    - garmin_limit_near
+    - garmin_limit_over
     - garmin_localisation
     - garmin_localisation_long
     - garmin_unsupported
+
+# The simulator rejects a JSON response above 16384 bytes with -402 (measured
+# on Connect IQ 9.3.0; see tests/docs/fixture-limits.md). Keep the normal
+# fixtures at 75% of that so a routine element addition or a longer item state
+# does not push a working scenario over the hard limit. The two limit fixtures
+# deliberately straddle the boundary and are exempt.
+max_sitemap_bytes: 12288
+budget_exempt:
+  - garmin_limit_near
+  - garmin_limit_over

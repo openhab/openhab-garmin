@@ -15,7 +15,7 @@ mode: ble
 fixture: fast-polling
 openhab:
   profile: stable
-  sitemap: garmin_e2e
+  sitemap: garmin_commands
   items:
     E2E_Toggle: "OFF"
 language: eng
@@ -38,20 +38,21 @@ shim:
         status: 500
         body: command failed
 
+settings:
+  sitemap_0: garmin_commands
+
 steps:
   - action: launch
 
   - action: wait_for_request
     method: GET
-    path_prefix: /rest/sitemaps/garmin_e2e
+    path_prefix: /rest/sitemaps/garmin_commands
     min_count: 1
     timeout_ms: 30000
 
   - action: reset_shim
 
-  # Widgets frame -> Toggle Switch.
-  - action: press
-    button: DOWN
+  # Widgets is the first frame -> Toggle Switch.
   - action: press
     button: ENTER
 
@@ -85,7 +86,7 @@ steps:
   # next few seconds, while the command error is still the most recent failure.
   - action: wait_for_request
     method: GET
-    path_prefix: /rest/sitemaps/garmin_e2e
+    path_prefix: /rest/sitemaps/garmin_commands
     min_count: 3
     timeout_ms: 15000
 

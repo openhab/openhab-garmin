@@ -36,11 +36,7 @@ steps:
 
   - action: reset_shim
 
-  # `Text` is the fourth frame on the homepage.
-  - action: press
-    button: DOWN
-    count: 3
-
+  # `Text` is the first frame on the homepage.
   - action: press
     button: ENTER
 

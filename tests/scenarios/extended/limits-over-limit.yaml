@@ -1,0 +1,63 @@
+# Extended: a sitemap above the simulator's JSON response limit.
+#
+# The Connect IQ simulator rejects a sitemap response above 16384 bytes with
+# -402 before the app's JSON parser sees it (measured on Connect IQ 9.3.0; see
+# tests/docs/fixture-limits.md). `garmin_limit_over` is generated above that
+# boundary. The app must classify it as a critical sitemap error and show the
+# full-screen `S:-402` view, which is the real-world upper bound for a fixture.
+
+name: limits-over-limit
+description: A sitemap above the simulator JSON limit shows the S:-402 error view.
+tier: ui
+suite: extended
+device: fenix7
+mode: ble
+fixture: fast-polling
+openhab:
+  profile: stable
+  sitemap: garmin_limit_over
+language: eng
+timeout_s: 180
+
+covers:
+  - limits.size-limit
+  - errors.critical
+manual_checks:
+  - >-
+    The exact byte size is checked by the fixture guard and documented in
+    tests/docs/fixture-limits.md; the screenshot is review-only.
+
+settings:
+  sitemap_0: garmin_limit_over
+
+steps:
+  - action: launch
+
+  - action: wait_for_request
+    method: GET
+    path_prefix: /rest/sitemaps/garmin_limit_over
+    min_count: 1
+    timeout_ms: 30000
+
+  - action: wait_for_event
+    description: The oversized response is a critical sitemap error.
+    event: ERROR
+    fields:
+      kind: critical
+      code: "-402"
+      source: sitemap
+    timeout_ms: 60000
+
+  - action: wait_for_event
+    description: The app shows the full-screen S:-402 error view.
+    event: ERRORVIEW
+    fields:
+      id: "S:-402"
+    timeout_ms: 30000
+
+  - action: screenshot
+    name: over-limit-error
+
+  - action: assert
+    description: The full-screen error view is the current view.
+    no_error_view: false
