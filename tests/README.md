@@ -31,6 +31,7 @@ This directory is the foundation tracked by
 | openHAB 5.2.5 (stable) and 5.3.0 milestone (dev) image digests | pinned in `config/openhab.version` |
 | Device matrix covering all 17 build variants from `monkey.jungle` and `manifest.xml` | approved in [#366](https://github.com/openhab/openhab-garmin/issues/366); enforced by `runner/tests/test_variants.py` |
 | Protocol-tier scenarios (shim trace + `E2E:` trace events) | ready; need the debug trace build from [#364](https://github.com/openhab/openhab-garmin/issues/364) |
+| Connect IQ unit-test tier (`source/test`, run by `tests/unit/run`) | pilot: 18 tests over sitemap parsing, error classification and element parameters. Compiled by the existing device matrix (it already passes `--unit-test`); run manually on the guest. See [docs/unit-tests.md](docs/unit-tests.md). |
 | Wine simulator driver | implemented against the contract, with the compiled-properties model and the guest-measured start order; the proof is a driver run on the guest with `--prg` (see [docs/simulator-driver.md](docs/simulator-driver.md)) |
 | Wine feasibility spike | ready to run on an approved Linux host with Docker and the SDK (see [spike/README.md](spike/README.md), issue [#370](https://github.com/openhab/openhab-garmin/issues/370)) |
 | #140 scope coverage map | checked in as `config/scope.yaml` and `docs/coverage.md`; enforced by `python -m e2e coverage --check`. The glance entries are **blocked** by [#396](https://github.com/openhab/openhab-garmin/issues/396) and E2E builds exclude the glance by default (`--with-glance` re-enables it). |
@@ -147,6 +148,16 @@ checkout. It also runs `python -m e2e pin-images --write` before
 `validate-compose --check-pins`, because `--check-pins` compares the git-ignored
 `tests/compose/.env` with `tests/config/openhab.version`, and the committed
 digests make that write offline.
+
+The Connect IQ unit-test tier ([docs/unit-tests.md](docs/unit-tests.md)) has no
+job in this workflow:
+
+- its **compile gate is the device matrix** in `ci-build.yaml`, which already
+  passes `--unit-test` for every device, so the tests in `source/test` are
+  typechecked on every pull request;
+- **running** it needs the simulator under Wine and the operator's SDK, which a
+  GitHub-hosted runner does not have. Run `tests/unit/run` on the E2E guest,
+  next to the E2E suite.
 
 ### openHAB fixture job
 
@@ -817,5 +828,6 @@ manual counterpart to `tests/runner/tests/test_compose.py` and
 - [docs/localisation.md](docs/localisation.md) – language coverage, device choice and review-only assertions
 - [docs/sdk.md](docs/sdk.md) – SDK layout, version pinning, licence handling
 - [docs/simulator-driver.md](docs/simulator-driver.md) – driver contract and Wine plan
+- [docs/unit-tests.md](docs/unit-tests.md) – Connect IQ unit tests: feasibility, tier split, limits and operator commands
 - [spike/README.md](spike/README.md) – the #370 Wine feasibility spike and its verdict
 - [shim/README.md](shim/README.md) – shim control API and fault-script format

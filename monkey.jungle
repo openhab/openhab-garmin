@@ -211,8 +211,12 @@ srcThemesNightModeEdgeX50Button=$(srcThemesNightModeBase);$(srcThemeDefinitionsN
 # for different devices. The actual source path
 # is defined per device in the section below.
 
-# Main source directory
-srcBase=source/main
+# Main source directory. `source/test` holds the Run No Evil unit tests,
+# annotated (:test) and removed by the compiler from debug and release builds.
+# It is part of the base source path so that every build typechecks the tests;
+# run them with `monkeydo <prg> <device> -t` after building with --unit-test,
+# see tests/docs/unit-tests.md.
+srcBase=source/main;source/test
 
 # The default source path used for most devices with round screens.
 srcDefault=$(srcBase);$(srcConfigDefault);$(srcThemesDefault)
