@@ -34,6 +34,10 @@ NOT_IMPLEMENTED = "not-implemented"
 PRESS_EFFECT_TIMEOUT = 4.0
 #: Window pixels that must change for a press to count as having had an effect.
 PRESS_PIXEL_THRESHOLD = 2000
+#: Seconds between the two idle captures that measure how much the screen
+#: changes on its own. A press must beat that baseline, so a ticking clock or an
+#: idle redraw cannot turn a dead input path into a pass.
+PRESS_BASELINE_INTERVAL = 1.0
 
 
 class ContractError(RuntimeError):
@@ -291,6 +295,13 @@ def run_contract(
         region = None
         if screen_region is not None:
             region = screen_region()
+        if not any("E2E:" in line for line in driver.events()):
+            raise AssertionError(
+                "the app produced no E2E: console output at all, so no press can "
+                "have reached it and nothing on screen is attributable to input.\n"
+                "This is a launch problem, not a press problem: check "
+                "`wait_ready`/`start` and logs/console.log."
+            )
         parsed_before = parse_lines(list(driver.events()))
         known = {
             (event.get("category"), event.get("view"))
@@ -318,6 +329,25 @@ def run_contract(
             )
         shots = workdir / "input"
         shots.mkdir(parents=True, exist_ok=True)
+        baseline = 0
+        if driver.supports_screenshots and not on_glance and region is not None:
+            # Control measurement: how much does the screen change with no input?
+            # A ticking clock or an idle redraw otherwise passes a dead press.
+            calm_a = shots / "idle-1.png"
+            calm_b = shots / "idle-2.png"
+            try:
+                driver.screenshot(calm_a)
+                time.sleep(PRESS_BASELINE_INTERVAL)
+                driver.screenshot(calm_b)
+                measured = (
+                    region_pixel(calm_a, calm_b, region)
+                    if region_pixel is not None
+                    else (pixel(calm_a, calm_b) if pixel is not None else None)
+                )
+                baseline = int(measured or 0)
+            except Exception:  # noqa: BLE001 - a missing baseline is not a verdict
+                baseline = 0
+        threshold = max(PRESS_PIXEL_THRESHOLD, baseline)
         attempts: List[str] = []
         for label, action in actions:
             before = None
@@ -331,12 +361,15 @@ def run_contract(
             while time.monotonic() < deadline:
                 for event in parse_lines(list(driver.events())[mark:]):
                     if event.event == "ERRORVIEW":
-                        return
+                        return f"{label}: ERRORVIEW"
                     if event.event != "VIEW":
                         continue
                     signature = (event.get("category"), event.get("view"))
                     if signature not in known and event.get("category") != "glance":
-                        return
+                        return (
+                            f"{label}: new VIEW {signature[0]}/{signature[1]} "
+                            f"(idle baseline {baseline}px)"
+                        )
                 if before is not None and pixel is not None:
                     after = shots / f"{label}-after.png"
                     driver.screenshot(after)
@@ -344,8 +377,11 @@ def run_contract(
                         changed = region_pixel(before, after, region)
                     else:
                         changed = pixel(before, after)
-                    if changed is not None and changed >= PRESS_PIXEL_THRESHOLD:
-                        return
+                    if changed is not None and changed > threshold:
+                        return (
+                            f"{label}: screen change {changed}px in the screen "
+                            f"rectangle (idle baseline {baseline}px)"
+                        )
                 time.sleep(0.25)
             attempts.append(f"{label} ({changed!r} px)")
         reason = (
@@ -354,12 +390,22 @@ def run_contract(
             if on_glance
             else ""
         )
+        calibrate = (
+            ""
+            if baseline == 0
+            else (
+                f" The screen changes {baseline} px on its own within "
+                f"{PRESS_BASELINE_INTERVAL:g}s, so a press had to beat that; "
+                "freeze the animated region or assert a view instead."
+            )
+        )
         raise AssertionError(
             "pressing ENTER, MENU and DOWN"
             + (" and tapping the screen" if device.supports_touch else "")
             + " produced no different VIEW (a repeated view does not count), no "
-            f"ERRORVIEW and no screen change at or above {PRESS_PIXEL_THRESHOLD} "
-            f"px: {'; '.join(attempts)}.{reason}\n"
+            f"ERRORVIEW and no screen change above {threshold} px "
+            f"(empty-screen baseline {baseline} px): {'; '.join(attempts)}."
+            f"{reason}{calibrate}\n"
             "logs/driver.log names the mechanism and window point for each press. "
             "Compare that point with the device definition's keys[].location and "
             "the window's client origin."

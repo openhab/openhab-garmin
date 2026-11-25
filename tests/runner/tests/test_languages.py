@@ -16,16 +16,46 @@ from e2e.languages import (
     write_language_index,
 )
 
-
 def _write(path: Path, document: object) -> Path:
     path.write_text(json.dumps(document), encoding="utf-8")
     return path
 
 
-def test_the_checked_in_map_records_the_measured_german_index() -> None:
-    """`Language=7` is the one pair measured on the guest so far."""
+def test_the_checked_in_map_covers_every_language_the_app_ships() -> None:
+    """The table was measured on the guest for indices 0-24 (fenix7, CIQ 6.0.4)."""
     mapping = load_language_index()
-    assert mapping.get("deu") == 7
+    assert mapping["deu"] == 7
+    assert {code: mapping[code] for code in ("eng", "deu", "fre", "ita", "spa", "pol")} == {
+        "eng": 0,
+        "deu": 7,
+        "fre": 6,
+        "ita": 11,
+        "spa": 18,
+        "pol": 13,
+    }
+    # Index 4 also reports eng; the map keeps the first index per code.
+    assert 4 not in mapping.values()
+    assert sorted(mapping.values()) == [
+        0, 1, 2, 3, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
+        21, 22, 23, 24,
+    ]
+
+
+def test_a_read_only_target_reports_how_to_write_it_elsewhere(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The runner's /work is read-only; a 25-minute scan must not end in a traceback."""
+    def refuse(*args: object, **kwargs: object):
+        raise OSError(30, "Read-only file system")
+
+    target = tmp_path / "map.json"
+    monkeypatch.setattr(Path, "write_text", refuse)
+    with pytest.raises(LanguageIndexError) as error:
+        write_language_index({"deu": 7}, target)
+    message = str(error.value)
+    assert "Read-only file system" in message
+    assert "--output /tmp/languages.json" in message
+    assert "cp /tmp/languages.json" in message
 
 
 def test_a_missing_file_is_an_empty_map(tmp_path: Path) -> None:

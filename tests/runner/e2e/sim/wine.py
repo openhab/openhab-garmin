@@ -2729,6 +2729,31 @@ class WineSimulatorDriver(SimulatorDriver):
                 return parsed
             time.sleep(0.25)
 
+        lines = [line for line in self.events() if line.strip()]
+        if not lines:
+            raise DriverError(
+                "app-ready: monkeydo produced no console output at all within "
+                f"{min(timeout, DEFAULT_READY_TIMEOUT * 2):g}s, so the app never "
+                "started.\n"
+                "This is a launch or packaging problem for this device, not the "
+                "glance transition: a device that starts the app prints at least "
+                "`E2E:LANGUAGE` even when it then stays on the glance.\n"
+                "What to check, in order: logs/console.log for monkeydo's own "
+                "error; that the PRG was built for this device "
+                "(`openhab-garmin-<device>.prg`); the PRG size against the "
+                "device's memory limit; then launch it by hand with "
+                "`monkeydo <prg> <device>`.\n"
+                f"log: {self.console_log}"
+            )
+        if not any("E2E:" in line for line in lines):
+            raise DriverError(
+                "app-ready: the console has output but no `E2E:` line within "
+                f"{min(timeout, DEFAULT_READY_TIMEOUT * 2):g}s, so the launched "
+                "binary is probably not this E2E build (a release build does not "
+                "print the trace).\n"
+                f"log: {self.console_log}\n"
+                f"{tail(lines, 12)}"
+            )
         raise timeout_error(
             "app-ready",
             min(timeout, DEFAULT_READY_TIMEOUT * 2),

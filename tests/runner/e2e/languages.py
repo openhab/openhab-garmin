@@ -67,8 +67,18 @@ def write_language_index(mapping: Dict[str, int], path: Optional[Path] = None) -
     """Persist the map in a stable order (by index), for ``language-scan``."""
     target = Path(path) if path is not None else LANGUAGE_INDEX_FILE
     ordered = dict(sorted(mapping.items(), key=lambda item: (item[1], item[0])))
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(json.dumps(ordered, indent=2) + "\n", encoding="utf-8")
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(json.dumps(ordered, indent=2) + "\n", encoding="utf-8")
+    except OSError as error:
+        raise LanguageIndexError(
+            f"cannot write {target}: {error}\n"
+            "A mounted checkout is often read-only (for example `/work` in the "
+            "runner container). Write the map somewhere writable and copy it "
+            "back:\n"
+            "  python -m e2e language-scan --prg <prg> --write --output /tmp/languages.json\n"
+            f"  cp /tmp/languages.json {target}   # from a writable shell"
+        ) from error
     return target
 
 

@@ -75,7 +75,12 @@ from .coverage import (
 from .engine import run_scenario
 from .fixtures import FixtureError
 from .health import EXIT_INVALID_ENVIRONMENT, HealthError
-from .languages import LANGUAGE_INDEX_FILE, load_language_index, write_language_index
+from .languages import (
+    LANGUAGE_INDEX_FILE,
+    LanguageIndexError,
+    load_language_index,
+    write_language_index,
+)
 from .openhab import OpenHabClient, OpenHabError
 from .paths import repo_root, tests_root
 from .preflight import parse_skip, run_preflight
@@ -781,6 +786,24 @@ def _parse_index_range(spec: str) -> List[int]:
     return seen
 
 
+def _check_writable(path: Path) -> Optional[str]:
+    """Return an actionable message when ``path`` cannot be written, else None."""
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8"):
+            pass
+    except OSError as error:
+        return (
+            f"cannot write {path}: {error}\n"
+            "A mounted checkout is often read-only (for example `/work` in the "
+            "runner container). Re-run with a writable target and copy it back:\n"
+            "  python -m e2e language-scan --prg <prg> --write --output "
+            "/tmp/languages.json\n"
+            f"  cp /tmp/languages.json {path}"
+        )
+    return None
+
+
 def _cmd_language_scan(args: argparse.Namespace) -> int:
     """Enumerate the simulator's numeric ``Language`` index by launching the app."""
     if args.driver != "wine":
@@ -801,6 +824,11 @@ def _cmd_language_scan(args: argparse.Namespace) -> int:
         indices = _parse_index_range(args.indices)
     except ValueError as error:
         return _fail(str(error))
+    target = Path(args.output) if args.output else LANGUAGE_INDEX_FILE
+    if args.write:
+        problem = _check_writable(target)
+        if problem:
+            return _fail(problem)
     device = find_device(device_id)
     settings = load_settings(args.settings)
     workdir = _artifacts_dir(args) / "language-scan"
@@ -848,8 +876,16 @@ def _cmd_language_scan(args: argparse.Namespace) -> int:
     if args.write:
         merged = dict(load_language_index())
         merged.update(document)
-        target = write_language_index(merged)
-        print(f"\nwrote {target} ({len(merged)} codes)")
+        try:
+            written = write_language_index(merged, target)
+        except LanguageIndexError as error:
+            return _fail(str(error))
+        print(f"\nwrote {written} ({len(merged)} codes)")
+        if written != LANGUAGE_INDEX_FILE:
+            print(
+                f"note: the checkout's map is {LANGUAGE_INDEX_FILE}; copy this "
+                "file over it from a writable shell."
+            )
     elif document:
         print(
             "\nre-run with --write to persist this map in "
@@ -1296,7 +1332,14 @@ def build_parser() -> argparse.ArgumentParser:
     scan.add_argument(
         "--write",
         action="store_true",
-        help=f"merge the measurement into {LANGUAGE_INDEX_FILE}",
+        help=f"merge the measurement into {LANGUAGE_INDEX_FILE} (or --output)",
+    )
+    scan.add_argument(
+        "--output",
+        help=(
+            "write the map here instead of the checkout (the runner's /work is "
+            "read-only); copy it back afterwards"
+        ),
     )
     scan.add_argument("--json", action="store_true")
     scan.add_argument("--artifacts")

@@ -259,13 +259,40 @@ python -m e2e language-scan --prg <built.prg> --write     # on the guest
 
 `language-scan` starts the simulator once per index (default `0-24`), reads
 `E2E:LANGUAGE;code=...` from the app and merges `code -> index` into that file.
-The checked-in map currently holds the one measured pair, `deu: 7`; every other
-code stays **blocked** until it is measured, rather than guessed.
+The whole table was measured on the guest (fenix7, Connect IQ 6.0.4 simulator):
+
+| Index | Code | Index | Code | Index | Code |
+| --- | --- | --- | --- | --- | --- |
+| 0 | `eng` | 9 | `hun` | 18 | `spa` |
+| 1 | `ces` | 10 | `hrv` | 19 | `swe` |
+| 2 | `dan` | 11 | `ita` | 20 | `cht` |
+| 3 | `dut` | 12 | `nob` | 21 | `chs` |
+| 4 | `eng` again | 13 | `pol` | 22 | `jpn` |
+| 5 | `fin` | 14 | `por` | 23 | `tha` |
+| 6 | `fre` | 15 | `rus` | 24 | `ind` |
+| 7 | `deu` | 16 | `slo` |  |  |
+| 8 | `gre` | 17 | `slv` |  |  |
+
+Index 4 reports `eng` as well; the map keeps the first index per code. The
+app's six languages are therefore all provisionable: `eng` 0, `fre` 6, `deu` 7,
+`ita` 11, `pol` 13, `spa` 18, and the blocked-variant count in
+`tests/docs/coverage.md` is **0**. `deu: 7` also matches the maintainer's own
+`simulator.ini`, which is an independent cross-check of the table.
+
+`--write` checks writability **before** the scan starts, because a read-only
+checkout (the runner mounts `/work` read-only) would otherwise waste the whole
+25-index run:
+
+```text
+cannot write /work/tests/config/simulator-languages.json: [Errno 30] Read-only file system
+Re-run with a writable target and copy it back:
+  python -m e2e language-scan --prg <prg> --write --output /tmp/languages.json
+  cp /tmp/languages.json /work/tests/config/simulator-languages.json
+```
 
 - `eng` is the simulator's default. The driver **removes** the `Language` key for
-  it, rather than writing an index nobody measured — a stale `Language=7` from a
-  previous run (or the maintainer's own file) would otherwise run every English
-  scenario in German.
+  it rather than writing an index, so a stale `Language=7` from a previous run
+  (or the maintainer's own file) cannot run an English scenario in German.
 - A code **with** an index is written and then **verified**: `wait_ready` fails
   the run when the app reports a different language, because a run in the wrong
   language asserts the wrong strings. The message names `language-scan`.
@@ -273,8 +300,7 @@ code stays **blocked** until it is measured, rather than guessed.
   the engine (`can_provision_language()` answers per language, not per driver),
   so an unprovisionable language can never masquerade as evidence.
 - `tests/docs/coverage.md` counts a variant as blocked only while its code has no
-  measured index; `language-scan --write` is what unblocks it. With `deu: 7` in
-  the map the blocked count drops from 50 to 40 runs.
+  measured index; the measured table unblocked all 50 localisation runs.
 
 The earlier conclusion that "device language cannot be provisioned" was wrong:
 it came from writing `Language=deu`, which the simulator ignores because it wants
@@ -485,20 +511,39 @@ area whose behaviour the simulator does not forward under Wine:
 | click the declared `enter` hit area | yes, simulator window id | 0 | 0 |
 | same clicks without a pointer check | unknown (root window in one trace) | 0 | 0 |
 
-The next measurement is one command, on the touch device whose window is
-713x961:
+The fenix847mm experiment was run and produced a different failure instead of an
+answer: the app printed **nothing at all** on that device (not even
+`E2E:LANGUAGE`), so `monkeydo` never got it running and the touch question is
+still open. That build took 88 s and the PRG is 642 KB, so packaging for the
+device is the first suspect. `wait_ready` now separates the two cases explicitly:
 
-```bash
-python -m e2e contract-test --driver wine --prg <openhab-garmin-fenix847mm.prg> --shim-url <shim>
+```text
+app-ready: monkeydo produced no console output at all within 90s, so the app
+never started. This is a launch or packaging problem for this device, not the
+glance transition: a device that starts the app prints at least `E2E:LANGUAGE`
 ```
 
-`press-effect` already taps the screen centre on a touch device
-(`screen_width // 2`), which maps to (361,448) inside fenix847mm's declared
-`134,221 454x454` display, and reports a different view or a change inside that
-rectangle plus the shim request delta. If that passes while fenix7's bezel press
-does not, the practical conclusion is that clicks work for **touch input only**
-under this Wine/Xvfb, and UI scenarios should prefer touch devices — a
-device-matrix decision, not a driver one.
+against the glance case, where the trace arrives and stays on
+`category=glance`. Re-run the same command once the fenix847mm build launches;
+`press-effect` taps the screen centre (361,448 inside the declared
+`134,221 454x454`), so a pass there with fenix7's bezel press failing is the
+evidence for "clicks work for touch input only".
+
+**`press-effect` needs a control measurement, and now has one.** On the
+fenix847mm run it passed while the app was not running, because a pixel
+comparison cannot tell "the press changed the screen" from "the screen redraws on
+its own". Two idle captures are now taken `PRESS_BASELINE_INTERVAL` apart before
+any input, and a press must change the screen rectangle by **more** than that
+idle delta (and by at least `PRESS_PIXEL_THRESHOLD`). The detail string reports
+both numbers:
+
+```text
+press-effect  pass  tap: screen change 60000px in the screen rectangle (idle baseline 5000px)
+```
+
+and a case with no `E2E:` output at all fails immediately with "the app produced
+no E2E: console output at all … This is a launch problem, not a press problem",
+so an unstarted app can never satisfy it.
 
 `press` therefore picks its path and records it:
 
@@ -651,6 +696,10 @@ is enough to act on it.
 | `app-ready … no console line` | the app started but produced no `E2E:` line | check the PRG is a debug build and the device wiring (`link-devices` is accurate here) |
 | `warning: the app is still on the glance page` | the glance transition did not happen: clicks are silent in this environment and the app latches glance mode | see "Why the app stays on the glance page"; both threads are on #396 |
 | `app-entry … still showing the glance` | `getInitialView()` never ran; the app is on the glance | read the glance section; try `--key ENTER=<keysym>` candidates once the mouse question is settled |
+| `app-ready … no console output at all` | the app never started: `monkeydo` produced nothing, so this is launch/packaging for that device, not the glance | read `logs/console.log` and the build log; confirm the PRG is the device's build and fits its memory; launch `monkeydo <prg> <device>` by hand |
+| `app-ready … output but no 'E2E:' line` | something ran, but not this E2E build | pass the debug PRG built by `e2e build`; a release build prints no trace |
+| `press-effect … no E2E: console output at all` | the app was not running, so no pixel change is attributable to input | same as `app-ready`: fix the launch first |
+| `press-effect … beat that` | the screen changes on its own by at least the idle baseline, so the press is indistinguishable | freeze the animated region or assert a view instead of pixels |
 | `press-effect … no different VIEW` | the press produced a repeated view or none; while the app is on the glance, screen changes are not counted | see `app-entry`; otherwise compare the logged point with `keys[].location` |
 | `press[<button>] … effect=none` | the press ran but changed nothing measurable. Reported as evidence (`skipped`); the verdict is `press-sequence` | try `--key <BUTTON>=<keysym>`; check the mechanism and the verified pointer target in `logs/driver.log` |
 | `press-sequence … DOWN, DOWN, UP produced no effect` | no press in the sequence reached the app by any mechanism | read the three mechanisms in the message; if they are mouse presses, check the pointer line above |

@@ -17,7 +17,7 @@ from typing import Dict, List, Optional, Sequence
 
 import pytest
 
-from e2e.cli import _parse_index_range
+from e2e.cli import _check_writable, _parse_index_range
 from e2e.config import Device, find_device
 from e2e.contract import (
     FAIL,
@@ -1706,8 +1706,9 @@ def test_the_wine_driver_provisions_languages_with_a_measured_index(
     """`Language` is a numeric index, so provisioning is per code, not per driver."""
     driver = _driver(tmp_path)
     assert driver.can_provision_language("eng") is True  # the simulator default
-    assert driver.can_provision_language("deu") is True  # indexed in the checked-in map
-    assert driver.can_provision_language("pol") is False  # no measured index yet
+    assert driver.can_provision_language("deu") is True  # measured index 7
+    assert driver.can_provision_language("pol") is True  # measured index 13
+    assert driver.can_provision_language("xyz") is False  # not a simulator language
     assert SimulatorDriver.provisions_language is True
 
 
@@ -1881,11 +1882,13 @@ class _FakeDriver(SimulatorDriver):
         start_category: str = "sitemap",
         repeat_view: bool = False,
         effect_plan: Optional[List[bool]] = None,
+        deltas: Optional[List[int]] = None,
     ) -> None:
         self.fail_start = fail_start
         self.press_changes_view = press_changes_view
         self.repeat_view = repeat_view
         self.effect_plan = list(effect_plan) if effect_plan is not None else None
+        self.deltas = list(deltas) if deltas is not None else None
         self.stopped = False
         self._lines: List[str] = [
             f"E2E:VIEW;category={start_category};view=StartView;depth=1"
@@ -1946,6 +1949,8 @@ class _FakeDriver(SimulatorDriver):
     def region_pixel_difference(
         self, before: Path, after: Path, region: ScreenRect
     ) -> int:
+        if self.deltas:
+            return self.deltas.pop(0) if len(self.deltas) > 1 else self.deltas[0]
         return 0
 
     def screen_region(self, window: Optional[str] = None) -> ScreenRect:
@@ -2144,6 +2149,103 @@ def test_contract_skips_presses_on_a_buttonless_device(tmp_path: Path) -> None:
     assert by_name["press-sequence"].status == SKIPPED
     assert "tap covers its input" in by_name["press-sequence"].detail
     assert by_name["tap"].status == PASS
+
+
+def test_press_effect_fails_when_the_app_never_printed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The fenix847mm false pass: no E2E output means nothing is attributable."""
+    import e2e.contract as contract_module
+
+    monkeypatch.setattr(contract_module, "PRESS_EFFECT_TIMEOUT", 0.05)
+    prg = tmp_path / "openhab-garmin-fenix847mm.prg"
+    prg.write_bytes(b"prg")
+    driver = _FakeDriver()
+    driver._lines = []
+    cases = run_contract(driver, tmp_path, prg=prg, device_id=None)
+    by_name = {case.name: case for case in cases}
+    assert by_name["press-effect"].status == FAIL
+    assert "no E2E: console output at all" in by_name["press-effect"].detail
+    assert "launch problem" in by_name["press-effect"].detail
+
+
+def test_press_effect_must_beat_the_idle_screen_change(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A screen that redraws on its own must not turn a dead press into a pass."""
+    import e2e.contract as contract_module
+
+    monkeypatch.setattr(contract_module, "PRESS_EFFECT_TIMEOUT", 0.05)
+    monkeypatch.setattr(contract_module, "PRESS_BASELINE_INTERVAL", 0.0)
+    prg = tmp_path / "openhab-garmin-fenix7.prg"
+    prg.write_bytes(b"prg")
+
+    # The idle pairs change by 5000 px and so does every press: indistinguishable.
+    idle = run_contract(
+        _FakeDriver(press_changes_view=False, deltas=[5000]),
+        tmp_path,
+        prg=prg,
+        device_id=None,
+    )
+    idle_cases = {case.name: case for case in idle}
+    assert idle_cases["press-effect"].status == FAIL
+    assert "baseline 5000 px" in idle_cases["press-effect"].detail
+    assert "beaten" not in idle_cases["press-effect"].detail
+    assert "beat that" in idle_cases["press-effect"].detail
+
+    # A press that changes far more than the idle baseline is a real effect.
+    moving = run_contract(
+        _FakeDriver(press_changes_view=False, deltas=[5000, 60000]),
+        tmp_path,
+        prg=prg,
+        device_id=None,
+    )
+    moving_cases = {case.name: case for case in moving}
+    assert moving_cases["press-effect"].status == PASS
+    assert "screen change 60000px" in moving_cases["press-effect"].detail
+    assert "idle baseline 5000px" in moving_cases["press-effect"].detail
+
+
+def test_app_ready_with_no_console_output_names_a_launch_problem(
+    tmp_path: Path,
+) -> None:
+    """fenix847mm printed nothing: that is packaging, not the glance transition."""
+    driver = _ready_driver(tmp_path, language="eng")
+    driver._events = []
+    with pytest.raises(DriverError) as error:
+        driver.wait_ready(0.05)
+    message = str(error.value)
+    assert "no console output at all" in message
+    assert "launch or packaging problem" in message
+    assert "monkeydo <prg> <device>" in message
+
+
+def test_app_ready_with_output_but_no_trace_points_at_the_build(
+    tmp_path: Path,
+) -> None:
+    driver = _ready_driver(tmp_path, language="eng")
+    driver._events = [(0.0, "some other output")]
+    with pytest.raises(DriverError) as error:
+        driver.wait_ready(0.05)
+    message = str(error.value)
+    assert "no `E2E:` line" in message
+    assert "not this E2E build" in message
+
+
+def test_language_scan_refuses_a_read_only_checkout_before_scanning(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A 25-minute scan must not end in an OSError traceback."""
+    from e2e.cli import _check_writable
+
+    def refuse(*args: object, **kwargs: object):
+        raise OSError(30, "Read-only file system")
+
+    monkeypatch.setattr(Path, "open", refuse)
+    message = _check_writable(tmp_path / "tests" / "config" / "map.json")
+    assert message is not None
+    assert "Read-only file system" in message
+    assert "--output /tmp/languages.json" in message
 
 
 def test_key_override_option_sets_the_driver_environment(
