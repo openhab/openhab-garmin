@@ -52,25 +52,22 @@ named, instead of failing later on a missing page.
 
 Scenarios are compiled with the `watch-app` profile by default. The app is a
 widget, and a widget shown on the glance page starts in glance mode (32 KB
-budget) until it is selected; this simulator never selects it, so
-`getInitialView()` does not run. The profile writes a generated manifest
-declaring `type="watch-app"` and rebases the generated jungle onto a copy of
-`source/` whose `GlanceSitemapView.mc` is an empty stub. That is the right app
-type for a direct launch, but it does not yet produce one: `getGlanceView()`
-sets `AppLifecycle.setGlance()`, and in the simulator's single process that
-latch keeps every lifecycle guard bailing out, which is the app-side cause on
-[#396](https://github.com/openhab/openhab-garmin/issues/396). The glance also
-crashes the app before any request when compiled for real (`Invalid Font
-Specified` in `GlanceSitemapView.onUpdate`). The checkout is not modified and
-the `(:glance)` annotations stay as they are.
+budget) until it is selected; selecting alone does not open it — DOWN then
+SELECT does, and that is the sequence the driver uses. The profile writes a
+generated manifest declaring `type="watch-app"` and rebases the generated jungle
+onto a copy of `source/` whose `GlanceSitemapView.mc` is an empty stub, so the
+app launches `getInitialView()` directly. On the Wine guest the real glance also
+raises `Invalid Font Specified` on its first draw, so the stub is what keeps E2E
+runs alive as well as what makes the launch direct. The checkout is not modified
+and the `(:glance)` annotations stay as they are.
 
-`run` prints the profile at the top and for every build, followed by the full
-`monkeyc` command. A green run therefore asserts nothing about the widget or
-glance modes; those scope entries are **blocked** in
-[coverage.md](coverage.md#summary). `--without-glance` keeps the widget manifest
-(the app may still start in glance mode); `--with-glance` compiles the real
-glance view when validating on hardware or after issue #396 is resolved. The
-reasoning, including why `monkeyc -x glance` cannot be used, is in
+A green run still asserts nothing about the widget or glance modes; those scope
+entries are **blocked** in [coverage.md](coverage.md#summary). The glance's own
+rendering is likewise unverified in automation: Wine cannot paint text, and only
+a Windows run can. `--without-glance` keeps the widget manifest (the app may
+still start in glance mode); `--with-glance` compiles the real glance view when
+validating on hardware or after issue #396 is resolved. The reasoning, including
+why `monkeyc -x glance` cannot be used, is in
 [simulator-driver.md](simulator-driver.md#glance-the-build-profiles).
 
 ## Language matrix
@@ -203,8 +200,10 @@ a run.
     max_diff_ratio: 0.02
 ```
 
-Goldens live in `tests/goldens/<device>/<name>.png`. Capture them with
-`--update-goldens`, review the image, then commit it. A golden assertion is
+Goldens live in `tests/goldens/<device>/<name>.png`. A golden must be captured
+and reviewed on a Windows host in the Connect IQ simulator, then committed;
+`--update-goldens` is **refused on the `wine` driver**, because the guest cannot
+paint text and a capture there is a crashed render. A golden assertion is
 compared against the screenshot captured earlier in the same scenario.
 
 `no_error_view` is a statement about the view the app is showing _now_, not

@@ -38,7 +38,7 @@ from .reporting import ERRORED, FAILED, PASSED, SKIPPED, ScenarioResult, StepRes
 from .scenarios import Scenario, Step
 from .settings import AppSettings, load_settings
 from .shim import ShimClient, ShimError, ShimRequest
-from .sim import Button, DriverError, SimulatorDriver, create_driver
+from .sim import Button, DriverError, SimulatorDriver, create_driver, golden_write_refusal
 from .sdk import SdkLayout
 from .trace import EventMatch, TraceLog
 
@@ -139,6 +139,15 @@ class ScenarioRunner:
                 artifact_dir=workdir,
                 log=self.log,
             )
+            if self.update_goldens:
+                # Fail closed before the stack starts: a driver that cannot
+                # paint text would write a crashed render as the expectation.
+                refusal = golden_write_refusal(driver)
+                if refusal is not None:
+                    result.status = FAILED
+                    result.failures.append(refusal)
+                    self.log(f"REFUSED {scenario.scenario_id}: {refusal}")
+                    return result
             if not driver.can_provision_language(scenario.language):
                 result.status = SKIPPED
                 result.skip_reason = (
@@ -444,6 +453,11 @@ class ScenarioRunner:
             else:
                 golden_path = context.goldens_dir / context.device.id / f"{name}.png"
                 if context.update_goldens:
+                    # The write path guards itself as well as the run entry
+                    # point, so a future caller cannot bypass the refusal.
+                    refusal = golden_write_refusal(context.driver)
+                    if refusal is not None:
+                        raise AssertionFailure(refusal)
                     assertions.update_golden(actual, golden_path)
                     notes.append(f"golden {name}: updated {golden_path}")
                 else:

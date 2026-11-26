@@ -278,15 +278,14 @@ blocked:
   - id: lifecycle.glance-widget
     issue: 396
     reason: >-
-      The app crashes the simulator on its first glance draw (`Invalid Font
-      Specified` in `GlanceSitemapView.onUpdate`), before any HTTP request, and
-      the glance latch is the deeper cause: `getGlanceView()` sets
-      `AppLifecycle.setGlance()`, and in the simulator's single process that
-      flag makes every lifecycle guard bail out, so `getInitialView()` never
-      runs. E2E builds use the `watch-app` profile (generated manifest, stubbed
-      glance view), which is the right app type but cannot undo the latch.
-      Widget and glance content therefore cannot be inspected or asserted.
-      Re-enable the real glance with `--with-glance` once #396 is resolved.
+      On the Wine E2E host the glance raises `Invalid Font Specified` on its
+      first draw, so neither glance nor widget content can be inspected there;
+      E2E builds therefore use the `watch-app` profile (generated manifest,
+      stubbed glance view), which launches the app directly. The same PRG
+      renders with text on Windows, so this is not an app defect, but the glance
+      and widget content remain unverified in automation. Re-enable the real
+      glance with `--with-glance` on a host that paints text, or once #396 is
+      resolved.
   - id: devices.capabilities
     issue: 396
     reason: >-

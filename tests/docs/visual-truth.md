@@ -31,6 +31,37 @@ older SDK (see
 [simulator-driver.md](simulator-driver.md#-1001-on-a-healthy-200)). A `VIEW`
 line means a view was **constructed**, not painted.
 
+Revision note (2026-11-26, visual truth): the app now runs end to end under
+Wine on the E2E guest. From the glance, DOWN then SELECT (retried until the
+app responds) opens it, the sitemap request returns 200, the response parses,
+and the run reaches `E2E:VIEW;category=sitemap;view=HomepageMenu`; the guest
+driver contract is 12 pass / 0 fail / 6 skipped. It **cannot paint text** there:
+`Invalid Font Specified` is raised while drawing the glance, the homepage and
+the error view. The maintainer ran the same debug PRG in the Windows simulator
+(SDK 9.3.0, fenix7) and the sitemap rendered perfectly, with text, so the
+failure is specific to this host's Wine execution path — not the app, the SDK,
+the device or the emulated runtime. The earlier reading that placed the font
+problem on the app or the device definition is withdrawn.
+
+Two further experiments on the guest were negative and are recorded in
+[simulator-driver.md](simulator-driver.md#invalid-font-specified-under-wine):
+Windows-version emulation (`win7` and `win10`) changes nothing, and
+`WINEDEBUG=+font,+gdiplus` shows Wine resolves every face the simulator asks for
+(`System`, `Tahoma`) with no `gdiplus` error. One experiment is still open:
+an **older `simulator.exe`** (an older Windows SDK, pointed at by
+`CIQ_SDK_HOST_PATH`). Until it is measured, the honest statement is: *this
+simulator build, under this Wine, cannot render app text; the same PRG renders
+on Windows; an older simulator build under Wine is untested.*
+
+Consequences here: the `-1001` row and the "rendering is blocked by input"
+reading are superseded — input works, the homepage is reached, and `-1001` is not
+the measured end state. **A screenshot captured on the guest is a capture of a
+crashed render**, so a golden must come from a Windows run and `--update-goldens`
+is refused for the Wine driver (`e2e/sim/base.py`, `e2e/sim/wine.py`). Sections
+3, 6.3 and the phases below still describe the capture tiers; read the
+`--update-goldens` steps in them with this correction: no guest capture can be
+a golden.
+
 The short answer:
 
 - **Structure is still the only dependable gate.** The `E2E:` trace, the shim
@@ -74,7 +105,7 @@ The short answer:
 | Which host? | The existing Ubuntu VM. No second VM, no Windows licence, no new vCPUs. |
 | Can we prove a translated string fits? | Yes, deterministically, using `Dc.getTextDimensions()` with the real font list and the view's rectangle. This is phase 1. |
 | Can we prove the rendered pixels are correct? | No. SDK 9.3.0 has no pixel readback. Goldens or AI can only judge a screen the simulator actually produced. |
-| Can we prove the app navigates and the pages render? | Yes for navigation: DOWN then SELECT opens the app and the sitemap request runs (see [simulator-input.md](simulator-input.md)). Rendering is still blocked by the `-1001` handling and the `ErrorView` font failure. |
+| Can we prove the app navigates and the pages render? | Navigation: yes, DOWN then SELECT opens the app and the sitemap request runs (see [simulator-input.md](simulator-input.md)). Rendering: **no on this guest** — the homepage is reached but Wine cannot paint text; the same PRG renders on Windows. Superseded by the 2026-11-26 visual-truth revision note above. |
 | Can AI be the gate? | Not by default. Notes only until a calibrated question set exists; even then it can only add a failure, never turn a structural failure into a pass. |
 | What does a run cost in model calls? | One call per captured screenshot, not per question. With the current capture ceiling that is 6 to 12 calls per run; the hard cap and cache are in section 8. |
 | What is unverified? | Section 11, per phase. In one line: navigation, most pages, glyph rendering, real pixels, hardware, and anything not captured. |
@@ -104,7 +135,7 @@ workstation on 2026-11-25. The note marks the difference.
 
 | Fact | Evidence | What it means here |
 | --- | --- | --- |
-| Synthetic input does not reach the simulator under Wine | [simulator-driver.md](simulator-driver.md#input-no-synthetic-input-reaches-the-simulator-under-wine): pointer-verified clicks, every candidate keysym, with and without a window manager, inside a Wine virtual desktop, all 0 px against an idle baseline | No UI navigation on the current guest; the app stays on the glance. |
+| Synthetic input does not reach the simulator under Wine | [simulator-driver.md](simulator-driver.md#input-no-synthetic-input-reaches-the-simulator-under-wine): pointer-verified clicks, every candidate keysym, with and without a window manager, inside a Wine virtual desktop, all 0 px against an idle baseline | **Superseded on 2026-11-26: input works.** The negative was a wrong sequence; DOWN then SELECT opens the app. Kept as the record of what was ruled out. |
 | The maintainer's Windows simulator accepts real clicks and renders | Reported by the maintainer, simulator 6.0.3; #396 closed | Input works on Windows, so the limitation is the environment, not the app. This is a report, not a measurement in this repository. |
 | The glance crash under Wine 6.0.4 is a Wine artefact | #396, closed; [simulator-driver.md](simulator-driver.md#glance-the-build-profiles) | The app is not being "fixed" for a Wine bug. |
 | Device language is a numeric simulator index | [simulator-driver.md](simulator-driver.md#language-is-a-numeric-index), `tests/config/simulator-languages.json` | All six languages are provisionable: `eng` 0, `fre` 6, `deu` 7, `ita` 11, `pol` 13, `spa` 18. |
@@ -625,9 +656,10 @@ capture set, the policy is deliberately narrow:
   version**. The filename or the metadata records all four. A golden from
   `6.0.3` says nothing about `6.0.4`, and a golden from `fenix7` says nothing
   about `edge540`.
-- The first capture is taken with `--update-goldens`, reviewed by a human, and
-  committed. The review record names the reviewer, the simulator version and
-  the string bundle version.
+- The first capture is taken on a **Windows** host in the Connect IQ simulator,
+  reviewed by a human, and committed. `--update-goldens` on the Wine guest is
+  refused (revision note above). The review record names the reviewer, the
+  simulator version and the string bundle version.
 - A run captures twice `STABLE_MS` apart and compares; a screen that changes
   between two captures is not golden-stable. Reject uniform-colour images, as
   the Wine driver already does for the root window.
@@ -1251,14 +1283,14 @@ and/or the glance), per device and language.
   measured jitter), so the golden is stable.
 - A deliberate 1-pixel change fails the comparison. The phase must prove the
   assertion can fail.
-- `--update-goldens` requires a human review and is refused in CI without an
-  explicit opt-in.
+- `--update-goldens` is refused for the Wine driver (it cannot paint text) and
+  requires a human review wherever it is allowed.
 - A golden from one simulator version is never compared with another.
 
-**Command:** `python -m e2e run <capture-scenario> --driver wine
---update-goldens` on a writable checkout, then the normal run to compare.
-`tests/goldens` is not writable inside the read-only runner container; capture
-from a host checkout, as the README already says.
+**Command:** capture on a Windows host in the Connect IQ simulator, review the
+image, commit it to `tests/goldens/<device>/<name>.png`, then run
+`python -m e2e run <capture-scenario> --driver wine` to compare. Guest capture
+with `--update-goldens` is refused; a guest screenshot is a crashed render.
 
 ### Phase 4 - AI review as notes
 

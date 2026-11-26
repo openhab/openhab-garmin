@@ -91,6 +91,19 @@ ENV_SETTINGS_FILE = "E2E_WINE_SETTINGS_FILE"
 ENV_SCREEN_RECT = "E2E_WINE_SCREEN_RECT"
 #: Prefix for per-button X keysym overrides, e.g. ``E2E_WINE_KEY_MENU=ctrl+m``.
 ENV_KEY_PREFIX = "E2E_WINE_KEY_"
+
+#: Why the Wine driver must never write a golden, shared by the class attribute
+#: and the CLI's pre-flight refusal. It names the measurement, the consequence
+#: and the only place a golden may come from.
+WINE_GOLDEN_CAPTURE_BLOCKER = (
+    "this simulator build under Wine cannot paint app text: drawing the "
+    "glance, the homepage and the error view raises `Invalid Font Specified`, "
+    "so every screenshot on the Linux E2E host is a crashed render. The same "
+    "PRG renders with text in the Windows simulator (SDK 9.3.0, fenix7), so a "
+    "golden must come from a Windows run: capture it there, review it, then "
+    "commit it to tests/goldens/<device>/<name>.png. See "
+    "tests/docs/visual-truth.md."
+)
 #: Startup and readiness budgets in seconds.
 ENV_STARTUP_TIMEOUT = "E2E_WINE_STARTUP_TIMEOUT"
 DEFAULT_STARTUP_TIMEOUT = 120.0
@@ -1374,6 +1387,12 @@ class WineSimulatorDriver(SimulatorDriver):
     name: str = "wine"
     supports_events: bool = True
     supports_screenshots: bool = True
+    #: A capture here is a crashed render. Drawing the glance, the homepage and
+    #: the error view raises ``Invalid Font Specified`` under Wine, while the
+    #: same PRG paints text in the Windows simulator, so Wine cannot produce a
+    #: golden. See tests/docs/visual-truth.md.
+    supports_golden_capture: bool = False
+    golden_capture_blocker: str = WINE_GOLDEN_CAPTURE_BLOCKER
     #: The simulator's ``Language`` setting is a numeric index, not a code, and
     #: the index is measured per code (see ``e2e.languages``). Every code with a
     #: measured index can be provisioned; ``eng`` always can, by removing the key

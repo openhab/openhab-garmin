@@ -167,8 +167,11 @@ def assert_golden(
         raise AssertionFailure(f"screenshot {actual} does not exist")
     if not golden.is_file():
         raise AssertionFailure(
-            f"no golden image at {golden}. Capture one with `--update-goldens`, "
-            "review it, and commit it."
+            f"no golden image at {golden}. A golden must be captured and "
+            "reviewed on a Windows host in the Connect IQ simulator: this "
+            "simulator build under Wine cannot paint app text, so "
+            "`--update-goldens` is refused there and a capture is a crashed "
+            "render. See tests/docs/visual-truth.md."
         )
     width, height = image_size(actual)
     golden_width, golden_height = image_size(golden)

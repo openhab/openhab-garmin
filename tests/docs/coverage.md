@@ -19,24 +19,40 @@ Source: [#140](https://github.com/openhab/openhab-garmin/issues/140).
 
 > **Host-only execution.** Every scenario listed below needs a Linux host
 > with Docker, the Connect IQ SDK and the simulator. The `harness` CI job
-> validates the scenario schema, the dry run and this mapping; it never
-> executes a scenario. Nothing in this table has been run against the stack
-> yet, and a waiver is a deliberate gap rather than a passing test.
+> validates the scenario schema, the dry run, the golden policy and this
+> mapping; it never launches the simulator and **does not claim pixel
+> parity**. A waiver is a deliberate gap rather than a passing test. A
+> scenario is evidence only after it has run on the guest; the last
+> recorded guest contract run is 12 pass / 0 fail / 6 skipped, and this
+> document itself never executes anything.
 >
-> **The glance is excluded from E2E builds.** The app crashes the simulator
-> on its first glance draw (`Invalid Font Specified` in
-> `GlanceSitemapView.onUpdate`), so every scenario builds with the
-> `without-glance` profile: the glance view is replaced by an empty stub and
-> draws nothing. Glance-related entries are **blocked**, not waived, and no
-> green run is glance coverage. Re-enable it with
-> `python -m e2e run --with-glance` (or `e2e build --with-glance`) once
+> **Verified automatically on the Linux host:** build, launch, navigation,
+> openHAB requests, response parsing, view identity, error classes,
+> payload limits, languages, and the Connect IQ unit tests. These are
+> structure and protocol facts: what a green run on the guest means.
+>
+> **Verified only on Windows:** rendering — text, layout, truncation and
+> translations. The guest's Wine execution path raises
+> `Invalid Font Specified` while drawing the glance, the homepage and the
+> error view, while the same PRG renders with text in the Windows
+> simulator. A screenshot from the guest is therefore a crashed render,
+> so **a golden must come from a Windows run** and `--update-goldens` is
+> refused for the Wine driver. See [visual-truth.md](visual-truth.md).
+>
+> **The glance is excluded from E2E builds.** On the Wine guest the app
+> raises `Invalid Font Specified` on its first glance draw, so every
+> scenario builds with the `watch-app` profile, whose glance view is
+> replaced by an empty stub and draws nothing. Glance-related entries are
+> **blocked**, not waived, and no green run is glance coverage. Re-enable
+> it with `python -m e2e run --with-glance` (or `e2e build --with-glance`)
+> on a host that paints text, or once
 > [#396](https://github.com/openhab/openhab-garmin/issues/396) is resolved;
 > see [simulator-driver.md](simulator-driver.md#glance-the-profile-that-keeps-runs-alive).
 >
 > **Every language in the matrix is provisioned.** The simulator stores
-> view is not exercised; every language in the matrix is provisioned
-> through the simulator's numeric `Language` index (`deu` is 7) and
-> verified from the trace, so no language variant is blocked. See
+> the language as a numeric index; every language in the matrix is
+> provisioned through it (`deu` is 7) and verified from the trace, so no
+> language variant is blocked. See
 > [simulator-driver.md](simulator-driver.md#language-is-a-numeric-index).
 
 A scenario may exercise part of an entry and mark the rest in
@@ -95,7 +111,7 @@ machine-asserted.
 | `lifecycle.cold-start` | Cold start into the sitemap, loading, cached sitemap and startup error view | Covered | `extended/localisation-error-config-url-round` (ui, fenix7, 6 languages (eng, deu, fre, ita, spa, pol runnable))<br>`smoke/launch-and-poll` (ui, fenix7) | `extended/localisation-error-config-url-round`: The ERRORVIEW id and the error view being the current view are machine-asserted; the wrapped or truncated rendered text is review-only.<br>`smoke/launch-and-poll`: Selection, Setpoint and Slider elements are present in the fixture but are not driven by this scenario. |
 | `lifecycle.deferred-errors` | Error while hidden or before a view exists, presented when the app becomes visible | Waived | Waived: Hiding the app and resuming it needs a device sleep or app-switcher action the driver cannot issue; errors.deferred has the same gap. | — |
 | `lifecycle.stop-start` | App stop and start, termination after inactivity and device sleep events | Waived | Waived: A scenario has exactly one launch step, so stop/start and termination after inactivity cannot be expressed in one scenario. | — |
-| `lifecycle.glance-widget` | Glance and widget content and refresh, including states only available in BLE mode | Blocked | **Blocked:** The app crashes the simulator on its first glance draw (`Invalid Font Specified` in `GlanceSitemapView.onUpdate`), before any HTTP request, and the glance latch is the deeper cause: `getGlanceView()` sets `AppLifecycle.setGlance()`, and in the simulator's single process that flag makes every lifecycle guard bail out, so `getInitialView()` never runs. E2E builds use the `watch-app` profile (generated manifest, stubbed glance view), which is the right app type but cannot undo the latch. Widget and glance content therefore cannot be inspected or asserted. Re-enable the real glance with `--with-glance` once #396 is resolved. ([#396](https://github.com/openhab/openhab-garmin/issues/396)) | — |
+| `lifecycle.glance-widget` | Glance and widget content and refresh, including states only available in BLE mode | Blocked | **Blocked:** On the Wine E2E host the glance raises `Invalid Font Specified` on its first draw, so neither glance nor widget content can be inspected there; E2E builds therefore use the `watch-app` profile (generated manifest, stubbed glance view), which launches the app directly. The same PRG renders with text on Windows, so this is not an app defect, but the glance and widget content remain unverified in automation. Re-enable the real glance with `--with-glance` on a host that paints text, or once #396 is resolved. ([#396](https://github.com/openhab/openhab-garmin/issues/396)) | — |
 | `lifecycle.connection-return` | Behaviour after the phone or network returns | Waived | Waived: Returning to the phone or network is a mid-run mode transition, which the driver cannot drive (see communication.transitions). | — |
 | `lifecycle.device-matrix-and-strings` | Supported-device matrix coverage and localized user-facing strings | Covered | `extended/localisation-sitemap` (ui, edge540, 6 languages (eng, deu, fre, ita, spa, pol runnable)) | `extended/localisation-sitemap`: Rendered text is reviewed in screenshots; the harness has no OCR or text assertion. This covers the screens the scenario visits, not a string-by-string inventory, and glance/widget strings are not visited. |
 

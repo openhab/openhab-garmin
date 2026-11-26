@@ -341,7 +341,7 @@ through `runtime_errors()`; the engine puts them in `report.json`, the JUnit
 | Class | Marker | What it means |
 | --- | --- | --- |
 | `symbol-not-found` | `Symbol Not Found` | **Build/device mismatch**: the PRG was compiled for another device, or its annotations do not match this device. Rebuild and launch that device's build; this is not an app defect. |
-| `invalid-font` | `Invalid Font Specified` | **Device definition**: this device's definition does not provide the font. Not an app defect until a second device shows it too. |
+| `invalid-font` | `Invalid Font Specified` | **Host font stack**: under Wine this simulator build raises it while drawing app text, even though the same PRG renders on Windows and Wine reports resolving every face it requests. Not a device-definition or app defect on its own; see "Invalid Font Specified under Wine". |
 | `out-of-memory` | `Out Of Memory` | App or size limit: compare the device's memory limit with the sitemap size. |
 
 The log's header (`Language-Code`, `Part-Number`, `Firmware-Version`,
@@ -374,7 +374,7 @@ its first draw (`Invalid Font Specified`, #396). Three profiles exist:
 
 | Profile | What it does | What it proves |
 | --- | --- | --- |
-| `watch-app` (default) | Stubs the glance view **and** writes `<artifacts>/build/manifest-watch-app.xml` with `type="watch-app"`, pointing the generated jungle's `project.manifest` at it | The right app type for a direct launch. Today the app's own glance latch (#396) still keeps it on the glance page, so the initial view does not run; this is the profile to keep and it should start working unchanged once the latch is released. Widget and glance modes are **not** covered. |
+| `watch-app` (default) | Stubs the glance view **and** writes `<artifacts>/build/manifest-watch-app.xml` with `type="watch-app"`, pointing the generated jungle's `project.manifest` at it | The right app type for a direct launch: with the measured DOWN then SELECT sequence the app opens and `getInitialView()` runs. The real glance stays stubbed because this simulator under Wine cannot paint it. Widget and glance modes are **not** covered. |
 | `without-glance` | Stubs the glance view, keeps the widget manifest | Compiles, but the simulator still starts the widget in glance mode. |
 | `with-glance` | Compiles the app's own glance view | Nothing green: the simulator crashes on the first glance draw (#396). |
 
@@ -496,22 +496,42 @@ on devices emulating Connect IQ 3.4.5, 5.2.0 and 6.0.3 alike.
 from `Devices/<device>/compiler.json` `connectIQVersion` (fenix7 5.2.0,
 fenix847mm 6.0.3, fenix9pro47mm 6.0.3, fenix6pro 3.4.5, edge540 6.0.0); it is not
 the simulator's build. The maintainer runs SDK 9.3.0 exactly as we do, so
-installing an older SDK cannot test anything — that experiment is withdrawn. The
-driver now logs the emulated runtime from `compiler.json` at start, so the title
-number cannot be misread again.
+installing an older SDK cannot test the emulated runtime — that experiment is
+withdrawn. An **older `simulator.exe`** is a different experiment and is still
+open (below). The driver now logs the emulated runtime from `compiler.json` at
+start, so the title number cannot be misread again.
 
-The remaining difference between the working setup (Windows) and this one is how
-Wine handles fonts. Two experiments, in order:
+### Invalid Font Specified under Wine
 
-1. **Install a standard font set into the Wine prefix** (`drive_c/windows/Fonts`,
-   or `corefonts` via winetricks when it is available in the runner image) and
-   rerun the same PRG and launch sequence. If the simulator asks GDI+ for a face
-   the prefix lacks, this is a runner-image fix, not an app fix.
-1. **Run once with `WINEDEBUG=+font`** and capture which faces are requested and
-   what Wine returns around the `Invalid Font Specified` crash. That log is the
-   evidence to act on if installing fonts changes nothing.
+The same PRG renders with text in the maintainer's Windows simulator and raises
+`Invalid Font Specified` here in the glance, the homepage and the error view.
+The remaining difference is how Wine serves fonts to this simulator build. The
+experiments are recorded here so none of them is repeated:
 
-Record both outcomes here when they are measured.
+1. **Windows-version emulation — negative.** `winecfg -v` set to `win7` and to
+   `win10`, same PRG, same device, same sequence: both reach
+   `E2E:SITEMAP;result=success;code=200` and both crash with
+   `Invalid Font Specified`. It is not a DirectWrite-versus-GDI path selected by
+   the emulated Windows version.
+1. **Wine font resolution — negative.** With `WINEDEBUG=+font,+gdiplus`, the log
+   shows 783 `font_SelectFont L"System"` and 333 `L"Tahoma"` — the simulator's
+   own chrome faces — with no `fixme` and no `gdiplus` error around the crash.
+   `gdiplus.dll` is present as the Wine builtin. Wine resolves every face the
+   simulator asks for, so a missing font in the prefix is not the cause, and
+   installing fonts into the prefix is not a fix.
+1. **An older `simulator.exe` — OPEN, needs the maintainer.** Install an older
+   Windows Connect IQ SDK (the SDK Manager keeps versions side by side), point
+   `CIQ_SDK_HOST_PATH` at it, and rerun the same build and launch sequence. If
+   an older `simulator.exe` draws the app's text under Wine, pinning that
+   simulator restores automated screenshot capture on the existing hardware. If
+   it fails identically, the conclusion is final: rendering is
+   native-Windows-only for this SDK line, and the documentation should say so
+   without hedging.
+
+The wording matters: this is not "the simulator cannot render", and not an app
+defect. It is **this simulator build, under this Wine, cannot render app text;
+the same PRG renders on Windows; an older simulator build under Wine is
+untested.**
 
 One distinction that matters when reading a run: `E2E:VIEW;category=sitemap;view=HomepageMenu`
 means the view was **constructed**, not painted. The trace can assert structure

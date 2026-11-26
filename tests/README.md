@@ -32,8 +32,8 @@ This directory is the foundation tracked by
 | Device matrix covering all 17 build variants from `monkey.jungle` and `manifest.xml` | approved in [#366](https://github.com/openhab/openhab-garmin/issues/366); enforced by `runner/tests/test_variants.py` |
 | Protocol-tier scenarios (shim trace + `E2E:` trace events) | ready; need the debug trace build from [#364](https://github.com/openhab/openhab-garmin/issues/364) |
 | Connect IQ unit-test tier (`source/test`, run by `tests/unit/run`) | pilot: 18 tests over sitemap parsing, error classification and element parameters. Compiled by the existing device matrix (it already passes `--unit-test`); verified on the guest (18/18 PASS on fenix7, about two minutes). See [docs/unit-tests.md](docs/unit-tests.md). |
-| Wine simulator driver | implemented against the contract, with the compiled-properties model and the guest-measured start order; the proof is a driver run on the guest with `--prg` (see [docs/simulator-driver.md](docs/simulator-driver.md)). Input is delivered: from the glance, DOWN then SELECT opens the app and the sitemap request runs (see [docs/simulator-input.md](docs/simulator-input.md)); the open blockers are the app's `-1001` response handling and the `ErrorView` font failure |
-| Visual-truth design (drive-and-look) | design note: a Windows host is rejected on licence and capacity; the feasible no-input route is off-screen rendered assertions (draw smoke plus real font metrics), because SDK 9.3.0 has no pixel readback; Xorg/uinput is a bounded spike. See [docs/visual-truth.md](docs/visual-truth.md). |
+| Wine simulator driver | implemented against the contract, with the compiled-properties model and the guest-measured start order; the proof is a driver run on the guest with `--prg` (see [docs/simulator-driver.md](docs/simulator-driver.md)). The app runs end to end there: from the glance, DOWN then SELECT (with a retry loop) opens it, the sitemap request gets a 200, the response parses and `E2E:VIEW;category=sitemap;view=HomepageMenu` is reached (see [docs/simulator-input.md](docs/simulator-input.md)). It cannot paint text on this host: drawing the glance, the homepage and the error view raises `Invalid Font Specified`, while the same PRG renders with text on Windows — so rendering is Windows-only evidence (see [The verification split](#the-verification-split)) |
+| Visual-truth design (drive-and-look) | design note, revised: the guest drives the app and reaches the homepage, but the Wine execution path cannot paint text, so screenshots there are crashed renders and cannot become goldens. Off-screen rendered assertions (draw smoke plus real font metrics) remain the no-pixel route, because SDK 9.3.0 has no pixel readback; rendering evidence comes from a Windows run. See [docs/visual-truth.md](docs/visual-truth.md). |
 | Wine feasibility spike | ready to run on an approved Linux host with Docker and the SDK (see [spike/README.md](spike/README.md), issue [#370](https://github.com/openhab/openhab-garmin/issues/370)) |
 | #140 scope coverage map | checked in as `config/scope.yaml` and `docs/coverage.md`; enforced by `python -m e2e coverage --check`. The glance entries are **blocked** by [#396](https://github.com/openhab/openhab-garmin/issues/396) and E2E builds exclude the glance by default (`--with-glance` re-enables it). |
 | Stack health in every run | complete: restart counts, working set and OOM evidence are classified as `valid`/`invalid`/`unknown`; see [docs/diagnostics.md](docs/diagnostics.md) |
@@ -47,6 +47,50 @@ Nothing here provisions a VM, changes infrastructure, or ships the Connect IQ SD
 > variant table, the waiver rules and the re-evaluation rule are documented in
 > [docs/devices.md](docs/devices.md); `python -m e2e variants` prints the current
 > mapping and exits non-zero when a combination has no device.
+
+## The verification split
+
+Two hosts can run this suite, and they prove different things. The wording
+below is deliberate: "verified" means the check actually ran on that host;
+everything else is **not verified**, not "probably fine".
+
+| Verified automatically on the Linux host | Verified only on Windows |
+| --- | --- |
+| The app compiles for every device and starts under Wine | **Text** is painted, at all |
+| Navigation reaches the intended view (the glance is entered, DOWN then SELECT opens the app) | **Layout**: colour, spacing, icon and font choice |
+| openHAB requests, statuses and bodies (the shim trace) | **Truncation**, clipping and ellipsis |
+| Response parsing, view identity (`E2E:VIEW`) and error classes (`E2E:ERROR*`) | **Translations** as rendered glyphs, including accented and Polish characters |
+| Payload limits and every provisioned language | — |
+| Connect IQ unit tests for sitemap parsing, error classification and element parameters | — |
+
+The split exists because the guest's Wine execution path raises
+`Invalid Font Specified` while drawing the glance, the homepage and the error
+view, so no text appears. The same PRG renders perfectly in the Windows
+simulator (SDK 9.3.0, fenix7). The failure is therefore in this simulator build
+under this Wine, not in the app, the SDK, the device or the emulated runtime.
+Two experiments are negative — emulating Windows 7 versus Windows 10 changes
+nothing, and `WINEDEBUG=+font,+gdiplus` shows Wine resolves every face the
+simulator asks for — and one is still open: an older `simulator.exe` under Wine.
+Until it is measured, the honest statement is *this simulator build under this
+Wine cannot render app text; the same PRG renders on Windows; an older simulator
+build under Wine is untested.* See
+[docs/simulator-driver.md](docs/simulator-driver.md#invalid-font-specified-under-wine).
+
+Consequences, enforced by code:
+
+- **CI does not claim pixel parity.** The `harness` job runs `pytest`, the static
+  Compose/pin checks, the dry run and the coverage check. It launches no
+  simulator and compares no screenshots.
+- **A golden must come from a Windows run.** A screenshot captured on the guest
+  is a crashed render; committing it would freeze a blank screen as the expected
+  state. `--update-goldens` is refused for the `wine` driver
+  (`e2e/sim/base.py`, `e2e/sim/wine.py`), and a missing golden at assert time
+  names the same requirement instead of only the path.
+- A green guest run proves structure: launch, navigation, requests, parsing,
+  view identity, error classes, limits and languages. It does not prove that
+  anything appeared. See [docs/visual-truth.md](docs/visual-truth.md) for the
+  measurements, and [docs/coverage.md](docs/coverage.md) for what each scope
+  entry rests on.
 
 ## Prerequisites
 
@@ -251,19 +295,18 @@ those steps as **skipped**. It never reports them as passed.
 ### Build profiles: the app is a plain watch app for tests
 
 The app is a widget, and a widget shown on the glance page starts in **glance
-mode** (32 KB budget) until it is selected; this simulator does not select it,
-so `getInitialView()` never runs. On top of that, the real glance crashes the
-simulator on its first draw (`Invalid Font Specified`, tracked as
-[#396](https://github.com/openhab/openhab-garmin/issues/396)).
+mode** (32 KB budget) until it is selected; on this simulator selecting alone
+does not open it, DOWN then SELECT does. The real glance also cannot be painted
+on the Wine guest, where it raises `Invalid Font Specified` on its first draw
+(see [#396](https://github.com/openhab/openhab-garmin/issues/396)).
 
 Every `run` and `build` therefore uses the **`watch-app`** profile unless told
 otherwise: the generated jungle is rebased onto a copy of `source/` in which
 `GlanceSitemapView` is replaced by an empty stub, and `project.manifest` points
 at a generated copy of `manifest.xml` declaring `type="watch-app"`. That is the
-right app type for a direct launch. It does not yet produce one: the app's own
-glance latch (`AppLifecycle.setGlance()` set by `getGlanceView()`) keeps the
-process on the glance page under the simulator, which is the app-side cause
-tracked in #396. The checkout is never modified.
+right app type for a direct launch, and on the guest the driver's DOWN then
+SELECT sequence opens the app and the sitemap request runs. The checkout is
+never modified.
 
 ```text
 profile: watch-app: the app is declared as a plain watch app in a generated manifest and its glance view is stubbed, so the simulator launches getInitialView() directly; widget and glance modes are NOT covered (issue #396)
@@ -316,10 +359,11 @@ run, so the results are not attributable to the app).
 - `--driver wine|null`; `--dry-run` implies `null`.
 - `--key BUTTON=KEYSYM` (repeatable) sends that X keysym for a button instead of
   the driver's default path, e.g. `--key ENTER=Return`.
-- `--update-goldens` writes new golden images instead of comparing; review the
-  screenshots before committing them. It needs write access to `tests/goldens`,
-  which the read-only checkout mount does not have, so capture goldens from a
-  checkout on the host, not inside the runner container.
+- `--update-goldens` writes new golden images instead of comparing. It is
+  **refused on the `wine` driver**: the guest cannot paint text, so a capture
+  there is a crashed render and must not become an expectation. Capture goldens
+  on a Windows host in the Connect IQ simulator, review the image, then commit
+  it to `tests/goldens/<device>/`.
 - `--developer-key <file>` signs the build with a key you provide; without it a
   throwaway RSA key is generated per invocation under `<artifacts>/keys/` and
   deleted afterwards. It is never committed and never reused.
@@ -435,8 +479,9 @@ scenarios with their tier and device, or an explicit waiver with a reason;
 scenario names an unknown id.
 
 `protocol` scenarios assert on the shim trace and on `E2E:` trace events and need
-no screenshots. `ui` scenarios navigate the app and compare screenshots with
-reviewed goldens.
+no screenshots. `ui` scenarios navigate the app and, where a reviewed golden
+exists, compare the capture with it. Goldens are never captured on the guest:
+they come from a Windows run (see [The verification split](#the-verification-split)).
 
 Scenarios declare a device or `any` for the matrix default. The representative
 subset, its variant coverage and the per-device tiers are in

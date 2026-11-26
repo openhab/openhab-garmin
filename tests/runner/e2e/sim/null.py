@@ -45,6 +45,13 @@ class NullDriver(SimulatorDriver):
     name: ClassVar[str] = "null"
     supports_events: ClassVar[bool] = False
     supports_screenshots: ClassVar[bool] = False
+    #: A dry run captures no real screen, so there is nothing to write.
+    supports_golden_capture: ClassVar[bool] = False
+    golden_capture_blocker: ClassVar[str] = (
+        "a dry run uses the null driver, which captures no real screen, so "
+        "there is nothing to write as a golden. Capture it on a Windows host "
+        "in the Connect IQ simulator instead; see tests/docs/visual-truth.md."
+    )
 
     def __init__(self, log=None) -> None:  # type: ignore[no-untyped-def]
         self._actions: List[str] = []

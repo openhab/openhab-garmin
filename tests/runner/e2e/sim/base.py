@@ -17,7 +17,7 @@ import abc
 import time
 from enum import Enum
 from pathlib import Path
-from typing import ClassVar, List, Optional, Sequence
+from typing import ClassVar, List, Optional, Sequence, Type, Union
 
 from ..config import Device
 from ..settings import AppSettings
@@ -62,6 +62,20 @@ class SimulatorDriver(abc.ABC):
     supports_events: ClassVar[bool] = False
     #: True when ``screenshot()`` yields a real screen capture.
     supports_screenshots: ClassVar[bool] = False
+    #: True when a screenshot from this driver may be committed as a reviewed
+    #: golden baseline. This is fail-closed: a driver has to prove that it
+    #: paints text before its captures may become expectations. The Wine driver
+    #: stays False because its captures are crashed renders, not screens.
+    supports_golden_capture: ClassVar[bool] = False
+    #: Why this driver must not write goldens, used verbatim in the refusal the
+    #: engine and the CLI print. It must say what to do instead, because the
+    #: reader is someone who just asked for a golden.
+    golden_capture_blocker: ClassVar[str] = (
+        "this driver has not been shown to paint text, so its screenshots are "
+        "not valid golden baselines. Capture the golden on a Windows host in "
+        "the Connect IQ simulator, review it, then commit it; see "
+        "tests/docs/visual-truth.md."
+    )
     #: True when ``start()`` can put the app into the requested system language.
     #: A driver that cannot must say so: the engine reports the runs for other
     #: languages as blocked rather than failing them for an environment gap.
@@ -161,3 +175,21 @@ class SimulatorDriver(abc.ABC):
 def empty_events() -> List[str]:
     """Convenience for drivers without an event stream."""
     return []
+
+
+#: Prefix of every golden-write refusal. The engine and the CLI both use it, so
+#: the guard's wording cannot drift apart.
+GOLDEN_WRITE_REFUSED = "--update-goldens is refused"
+
+
+def golden_write_refusal(
+    driver: Union[SimulatorDriver, Type[SimulatorDriver]]
+) -> Optional[str]:
+    """Return why ``driver`` must not write goldens, or ``None`` when it may.
+
+    Accepts a driver instance or its class, so the CLI can refuse before it
+    has an SDK layout to construct a driver with.
+    """
+    if driver.supports_golden_capture:
+        return None
+    return f"{GOLDEN_WRITE_REFUSED}: {driver.golden_capture_blocker}"

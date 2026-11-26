@@ -245,7 +245,8 @@ def test_coverage_marks_the_glance_entries_blocked() -> None:
 
     assert blocked["lifecycle.glance-widget"].issue == 396
     assert "watch-app" in blocked["lifecycle.glance-widget"].reason
-    assert "setGlance" in blocked["lifecycle.glance-widget"].reason
+    assert "Invalid Font Specified" in blocked["lifecycle.glance-widget"].reason
+    assert "Windows" in blocked["lifecycle.glance-widget"].reason
     assert blocked["devices.capabilities"].issue == 396
 
     report = build_report()

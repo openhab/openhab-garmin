@@ -95,7 +95,7 @@ from .sdk import (
 )
 from .settings import SettingsError, load_settings
 from .shim import ShimClient, ShimError
-from .sim import DRIVER_NAMES, Button, create_driver
+from .sim import DRIVER_CLASSES, DRIVER_NAMES, Button, create_driver, golden_write_refusal
 from .sim.wine import ENV_KEY_PREFIX
 from .variants import (
     check_coverage,
@@ -394,6 +394,14 @@ def _cmd_run(args: argparse.Namespace) -> int:
     driver_name = args.driver or ("null" if dry_run else "wine")
     if driver_name not in DRIVER_NAMES:
         return _fail(f"unknown driver {driver_name!r}; known: {', '.join(DRIVER_NAMES)}")
+
+    # Refuse before loading the SDK or building anything: the driver that would
+    # run cannot paint text, so a golden written now would freeze a crashed
+    # render as the expected screen.
+    if args.update_goldens:
+        refusal = golden_write_refusal(DRIVER_CLASSES[driver_name])
+        if refusal is not None:
+            return _fail(refusal)
 
     if args.prg:
         print(
@@ -1210,7 +1218,15 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--device", help="override the device for every scenario")
     run.add_argument("--driver", choices=DRIVER_NAMES, help="simulator driver (default: wine, or null with --dry-run)")
     run.add_argument("--dry-run", action="store_true", help="no Docker, no SDK, no simulator: exercise scenario wiring only")
-    run.add_argument("--update-goldens", action="store_true", help="replace golden images with the current screenshots")
+    run.add_argument(
+        "--update-goldens",
+        action="store_true",
+        help=(
+            "replace golden images with the current screenshots; refused on the "
+            "wine driver, which cannot paint text, so a golden must come from a "
+            "Windows run"
+        ),
+    )
     run.add_argument("--skip-events", action="store_true", help="skip assertions that need the console event stream")
     run.add_argument("--prg", help="use an existing PRG instead of building one")
     run.add_argument(

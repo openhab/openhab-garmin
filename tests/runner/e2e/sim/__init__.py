@@ -5,11 +5,22 @@ from __future__ import annotations
 from typing import Optional
 
 from ..sdk import SdkLayout
-from .base import Button, DriverError, RUNNABLE_LANGUAGES, SimulatorDriver
+from .base import (
+    Button,
+    DriverError,
+    GOLDEN_WRITE_REFUSED,
+    RUNNABLE_LANGUAGES,
+    SimulatorDriver,
+    golden_write_refusal,
+)
 from .null import NullDriver
 from .wine import WineSimulatorDriver
 
 DRIVER_NAMES = ("null", "wine")
+
+#: Driver name to class, for the checks that must answer before an instance
+#: exists (the CLI refuses ``--update-goldens`` before it loads the SDK).
+DRIVER_CLASSES = {"null": NullDriver, "wine": WineSimulatorDriver}
 
 
 def create_driver(
@@ -43,11 +54,14 @@ def create_driver(
 
 __all__ = [
     "Button",
+    "DRIVER_CLASSES",
     "DRIVER_NAMES",
     "DriverError",
+    "GOLDEN_WRITE_REFUSED",
     "NullDriver",
     "RUNNABLE_LANGUAGES",
     "SimulatorDriver",
     "WineSimulatorDriver",
     "create_driver",
+    "golden_write_refusal",
 ]

@@ -10,6 +10,20 @@ an input failure.
 Input reaches the simulator. This note now records what works, what the earlier
 attempts actually ruled out, and the two real defects the working run exposed.
 
+**Revision note (2026-11-26, later measurements).** Two conclusions below are
+superseded. (1) The measured sequence no longer ends in `-1001`: it reaches
+`E2E:SITEMAP;result=success;code=200`, parses the sitemap and reaches
+`E2E:VIEW;category=sitemap;view=HomepageMenu`; the guest driver contract is 12
+pass / 0 fail / 6 skipped. (2) `Invalid Font Specified` is **not** an app or
+device-definition defect: the same PRG renders with text in the Windows
+simulator, Wine reports resolving every face the simulator requests, and
+switching the prefix between `win7` and `win10` changes nothing. It is this
+simulator build under this Wine; an older `simulator.exe` is the one open
+experiment. See
+[simulator-driver.md](simulator-driver.md#invalid-font-specified-under-wine).
+A screenshot captured on the guest is a crashed render, so it cannot become a
+golden.
+
 ## Verdict
 
 From the glance page, pressing **DOWN** and then **SELECT** opens the app.
@@ -54,6 +68,11 @@ What this changes for the design:
 | request | shim logged `GET /rest/sitemaps/garmin_e2e -> 200` |
 | app's own result | `E2E:SITEMAP;result=error;code=-1001` |
 | next view | `E2E:ERRORVIEW;id=S:-1001;code=-1001`, then `category=error;view=ErrorView` |
+
+> Superseded by the revision note above: a later run with the same sequence
+> measured `E2E:SITEMAP;result=success;code=200` and
+> `E2E:VIEW;category=sitemap;view=HomepageMenu`. The table stays as the record
+> of the earlier run.
 
 That `getInitialView()` runs and `SitemapRequest.start()` is called is the
 important part: the widget is no longer stuck in glance mode, and the input path
@@ -176,9 +195,11 @@ from what the shim logged, or the app maps a successful response to `-1001`.
 
 `ErrorView.drawTextArea()` raises `Invalid Font Specified` under Wine. The
 glance earlier showed the same failure (`GlanceSitemapView.mc:99`), and the
-working run shows it is not limited to the glance. That makes the font problem
-an app or device-definition defect to track in #396, not a consequence of the
-glance mode.
+working run shows it is not limited to the glance. **Superseded:** it is not an
+app or device-definition defect — the same PRG renders on Windows and Wine
+resolves every requested face. It is this simulator build under this Wine (see
+the revision note above and
+[simulator-driver.md](simulator-driver.md#invalid-font-specified-under-wine)).
 
 ## Residual limits
 
