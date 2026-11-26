@@ -94,7 +94,7 @@ ENV_KEY_PREFIX = "E2E_WINE_KEY_"
 #: Startup and readiness budgets in seconds.
 ENV_STARTUP_TIMEOUT = "E2E_WINE_STARTUP_TIMEOUT"
 DEFAULT_STARTUP_TIMEOUT = 120.0
-DEFAULT_READY_TIMEOUT = 150.0
+DEFAULT_READY_TIMEOUT = 300.0
 #: Delay between repeated xdotool events, so the app can process each one.
 DEFAULT_KEY_DELAY_MS = 150
 #: How long a declared ``isHold`` key stays pressed.
@@ -128,11 +128,19 @@ LAUNCH_SETTLE_MAX_S = 90.0
 ENV_LAUNCH_SETTLE = "E2E_WINE_LAUNCH_SETTLE"
 #: Seconds between the two captures that must match before the sequence is sent.
 LAUNCH_STABLE_INTERVAL_S = 1.0
-#: How long one launch attempt waits for a non-glance view.
-LAUNCH_ATTEMPT_TIMEOUT = 6.0
-#: Total budget for :meth:`WineSimulatorDriver.launch`, across its settle and
-#: retries. The settle alone may spend ``LAUNCH_SETTLE_MAX_S``.
-DEFAULT_LAUNCH_TIMEOUT = 90.0
+#: How long one launch retry waits for `E2E:CONNECTION` or a new view.
+LAUNCH_RESPONSE_WAIT_S = 4.0
+#: Seconds between launch retries. The guest's successful runs took anywhere
+#: between one and several minutes after launch, and the same command alternated
+#: between working and doing nothing, so retrying is the fix, not tuning.
+LAUNCH_RETRY_INTERVAL_S = 10.0
+#: Total time spent retrying the launch sequence, after the settle.
+LAUNCH_RETRY_BUDGET_S = 180.0
+ENV_LAUNCH_RETRY_INTERVAL = "E2E_WINE_LAUNCH_RETRY_INTERVAL"
+ENV_LAUNCH_RETRY_BUDGET = "E2E_WINE_LAUNCH_RETRY_BUDGET"
+#: Total budget for :meth:`WineSimulatorDriver.launch`: the settle (up to
+#: ``LAUNCH_SETTLE_MAX_S``) plus the retry budget.
+DEFAULT_LAUNCH_TIMEOUT = 260.0
 #: Accelerators for the simulator's own menus, kept for diagnostics only: the
 #: guest's simulator has no menu bar, so the driver does not rely on one.
 INPUT_PROBE_KEYS: Tuple[str, ...] = ("alt+s", "alt+c")
@@ -1752,23 +1760,27 @@ class WineSimulatorDriver(SimulatorDriver):
         )
 
     def launch(self, timeout_s: float = DEFAULT_LAUNCH_TIMEOUT) -> bool:
-        """Open the app from the glance, deterministically and with evidence.
+        """Open the app from the glance by retrying until the app responds.
 
-        Verified on the guest (fenix7, Wine/Xvfb, Connect IQ 6.0.4): from the
-        glance the app entry has to be **selected first**, so the sequence is
-        *page down, then select* — two page-downs in the measured runs. Select
-        alone does nothing, and `Down`+`Up`+select returns to where it started,
-        which is why earlier attempts saw no request.
+        The sequence is *page down, then select* (two page-downs), with every key
+        sent after re-taking focus and a 2 s gap. The guest then measured that
+        input delivery itself is **nondeterministic**: the same command, same PRG,
+        same container and same focus alternated between working and doing
+        nothing, roughly one run in two, and the successful ones took anywhere
+        between one and several minutes after launch. The variant did not matter.
 
-        Determinism was measured too: three runs of `Down`, `Down`, `Return`,
-        where focusing the window before **every** key reached the sitemap 2/2
-        times and skipping the per-key focus missed in the one run without it.
-        ``_send_keys`` therefore focuses before each key, and this method retries
-        a bounded number of times, alternating the declared hit areas
-        (`nextPage` then `onSelect`) and the keyboard (`Down` then `Return`).
-        Every attempt logs its mechanism, point or keysym and the view it
-        produced, so a failure is diagnosable from the log. Success requires a
-        view whose category is not ``glance``, or an ``ERRORVIEW``.
+        So this is a retry loop, not a one-shot sequence: after the settle it
+        sends one sequence, waits ``LAUNCH_RESPONSE_WAIT_S`` for
+        ``E2E:CONNECTION`` or a non-glance view, and repeats every
+        ``LAUNCH_RETRY_INTERVAL_S`` until ``LAUNCH_RETRY_BUDGET_S`` or the
+        deadline. Variants cycle — the declared hit areas, keyboard taps,
+        keydown/keyup, and a held mouse button — because they are cheap
+        alternatives and any of them may be the one that lands.
+
+        Every retry logs its index, elapsed time, variant, the ``E2E:CONNECTION``
+        state and the view, so the flakiness is data in the log rather than a
+        bug hunt. Success is ``E2E:CONNECTION`` or a view whose category is not
+        ``glance``, or an ``ERRORVIEW``.
         """
         deadline = time.monotonic() + max(1.0, timeout_s)
         parsed = parse_lines(self.events())
@@ -1778,18 +1790,16 @@ class WineSimulatorDriver(SimulatorDriver):
         device = self._device
         if device is None:
             return False
+        started = self._app_started_at or time.monotonic()
         self._record(
             "the app started on the glance page; opening it with the measured "
-            f"sequence: {self._launch_down_count()} x page down, then select; "
-            "the delivery variants are tried in order"
+            f"sequence: {self._launch_down_count()} x page down, then select, "
+            "retried until the app responds"
         )
         self._settle_before_launch(deadline)
+        self._probe_selection(deadline)
         plans: List[Tuple[str, str, Optional[str], Optional[str]]] = []
         if device.supports_buttons:
-            # Four delivery variants, because the conditions (settle, focus) are
-            # known-good and the remaining question is what the simulator accepts:
-            # a click, a key tap, a held key, and a held mouse button. Each
-            # attempt is one whole sequence with one variant.
             plans = [
                 ("declared hit areas", "mouse", None, None),
                 ("keyboard taps", "keyboard", "Down", "Return"),
@@ -1798,19 +1808,29 @@ class WineSimulatorDriver(SimulatorDriver):
             ]
         else:
             plans = [("a tap on the screen", "tap", None, None)]
-        for number, (label, mechanism, down_key, select_key) in enumerate(plans, 1):
-            if time.monotonic() >= deadline:
-                break
+
+        retry_budget = self._seconds_from_env(
+            ENV_LAUNCH_RETRY_BUDGET, LAUNCH_RETRY_BUDGET_S, 0.0, 600.0
+        )
+        interval = self._seconds_from_env(
+            ENV_LAUNCH_RETRY_INTERVAL, LAUNCH_RETRY_INTERVAL_S, 0.0, 60.0
+        )
+        stop = min(deadline, time.monotonic() + retry_budget)
+        retry = 0
+        while time.monotonic() < stop:
+            retry += 1
+            label, mechanism, down_key, select_key = plans[(retry - 1) % len(plans)]
             mark = len(self.events())
-            self._record(f"launch attempt {number}/{len(plans)}: {label}")
+            elapsed = time.monotonic() - started
+            self._record(
+                f"launch retry {retry}: variant={label}; elapsed={elapsed:.1f}s"
+            )
             try:
                 if mechanism == "tap":
                     self.tap(
                         device.screen_width // 2, device.screen_height // 2, 1
                     )
                 else:
-                    # Exactly the verified manual command: one key at a time,
-                    # `LAUNCH_KEY_GAP_S` apart, focus re-taken before each.
                     downs = self._launch_down_count()
                     for step in range(downs):
                         self._launch_step(
@@ -1819,29 +1839,67 @@ class WineSimulatorDriver(SimulatorDriver):
                             down_key,
                             f"page down {step + 1}/{downs}",
                         )
-                        time.sleep(
-                            LAUNCH_KEY_GAP_S
-                            * (2.0 if number == len(plans) else 1.0)
-                        )
+                        time.sleep(LAUNCH_KEY_GAP_S)
                     self._launch_step(
                         Button.ENTER, mechanism, select_key, "select"
                     )
             except DriverError as error:
-                self._record(f"warning: launch attempt {number} failed: {error}")
-                continue
-            if self._wait_for_app_view(mark, deadline, number, label):
-                return True
-            if self._app_died():
-                return False
+                self._record(f"warning: launch retry {retry} failed: {error}")
+            else:
+                if self._wait_for_app_view(mark, stop, retry, label):
+                    return True
+                if self._app_died():
+                    return False
+            self._record(
+                f"launch retry {retry} result: connection="
+                f"{self._connection_state().split('=', 1)[-1]}; "
+                f"view={self._current_view()}; elapsed={time.monotonic() - started:.1f}s"
+            )
+            next_tick = min(time.monotonic() + interval, stop)
+            while time.monotonic() < next_tick:
+                time.sleep(min(0.25, next_tick - time.monotonic()))
         self._record(
             f"the launch sequence left the app on the glance page after "
-            f"{len(plans)} attempt(s). Each attempt above records the "
-            "mechanism, the point or keysym, and the view it produced. If the "
-            "presses report effects but the view stays on `glance`, check that "
-            "`Down` moves the selection to the app entry on this device "
-            "(`--key DOWN=Down`, `--key ENTER=Return`)."
+            f"{retry} retr{'y' if retry == 1 else 'ies'} over "
+            f"{retry_budget:g}s. Every retry above records the variant, the "
+            "focus, the view and the connection state. The guest measured this "
+            "as nondeterministic rather than wrong: the same command works on "
+            "one run and not the next."
         )
         return False
+
+    def _probe_selection(self, deadline: float) -> None:
+        """One page down, then measure whether the glance selection moved.
+
+        If a single `Down` sometimes moves the highlight and sometimes does not,
+        the simulator is intermittently ignoring input and the retry loop is the
+        right answer. Cheap, and it makes that visible in the log.
+        """
+        if not self.supports_screenshots or time.monotonic() >= deadline:
+            return
+        region = self.screen_region()
+        if region is None:
+            return
+        before = self.artifact_dir / "launch-probe-before.png"
+        after = self.artifact_dir / "launch-probe-after.png"
+        try:
+            self.screenshot(before)
+            self.press(Button.DOWN, 1)
+            time.sleep(1.0)
+            self.screenshot(after)
+            difference = self.region_pixel_difference(before, after, region)
+        except (DriverError, OSError) as error:
+            self._record(f"note: selection probe skipped ({error})")
+            return
+        changed = int(difference or 0)
+        self._record(
+            f"selection probe: one page down changed the screen by {changed}px "
+            + (
+                "(the glance selection moved)"
+                if changed > 0
+                else "(no visible change — the simulator may be ignoring input)"
+            )
+        )
 
     def _launch_down_count(self) -> int:
         """How many page-downs the launch sequence sends (measured: 2)."""
@@ -2008,23 +2066,41 @@ class WineSimulatorDriver(SimulatorDriver):
     def _wait_for_app_view(
         self, mark: int, deadline: float, number: int, label: str
     ) -> bool:
-        until = min(time.monotonic() + LAUNCH_ATTEMPT_TIMEOUT, deadline)
+        """Wait for ``E2E:CONNECTION`` or a non-glance view after one retry.
+
+        ``E2E:CONNECTION`` is the app actually starting, which the guest uses as
+        the success signal; a different view (or an ``ERRORVIEW``) counts too.
+        After a connection line it waits a little longer for the view, so a
+        caller that runs immediately afterwards sees the new screen.
+        """
+        until = min(time.monotonic() + LAUNCH_RESPONSE_WAIT_S, deadline)
+        connected = False
         while time.monotonic() < until:
             if self._app_died():
                 return False
             for event in parse_lines(list(self.events())[mark:]):
+                if event.event == "CONNECTION":
+                    connected = True
                 if event.event == "ERRORVIEW" or (
                     event.event == "VIEW" and event.get("category") != "glance"
                 ):
                     self._record(
-                        f"launch attempt {number} ({label}) opened the app: "
+                        f"launch retry {number} ({label}) opened the app: "
                         f"{event.describe()}"
                     )
                     return True
+            if connected:
+                # The app started; give it a moment for the first view.
+                until = min(until + 1.0, deadline)
+                connected = False
+                self._record(
+                    f"launch retry {number} ({label}) produced E2E:CONNECTION; "
+                    "waiting for the first view"
+                )
             time.sleep(0.25)
         self._record(
-            f"launch attempt {number} ({label}) produced no view other than the "
-            f"glance (view is {self._current_view()})"
+            f"launch retry {number} ({label}) produced no connection and no view "
+            f"other than the glance (view is {self._current_view()})"
         )
         return False
 

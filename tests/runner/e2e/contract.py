@@ -125,7 +125,7 @@ def run_contract(
     device_id: Optional[str] = None,
     settings_fixture: str = "default",
     prg: Optional[Path] = None,
-    ready_timeout_s: float = 150.0,
+    ready_timeout_s: float = 300.0,
     requests: Optional[Callable[[], Optional[int]]] = None,
     mode: str = "ble",
     language: str = "deu",

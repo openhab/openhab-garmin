@@ -165,7 +165,7 @@ PIDs instead.
 | `prepare` | implemented | Validates the external tools and copies the PRG. Runs before anything touches Wine. |
 | `start` | implemented | Display check, `simulator.ini`, simulator-window wait, property seeding and `monkeydo` launch. The device name is expected to appear only after the launch. |
 | `wait_ready` | implemented | First view **and** the reported language, both from the trace stream. When the first view is the glance it runs the measured launch sequence and requires a non-glance view. A dead app fails with an actionable message (`no console output at all` = launch/packaging, `output but no E2E: line` = wrong build). |
-| `launch` | implemented, sequence verified on the guest | Page down ×2, then select, with `windowfocus` before every key, a 50 s dwell and a stable screen, four bounded delivery variants (click, key tap, keydown/keyup, mouse hold), the exact argv and the focus before/after every key logged, and one line per attempt with the resulting view. `E2E_WINE_LAUNCH_DOWNS` changes the page-down count. |
+| `launch` | implemented, retries until the app responds | Page down ×2, then select, with `windowfocus` before every key, a 50 s dwell and a stable screen, then a retry loop (`LAUNCH_RESPONSE_WAIT_S` 4 s, every `LAUNCH_RETRY_INTERVAL_S` 10 s, up to `LAUNCH_RETRY_BUDGET_S` 180 s) cycling click, key tap, keydown/keyup and mouse hold. Each retry logs its index, elapsed time, variant, the focus before/after every key, the exact argv and the resulting view/connection. |
 | `press` | implemented, input delivered | Path per button, recorded: `E2E_WINE_KEY_<BUTTON>`/`--key` first, then a proven keysym, then the declared hit area (mouse, **pointer verified** before the click). `mechanism` can force `"mouse"` or `"keyboard"` for the launch retries; the window is focused before every key. |
 | `tap` | implemented, pointer verified | The window is focused and the pointer is verified to be over the simulator window before the click (see above). The screen rectangle comes from the device definition's `display.location` (`simulator.json`), with `E2E_WINE_SCREEN_RECT` as the override; a centred fit is only the last resort for an SDK without `simulator.json`. |
 | `screenshot` | implemented | Captures the simulator window. Fails when the capture is not a usable PNG instead of returning a blank image. |
@@ -439,9 +439,10 @@ E2E:VIEW;category=sitemap;view=HomepageMenu;depth=1
 
 with `UseHttpsRequirements=0`, `Language=0`, `BleState=2` in `simulator.ini` and a
 50 s settle. So `-1001` was **not** a protocol refusal and neither
-`UseHttpsRequirements` nor `--mode wifi` is a fix: the earlier runs pressed keys
-before the app was interactive, so the request the shim logged belonged to a
-launch that then failed differently. The key is still written because a working
+`UseHttpsRequirements` nor `--mode wifi` is a fix: the earlier runs were launches
+whose keys never landed (input delivery on this guest is nondeterministic, see
+"Opening the app: DOWN, then SELECT"), so the request the shim logged belonged to
+a launch that then failed differently. The key is still written because a working
 installation has it, and `--mode`/`--language` stay because scenarios legitimately
 differ in what they exercise — but the driver does not depend on either for the
 request to succeed.
@@ -735,71 +736,81 @@ SELECT** (measured 2026-11-26). `WineSimulatorDriver.launch()` implements exactl
 that and `wait_ready` calls it, so the app now reaches `getInitialView()` and the
 sitemap request runs.
 
-Determinism was measured as well — three runs of `Down`, `Down`, `Return` on the
-same build:
+An earlier three-run comparison of `Down`, `Down`, `Return` suggested per-key
+focus made it deterministic (2/2 with focus, 0/1 without), but the later runs
+below show that was luck: the same focused command also fails. Focus is still
+taken before every key, because it costs nothing and focus did move between keys
+in one run, but it is not the deciding factor.
 
-| Run | Focus | Views seen | Sitemap reached |
-| --- | --- | --- | --- |
-| A | `windowfocus` before each key | 3 | yes (`category=sitemap`, `LoadingView`) |
-| B | no per-key focus | 1 | no (glance only) |
-| C | `windowfocus` before each key | 3 | yes |
+**Input delivery is nondeterministic on this guest, so `launch()` retries.** The
+guest ran the same command in the same container, same PRG, same 50 s dwell and
+same focused client window three times:
 
-So `launch()` sends the sequence with three properties that make it reproducible
-from a log:
+| Keys | Result |
+| --- | --- |
+| `xdotool key --clearmodifiers Down` ×2, `Return` | worked: `E2E:CONNECTION`, `SITEMAP;result=success;code=200`, `LoadingView` |
+| `xdotool key Down` ×2, `Return` | failed: no `E2E:CONNECTION` |
+| `--clearmodifiers` again, after resolving the client window explicitly | failed: no `E2E:CONNECTION` |
+
+So `--clearmodifiers`, the window choice and the variant are all fine; the same
+command alternates between working and doing nothing, roughly one run in two, and
+the successful runs took anywhere between one and several minutes after launch.
+The answer is a loop, not a better single sequence:
+
+1. **Settle until the app is interactive** (below), then send **one** sequence.
+1. **Wait `LAUNCH_RESPONSE_WAIT_S` = 4 s** for `E2E:CONNECTION` or a non-glance
+   view. `E2E:CONNECTION` is the app starting, which is the guest's success
+   signal; a different view or an `ERRORVIEW` also counts.
+1. **Repeat every `LAUNCH_RETRY_INTERVAL_S` = 10 s** for up to
+   `LAUNCH_RETRY_BUDGET_S` = 180 s (`E2E_WINE_LAUNCH_RETRY_BUDGET`,
+   `E2E_WINE_LAUNCH_RETRY_INTERVAL`), stopping the moment the app responds. The
+   whole `wait_ready` budget is 300 s.
+1. **Cycle the four delivery variants** — declared hit areas, keyboard taps,
+   keydown/keyup held 50 ms, and a held mouse button — as cheap alternatives
+   inside the loop, not as one-shot attempts. The variant does not appear to
+   matter; retrying the same one is what succeeded on the guest.
+
+Each retry logs its index, elapsed time, variant, the `E2E:CONNECTION` state and
+the view, so the flakiness is data in the log:
+
+```text
+launch retry 3: variant=keyboard keydown/keyup; elapsed=71.4s
+launch step page down 1/2: focus before=10485763; focus after=10485763; view=glance/…; connection=none
+command: xdotool keydown --clearmodifiers Down
+launch retry 3 (keyboard keydown/keyup) opened the app: VIEW;category=sitemap;view=LoadingView;depth=1
+```
+
+The settle itself has three properties:
 
 1. **The window is focused before every key** (`windowfocus`, which needs no
    window manager; `windowactivate` is attempted once and is not relied on).
-   Skipping the per-key focus was the one run that failed.
-1. **The glance is given time to become interactive, not just to draw.** The
-   app must have been running for `LAUNCH_DWELL_S` = **50 s** since app start
+1. **The glance is given time to become interactive, not just to draw.** The app
+   must have been running for `LAUNCH_DWELL_S` = **50 s** since app start
    (`E2E_WINE_LAUNCH_DWELL`), and the screen must be stable (two captures 1 s
    apart that match), bounded at `LAUNCH_SETTLE_MAX_S` = 90 s
    (`E2E_WINE_LAUNCH_SETTLE`). The guest's verified manual command waits 50 s
    after `monkeydo`; a launch at 41.7 s failed every attempt even though the
-   screen had been stable for a while, so the dwell is the load-bearing part and
-   the stability check only confirms it. The app-start budget (`wait_ready`) is
-   150 s to cover the settle plus four attempts.
+   screen had been stable for a while.
 1. **Every key is sent like the verified command**: focus, a 0.3 s pause, the
-   key, then a 2 s gap before the next (`LAUNCH_KEY_GAP_S`). The log records
-   `xdotool getwindowfocus` before **and** after every key, because focus moving
-   between keys (Wine's splash window) is invisible in a log that only says the
-   key was sent. After every mouse click it also captures a screenshot
-   (`launch-step-<step>.png`) so the click's effect can be seen.
-1. **The exact argv of every command is logged** (`command: xdotool …`), because
-   `--window`, `--clearmodifiers` and `--delay` change what the simulator
-   receives and are invisible in a log that only says "a key was sent".
-1. **Four delivery variants are tried in order**, because the guest then ruled
-   out the surroundings — 51.5 s dwell, stable screen, focus correct before and
-   after every key — while the sequence still did nothing:
+   key, then a 2 s gap before the next (`LAUNCH_KEY_GAP_S`), the exact argv
+   logged (`command: xdotool …`), and `xdotool getwindowfocus` recorded before
+   **and** after every key. After every mouse click it captures
+   `launch-step-<step>.png`.
 
-   | Attempt | Variant | What it changes |
-   | --- | --- | --- |
-   | 1 | declared hit areas | `xdotool mousemove … click 1` on `nextPage`/`onSelect` |
-   | 2 | keyboard taps | `xdotool key --clearmodifiers … Down` |
-   | 3 | keyboard keydown/keyup | `keydown`, 50 ms, `keyup` — for a toolkit that polls key _state_ |
-   | 4 | declared hit areas (hold) | `mousedown`, 150 ms, `mouseup` — the same shape as the `MENU` hold |
-
-   `E2E_WINE_LAUNCH_DOWNS` changes the page-down count for a device whose entry
-   is a different number of pages away.
-1. **Every attempt is logged with its mechanism, point or keysym, and the view it
-   produced**, plus the `E2E:CONNECTION` state after each key, with four bounded
-   attempts:
+Before the first sequence it also sends one `Down` and measures the screen with
+a before/after capture:
 
 ```text
-launch attempt 1/4: declared hit areas
-launch step page down 1/2: focus before=10485763; focus after=10485763; view=glance/…; connection=none
-command: xdotool mousemove 43 370
-command: xdotool click --repeat 1 --delay 150 1
-launch step select: … view=sitemap/LoadingView …
-launch attempt 1 (declared hit areas) opened the app: VIEW;category=sitemap;view=LoadingView;depth=1
+selection probe: one page down changed the screen by 4200px (the glance selection moved)
 ```
 
-Success requires a view whose category is not `glance` (or an `ERRORVIEW`), so a
-silent attempt cannot pass as a launch. The guest ruled out the surroundings —
-51.5 s dwell, stable screen, focus correct before and after every key — while the
-sequence still did nothing, which is why the four variants above exist: the
-remaining variable is what the simulator accepts as a key or click, not when or
-where it is sent.
+If that probe is sometimes zero, the simulator is intermittently ignoring input
+early in its life, and the retry loop is the correct answer rather than a
+workaround. `E2E_WINE_LAUNCH_DOWNS` changes the page-down count for a device
+whose app entry is a different number of pages away.
+
+Success requires `E2E:CONNECTION`, a view whose category is not `glance`, or an
+`ERRORVIEW`, so a silent retry cannot pass as a launch.
 
 The app also latches glance mode in its own process:
 
@@ -911,11 +922,11 @@ index 7) and the input limitation below.
    app's property defaults in, and the build fails if `monkeyc`'s settings JSON
    does not echo them.
 1. Run `python -m e2e contract-test --driver wine --prg <built.prg>` inside the
-   runner container. Every case should pass: `wait_ready` settles until the app is
-   interactive (dwell plus a stable screen) and then runs the measured launch
-   sequence. If `app-entry` fails, the `launch attempt …` lines in
-   `logs/driver.log` say whether the screen was stable and what each step
-   produced.
+   runner container. It may take several minutes: the driver settles ~50 s, then
+   retries the launch sequence for up to 3 minutes until `E2E:CONNECTION`
+   appears. Every case should pass; if `app-entry` fails, the `launch retry …`
+   lines say how many retries ran, with which variant, and what the view and
+   connection state were each time.
 1. Run `python -m e2e run smoke/launch-and-poll --driver wine` (or `--prg
    <built.prg>`; the run command builds per scenario, with that scenario's
    fixture) and confirm the request assertions are evaluated, not skipped.
