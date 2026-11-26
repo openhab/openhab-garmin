@@ -419,6 +419,27 @@ def read_device_display_name(devices_root: Optional[Path], product: str) -> str:
     return str(name).strip() if isinstance(name, str) else ""
 
 
+def read_device_runtime_version(devices_root: Optional[Path], product: str) -> str:
+    """``connectIQVersion`` from ``<devices_root>/<product>/compiler.json``.
+
+    This is the Connect IQ runtime the *device definition emulates* (fenix7
+    5.2.0, fenix847mm 6.0.3), not the simulator's build version. The window title
+    prints this number, which is why it is easy to mistake for the simulator
+    version.
+    """
+    if devices_root is None:
+        return ""
+    path = Path(devices_root) / product / "compiler.json"
+    try:
+        document = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return ""
+    if not isinstance(document, Mapping):
+        return ""
+    version = document.get("connectIQVersion")
+    return str(version).strip() if isinstance(version, str) else ""
+
+
 # ---------------------------------------------------------------------------
 # pure helpers: process command lines
 # ---------------------------------------------------------------------------
@@ -1579,6 +1600,13 @@ class WineSimulatorDriver(SimulatorDriver):
         devices_root = find_device_definitions(self.layout.root)
         self._definition = read_simulator_definition(devices_root, device.product)
         self._display_name = read_device_display_name(devices_root, device.product)
+        runtime = read_device_runtime_version(devices_root, device.product)
+        if runtime:
+            self._record(
+                f"device runtime: {device.product} emulates Connect IQ {runtime} "
+                "(compiler.json connectIQVersion; this is the number in the "
+                "window title and it is NOT the simulator build)"
+            )
         self._keys = key_bindings(self._definition.keys)
         self._record(
             "device definition: "
@@ -1655,6 +1683,11 @@ class WineSimulatorDriver(SimulatorDriver):
         self._record(
             f"ready: language={observed} mode(s)={modes or ['<none>']} "
             f"requested mode={self._mode}"
+        )
+        self._record(
+            "note: an E2E:VIEW line means the view was constructed, not that it "
+            "was painted; a paint failure appears as `Invalid Font Specified` in "
+            "CIQ_LOG.YML"
         )
         expected = MODE_CONNECTION_NAMES.get(self._mode, ())
         if expected and modes and not set(modes) & set(expected):

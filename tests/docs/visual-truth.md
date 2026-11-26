@@ -18,9 +18,18 @@ Revision note (2026-11-26): input works. From the glance, DOWN then SELECT opens
 the app; `getInitialView()` runs and the sitemap request reaches the shim (see
 [simulator-input.md](simulator-input.md)). The row below that treated navigation
 as "not without working input", and the phases that depend on the Xorg/uinput
-spike, are superseded by that measurement. The remaining visual blockers are the
-app's `-1001` response handling and the `Invalid Font Specified` failure in
-`ErrorView.drawTextArea()`, not input.
+spike, are superseded by that measurement. Input delivery there is
+nondeterministic, so the driver retries the sequence until the app responds.
+
+Revision note (2026-11-26, versions): the number in the simulator window title
+(`CIQ Simulator - <device> (6.0.3)`) is the **emulated device runtime** from
+`Devices/<device>/compiler.json` `connectIQVersion`, not the simulator build.
+This note's "6.0.3 versus 6.0.4" reasoning is therefore about the emulated
+runtime, not two SDKs; the font failure reproduces on devices emulating 3.4.5,
+5.2.0 and 6.0.3, and the open experiment is Wine font handling rather than an
+older SDK (see
+[simulator-driver.md](simulator-driver.md#-1001-on-a-healthy-200)). A `VIEW`
+line means a view was **constructed**, not painted.
 
 The short answer:
 

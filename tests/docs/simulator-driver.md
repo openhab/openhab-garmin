@@ -267,7 +267,7 @@ python -m e2e language-scan --prg <built.prg> --write     # on the guest
 
 `language-scan` starts the simulator once per index (default `0-24`), reads
 `E2E:LANGUAGE;code=...` from the app and merges `code -> index` into that file.
-The whole table was measured on the guest (fenix7, Connect IQ 6.0.4 simulator):
+The whole table was measured on the guest (fenix7, SDK 9.3.0):
 
 | Index | Code | Index | Code | Index | Code |
 | --- | --- | --- | --- | --- | --- |
@@ -486,24 +486,37 @@ shim log alone.
 
 A related app-side note from the same run: with the error view on screen the app
 died with `Invalid Font Specified` at `ErrorView.mc:144` (`drawTextArea()`), the
-same class of fault as the glance crash in #396 but on the error path. `HomepageMenu`
-now fails the same way after the sitemap loads successfully, so three different
-screens — glance, homepage and error view — hit it.
+same class of fault as the glance crash in #396 but on the error path. It now
+also happens after the sitemap loads: `HomepageMenu` fails the same way, so three
+different screens — glance, homepage and error view — hit it, and it reproduces
+on devices emulating Connect IQ 3.4.5, 5.2.0 and 6.0.3 alike.
 
-**Likely a simulator-version regression.** Our simulator reports **6.0.4** (SDK
-9.3.0); the maintainer's working simulator is **6.0.3**, where the glance, the
-error view and the homepage render. One platform-level font regression explains
-all three screens; three independent app bugs do not. The experiment:
+**It is not a simulator-version regression.** The number in the window title
+(`CIQ Simulator - <device> (6.0.3)`) is the **emulated device runtime**, taken
+from `Devices/<device>/compiler.json` `connectIQVersion` (fenix7 5.2.0,
+fenix847mm 6.0.3, fenix9pro47mm 6.0.3, fenix6pro 3.4.5, edge540 6.0.0); it is not
+the simulator's build. The maintainer runs SDK 9.3.0 exactly as we do, so
+installing an older SDK cannot test anything — that experiment is withdrawn. The
+driver now logs the emulated runtime from `compiler.json` at start, so the title
+number cannot be misread again.
 
-1. install an SDK that bundles simulator **6.0.3** (an older Connect IQ SDK) in
-   place of the pinned one;
-1. run the same PRG and the same sequence against it;
-1. if the screens render, record the SDK/simulator versions as the cause and keep
-   the pinned SDK out of the E2E stack until it is fixed upstream — the harness
-   does not patch app code either way.
+The remaining difference between the working setup (Windows) and this one is how
+Wine handles fonts. Two experiments, in order:
 
-The driver already logs the version from the simulator window title
-(`CIQ Simulator - <device> (<version>)`), so the comparison needs no new code.
+1. **Install a standard font set into the Wine prefix** (`drive_c/windows/Fonts`,
+   or `corefonts` via winetricks when it is available in the runner image) and
+   rerun the same PRG and launch sequence. If the simulator asks GDI+ for a face
+   the prefix lacks, this is a runner-image fix, not an app fix.
+1. **Run once with `WINEDEBUG=+font`** and capture which faces are requested and
+   what Wine returns around the `Invalid Font Specified` crash. That log is the
+   evidence to act on if installing fonts changes nothing.
+
+Record both outcomes here when they are measured.
+
+One distinction that matters when reading a run: `E2E:VIEW;category=sitemap;view=HomepageMenu`
+means the view was **constructed**, not painted. The trace can assert structure
+today; it cannot yet assert that anything appeared, because the paint path is
+where the font failure lives.
 
 ## Window size is per device
 

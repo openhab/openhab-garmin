@@ -63,6 +63,7 @@ from e2e.sim.wine import (
     png_problem,
     read_device_display_name,
     read_device_keys,
+    read_device_runtime_version,
     read_simulator_definition,
     render_properties,
     screen_rect,
@@ -2665,6 +2666,20 @@ def test_the_selection_probe_reports_a_moved_or_still_glance(
     assert "changed the screen by 4200px" in log
     assert "the glance selection moved" in log
     assert "early signal only" in log
+
+
+def test_the_device_runtime_version_is_read_from_compiler_json(
+    tmp_path: Path,
+) -> None:
+    """The title number is the emulated device runtime, not the simulator build."""
+    product = tmp_path / "Devices" / "fenix7"
+    product.mkdir(parents=True)
+    (product / "compiler.json").write_text(
+        json.dumps({"displayName": "Fenix 7", "connectIQVersion": "5.2.0"}),
+        encoding="utf-8",
+    )
+    assert read_device_runtime_version(tmp_path / "Devices", "fenix7") == "5.2.0"
+    assert read_device_runtime_version(tmp_path / "missing", "fenix7") == ""
 
 
 def test_key_override_option_sets_the_driver_environment(
