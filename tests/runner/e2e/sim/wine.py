@@ -99,6 +99,17 @@ DEFAULT_READY_TIMEOUT = 90.0
 DEFAULT_KEY_DELAY_MS = 150
 #: How long a declared ``isHold`` key stays pressed.
 HOLD_MS = 900
+#: Gap between the page-downs and the select of the launch sequence. The
+#: guest's verified runs used ~1.5 s; shorter gaps did not register.
+LAUNCH_STEP_DELAY_S = 1.5
+#: Page-downs before select, as measured on the guest (2/2 runs with them).
+LAUNCH_DOWNS = 2
+#: Override for a device whose app entry is a different number of pages away.
+ENV_LAUNCH_DOWNS = "E2E_WINE_LAUNCH_DOWNS"
+#: How long one launch attempt waits for a non-glance view.
+LAUNCH_ATTEMPT_TIMEOUT = 6.0
+#: Total budget for :meth:`WineSimulatorDriver.launch`, across its retries.
+DEFAULT_LAUNCH_TIMEOUT = 30.0
 #: Accelerators for the simulator's own menus, kept for diagnostics only: the
 #: guest's simulator has no menu bar, so the driver does not rely on one.
 INPUT_PROBE_KEYS: Tuple[str, ...] = ("alt+s", "alt+c")
@@ -107,11 +118,9 @@ INPUT_PROBE_KEYS: Tuple[str, ...] = ("alt+s", "alt+c")
 #: changes thousands.
 PIXEL_CHANGE_THRESHOLD = 2000
 
-#: Keyboard keysyms the guest has **proven** this simulator honours. Mouse
-#: clicks are silent under this Wine/Xvfb (measured at every point, with and
-#: without a window manager), so a proven keyboard binding is preferred over a
-#: click. The select key is still unknown: `Return`, `KP_Enter`, `Escape`,
-#: `Menu`, `space`, `F5`, `F6` and clicks all produced no screen change.
+#: Keyboard keysyms the guest has proven this simulator honours. The select
+#: path (declared hit areas) works as well; the keyboard is preferred for
+#: navigation because it needs no coordinates.
 PROVEN_KEYSYMS: Mapping[Button, str] = {
     Button.UP: "Up",
     Button.DOWN: "Down",
@@ -183,6 +192,14 @@ MODE_INI_VALUES: Mapping[str, Mapping[str, str]] = {
     "wifi": {"BleState": "1", "WifiState": "2"},
     "offline": {"BleState": "1", "WifiState": "0"},
 }
+
+#: The simulator enforces "secure connection required" for web requests unless
+#: this is off, and the E2E stack is plain HTTP. The app's own documentation
+#: calls a ``-1001`` response "secure connection required", and a working
+#: installation carries this key, so writing it is what turns a served 200 into
+#: a 200 the app can read instead of a ``-1001``.
+HTTPS_REQUIREMENTS_KEY = "UseHttpsRequirements"
+HTTPS_REQUIREMENTS_OFF = "0"
 
 #: The app starts in BLE and only leaves it after a request fails
 #: (``ConnectionManager``), so a requested mode is consistent with these runtime
@@ -961,7 +978,10 @@ def ini_updates(product: str, mode: str, language_value: Optional[str]) -> Dict[
     """
     if mode not in MODE_INI_VALUES:
         raise DriverError(f"unknown mode {mode!r}; expected one of {sorted(MODE_INI_VALUES)}")
-    updates: Dict[str, str] = {"LastUsedDevice": product}
+    updates: Dict[str, str] = {
+        "LastUsedDevice": product,
+        HTTPS_REQUIREMENTS_KEY: HTTPS_REQUIREMENTS_OFF,
+    }
     if language_value is not None:
         updates["Language"] = str(language_value)
     updates.update(MODE_INI_VALUES[mode])
@@ -1643,109 +1663,164 @@ class WineSimulatorDriver(SimulatorDriver):
             f"{display.height} fits the {width}x{height} window 1:1"
         )
 
+    def launch(self, timeout_s: float = DEFAULT_LAUNCH_TIMEOUT) -> bool:
+        """Open the app from the glance, deterministically and with evidence.
+
+        Verified on the guest (fenix7, Wine/Xvfb, Connect IQ 6.0.4): from the
+        glance the app entry has to be **selected first**, so the sequence is
+        *page down, then select* — two page-downs in the measured runs. Select
+        alone does nothing, and `Down`+`Up`+select returns to where it started,
+        which is why earlier attempts saw no request.
+
+        Determinism was measured too: three runs of `Down`, `Down`, `Return`,
+        where focusing the window before **every** key reached the sitemap 2/2
+        times and skipping the per-key focus missed in the one run without it.
+        ``_send_keys`` therefore focuses before each key, and this method retries
+        a bounded number of times, alternating the declared hit areas
+        (`nextPage` then `onSelect`) and the keyboard (`Down` then `Return`).
+        Every attempt logs its mechanism, point or keysym and the view it
+        produced, so a failure is diagnosable from the log. Success requires a
+        view whose category is not ``glance``, or an ``ERRORVIEW``.
+        """
+        deadline = time.monotonic() + max(1.0, timeout_s)
+        parsed = parse_lines(self.events())
+        current = next((event for event in reversed(parsed) if event.event == "VIEW"), None)
+        if current is not None and current.get("category") != "glance":
+            return True
+        device = self._device
+        if device is None:
+            return False
+        self._record(
+            "the app started on the glance page; opening it with the measured "
+            f"sequence: {self._launch_down_count()} x page down, then select"
+        )
+        plans: List[Tuple[str, str, Optional[str], Optional[str]]] = []
+        if device.supports_buttons:
+            plans = [
+                ("declared hit areas", "mouse", None, None),
+                ("keyboard", "keyboard", "Down", "Return"),
+                ("declared hit areas (slower)", "mouse", None, None),
+            ]
+        else:
+            plans = [("a tap on the screen", "tap", None, None)]
+        for number, (label, mechanism, down_key, select_key) in enumerate(plans, 1):
+            if time.monotonic() >= deadline:
+                break
+            mark = len(self.events())
+            self._record(f"launch attempt {number}/{len(plans)}: {label}")
+            try:
+                if mechanism == "tap":
+                    self.tap(
+                        device.screen_width // 2, device.screen_height // 2, 1
+                    )
+                else:
+                    # Measured: 2 page-downs, then select, with focus before
+                    # every key. `E2E_WINE_LAUNCH_DOWNS` changes the count for a
+                    # device whose app entry is one page away instead of two.
+                    downs = self._launch_down_count()
+                    self._launch_step(
+                        Button.DOWN,
+                        mechanism,
+                        down_key,
+                        f"page down x{downs}",
+                        count=downs,
+                    )
+                    time.sleep(
+                        LAUNCH_STEP_DELAY_S * (2.0 if number == len(plans) else 1.0)
+                    )
+                    self._launch_step(
+                        Button.ENTER, mechanism, select_key, "select"
+                    )
+            except DriverError as error:
+                self._record(f"warning: launch attempt {number} failed: {error}")
+                continue
+            if self._wait_for_app_view(mark, deadline, number, label):
+                return True
+            if self._app_died():
+                return False
+        self._record(
+            f"the launch sequence left the app on the glance page after "
+            f"{len(plans)} attempt(s). Each attempt above records the "
+            "mechanism, the point or keysym, and the view it produced. If the "
+            "presses report effects but the view stays on `glance`, check that "
+            "`Down` moves the selection to the app entry on this device "
+            "(`--key DOWN=Down`, `--key ENTER=Return`)."
+        )
+        return False
+
+    def _launch_down_count(self) -> int:
+        """How many page-downs the launch sequence sends (measured: 2)."""
+        raw = os.environ.get(ENV_LAUNCH_DOWNS, "").strip()
+        try:
+            value = int(raw) if raw else LAUNCH_DOWNS
+        except ValueError:
+            value = LAUNCH_DOWNS
+        return max(1, min(5, value))
+
+    def _launch_step(
+        self,
+        button: Button,
+        mechanism: str,
+        keysym: Optional[str],
+        what: str,
+        count: int = 1,
+    ) -> None:
+        """Send one key of the launch sequence and record what it produced."""
+        self.press(button, count, mechanism=mechanism)
+        view = self._current_view()
+        self._record(f"launch step {what}: view is now {view}")
+
+    def _current_view(self) -> str:
+        parsed = parse_lines(self.events())
+        view = next((event for event in reversed(parsed) if event.event == "VIEW"), None)
+        if view is None:
+            return "none"
+        return f"{view.get('category')}/{view.get('view')}"
+
+    def _app_died(self) -> bool:
+        process = self._app_process
+        if process is not None and process.poll() is not None:
+            self._record(
+                f"monkeydo exited with code {process.returncode} during the "
+                "launch sequence"
+            )
+            return True
+        return False
+
+    def _wait_for_app_view(
+        self, mark: int, deadline: float, number: int, label: str
+    ) -> bool:
+        until = min(time.monotonic() + LAUNCH_ATTEMPT_TIMEOUT, deadline)
+        while time.monotonic() < until:
+            if self._app_died():
+                return False
+            for event in parse_lines(list(self.events())[mark:]):
+                if event.event == "ERRORVIEW" or (
+                    event.event == "VIEW" and event.get("category") != "glance"
+                ):
+                    self._record(
+                        f"launch attempt {number} ({label}) opened the app: "
+                        f"{event.describe()}"
+                    )
+                    return True
+            time.sleep(0.25)
+        self._record(
+            f"launch attempt {number} ({label}) produced no view other than the "
+            f"glance (view is {self._current_view()})"
+        )
+        return False
+
     def _open_app_if_needed(
         self, parsed: Sequence[TraceEvent], deadline: float
     ) -> List[TraceEvent]:
-        """Open the app when the simulator left the glance page on screen.
-
-        ``monkeydo`` can leave the device on the glance carousel: only
-        ``E2E:VIEW;category=glance`` appears and ``getInitialView()`` never
-        runs, so no request is made. The physical select button is what opens
-        the app on the device, so the driver presses the declared ``onSelect``
-        hit area, then the ``onMenu`` hold, then select again — with the
-        declared hit areas, not keystrokes. If none of that works the run
-        continues and the log says the app never left the glance.
-        """
+        """Run :meth:`launch` when the first view is the glance."""
         current = next(
             (event for event in reversed(parsed) if event.event == "VIEW"), None
         )
         if current is None or current.get("category") != "glance":
             return list(parsed)
-
-        self._record(
-            "the app started on the glance page (`VIEW;category=glance`); pressing "
-            "select to open it and run the initial view"
-        )
-        device = self._device
-        actions: List[Tuple[str, Callable[[], None]]] = []
-        if device is not None and device.supports_buttons:
-            actions = [
-                ("the declared onSelect hit area", lambda: self.press(Button.ENTER, 1)),
-                ("the declared onMenu hold", lambda: self.press(Button.MENU, 1)),
-                ("a second select after the hold", lambda: self.press(Button.ENTER, 1)),
-            ]
-        elif device is not None:
-            centre_x = device.screen_width // 2
-            centre_y = device.screen_height // 2
-            actions = [
-                ("a tap on the screen", lambda: self.tap(centre_x, centre_y, 1)),
-                ("a second tap", lambda: self.tap(centre_x, centre_y, 1)),
-            ]
-        for label, action in actions:
-            if time.monotonic() >= deadline:
-                break
-            mark = len(self.events())
-            try:
-                action()
-            except DriverError as error:
-                self._record(f"warning: {label} failed: {error}")
-                continue
-            until = min(time.monotonic() + 5.0, deadline)
-            while time.monotonic() < until:
-                process = self._app_process
-                if process is not None and process.poll() is not None:
-                    return list(parse_lines(self.events()))
-                for event in parse_lines(list(self.events())[mark:]):
-                    if event.event == "ERRORVIEW" or (
-                        event.event == "VIEW" and event.get("category") != "glance"
-                    ):
-                        self._record(f"app opened with {event.describe()} via {label}")
-                        return list(parse_lines(self.events()))
-                time.sleep(0.25)
-            self._record(f"note: {label} did not open the app")
-
-        # Hypothesis from the guest: the simulator may run only the glance entry
-        # point, in which case no input can reach the app. Relaunch once and look
-        # for a non-glance view; the console log is appended, not replaced.
-        if self._device is not None and time.monotonic() < deadline:
-            self._record(
-                "the app is still on the glance page; relaunching the PRG in case "
-                "only the glance process started"
-            )
-            mark = len(self.events())
-            try:
-                self._stop_app()
-                time.sleep(1.0)
-                self._launch_app(
-                    self._device, reset_events=False, append_log=True
-                )
-            except DriverError as error:
-                self._record(f"warning: relaunch failed: {error}")
-            else:
-                until = min(time.monotonic() + 15.0, deadline)
-                while time.monotonic() < until:
-                    process = self._app_process
-                    if process is not None and process.poll() is not None:
-                        break
-                    for event in parse_lines(list(self.events())[mark:]):
-                        if event.event == "ERRORVIEW" or (
-                            event.event == "VIEW" and event.get("category") != "glance"
-                        ):
-                            self._record(
-                                f"relaunch opened the app with {event.describe()}"
-                            )
-                            return list(parse_lines(self.events()))
-                    time.sleep(0.25)
-                self._record("note: the relaunch stayed on the glance page too")
-
-        self._record(
-            "warning: the app is still on the glance page, so its initial view never "
-            "ran and no request will be made. The driver tried every declared way in "
-            "(select and hold on button devices, a tap on touch devices) and one "
-            "relaunch. Check the mapped click points in this log (window coordinates "
-            "plus the client origin), the input-delivery probe, and whether the "
-            "simulator runs the app process at all."
-        )
+        remaining = max(1.0, deadline - time.monotonic())
+        self.launch(min(remaining, DEFAULT_LAUNCH_TIMEOUT))
         return list(parse_lines(self.events()))
 
     def _record_device_title(self) -> None:
@@ -1895,16 +1970,19 @@ class WineSimulatorDriver(SimulatorDriver):
         """The copied simulator log in the artifacts, once collected."""
         return self._ciq_log
 
-    def press(self, button: Button, count: int = 1) -> None:
+    def press(
+        self, button: Button, count: int = 1, *, mechanism: Optional[str] = None
+    ) -> None:
         """Press a device button ``count`` times.
 
         A device definition declares its physical buttons as clickable hit
-        areas (``keys[].location`` with a ``behavior``), not keyboard keys, so
-        the driver clicks the declared rectangle. An ``E2E_WINE_KEY_<BUTTON>``
-        override, or an SDK that still declares virtual-key codes, falls back to
-        ``xdotool key``; the log says which mechanism was used, because a
+        areas (``keys[].location`` with a ``behavior``) and the simulator also
+        takes keystrokes, so the driver records which mechanism it used: a
         keystroke the simulator ignores is indistinguishable from a successful
-        press unless it is recorded.
+        press unless it is recorded. ``mechanism`` forces one path
+        (``"mouse"`` or ``"keyboard"``) for the launch sequence's retries; by
+        default a proven keysym wins over a click for navigation, then the
+        declared hit area, then the bound keysym.
         """
         device = self._require_started()
         if not device.supports_buttons:
@@ -1917,13 +1995,31 @@ class WineSimulatorDriver(SimulatorDriver):
 
         override = os.environ.get(f"{ENV_KEY_PREFIX}{button.value}")
         if override:
-            self._send_keys(window, button, override.strip(), count, "environment override")
+            self._send_keys(
+                window, button, override.strip(), count, "environment override"
+            )
+            return
+
+        if mechanism == "keyboard":
+            keysym = PROVEN_KEYSYMS.get(button) or self._keys.get(button)
+            if not keysym:
+                raise DriverError(f"no keysym is bound for {button.value}")
+            self._send_keys(window, button, keysym, count, "forced keyboard path")
+            return
+
+        if mechanism == "mouse":
+            declared = self._definition.key_for(button)
+            if declared is None:
+                raise DriverError(
+                    f"{device.product} declares no hit area for {button.value}"
+                )
+            self._click_declared_key(window, declared, count)
             return
 
         proven = PROVEN_KEYSYMS.get(button)
         if proven:
-            # The guest proved the simulator honours these keys; mouse clicks
-            # are silent under this Wine/Xvfb, so the keyboard path wins.
+            # The guest proved the simulator honours these keys, and they need
+            # no coordinates; the declared hit area is the alternative path.
             self._send_keys(window, button, proven, count, "proven keyboard binding")
             return
 
@@ -1943,20 +2039,30 @@ class WineSimulatorDriver(SimulatorDriver):
     def _send_keys(
         self, window: str, button: Button, keysym: str, count: int, why: str
     ) -> None:
-        try:
-            self._run(
-                xdotool_key_command(keysym, count),
-                check=True,
-                action=f"press {button.value}",
-            )
-            transport = "XTEST key to the focused window"
-        except DriverError:
-            self._run(
-                xdotool_key_to_window_command(window, keysym, count),
-                check=True,
-                action=f"press {button.value} (window-targeted fallback)",
-            )
-            transport = "window-targeted key (XSendEvent)"
+        """Send ``count`` keystrokes, focusing the window before **each** one.
+
+        Focus is not stable between keys: the guest lost it mid-sequence and the
+        second key went nowhere, which is indistinguishable from a simulator
+        that ignores the key unless the focus is re-established and logged.
+        """
+        transport = "XTEST key to the focused window"
+        for _ in range(max(1, int(count))):
+            self._focus_window(window)
+            try:
+                self._run(
+                    xdotool_key_command(keysym, 1),
+                    check=True,
+                    action=f"press {button.value}",
+                )
+                transport = "XTEST key to the focused window"
+            except DriverError:
+                self._run(
+                    xdotool_key_to_window_command(window, keysym, 1),
+                    check=True,
+                    action=f"press {button.value} (window-targeted fallback)",
+                )
+                transport = "window-targeted key (XSendEvent)"
+            time.sleep(DEFAULT_KEY_DELAY_MS / 1000.0)
         mechanism = (
             "keyboard (override)" if why == "environment override" else "keyboard"
         )
@@ -1965,7 +2071,7 @@ class WineSimulatorDriver(SimulatorDriver):
         )
         self._record(
             f"press {button.value} x{count} -> keysym {keysym!r} ({transport}; "
-            f"{why})"
+            f"{why}; window focused before each key)"
         )
 
     def _click_declared_key(
@@ -2032,9 +2138,9 @@ class WineSimulatorDriver(SimulatorDriver):
     def _move_verified(self, window: str, x: int, y: int, action: str) -> None:
         """Move the pointer and prove it is over the simulator window.
 
-        Clicking blind is how "the mouse is silent" is born: on the guest the
-        pointer was over the root window (`xdotool getmouselocation` reported
-        the root id) and Wine received no button event at all. The window
+        Clicking blind is how the "silent mouse" verdict was born: on the guest
+        the pointer was once over the root window (`xdotool getmouselocation`
+        reported the root id) and Wine received no button event at all. The window
         position can change between runs, so the geometry is re-read and the
         move retried once before failing.
         """
@@ -2582,7 +2688,18 @@ class WineSimulatorDriver(SimulatorDriver):
         into the void.
         """
         activate, focus = xdotool_focus_commands(window)
-        activated = self._run(activate, check=False, action="xdotool windowactivate")
+        if not getattr(self, "_activate_attempted", False):
+            # windowactivate needs a window manager; try it once for the session,
+            # then use windowfocus only, which works on bare Xvfb.
+            self._activate_attempted = True
+            activated = self._run(
+                activate, check=False, action="xdotool windowactivate"
+            )
+            if activated.returncode != 0:
+                self._record(
+                    "note: xdotool windowactivate failed (no window manager on "
+                    "Xvfb); windowfocus succeeds, which is enough for input"
+                )
         focused = self._run(focus, check=False, action="xdotool windowfocus")
         if focused.returncode != 0:
             raise DriverError(
@@ -2593,12 +2710,6 @@ class WineSimulatorDriver(SimulatorDriver):
                 "Check that the display has a focusable window "
                 f"(DISPLAY={self.display}) and that no other client grabs input."
             )
-        if activated.returncode != 0:
-            self._record(
-                "note: xdotool windowactivate failed (no window manager on "
-                "Xvfb); windowfocus succeeded, which is enough for input"
-            )
-
     def _geometry(self, window: str) -> Dict[str, int]:
         completed = self._run(
             xdotool_geometry_command(window),

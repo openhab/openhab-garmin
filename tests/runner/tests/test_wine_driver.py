@@ -41,6 +41,7 @@ from e2e.sim.wine import (
     ENV_SCREEN_RECT,
     ENV_SETTINGS_FILE,
     ENV_STARTUP_TIMEOUT,
+    HTTPS_REQUIREMENTS_KEY,
     ScreenRect,
     SimulatorDefinition,
     SimulatorKey,
@@ -710,7 +711,43 @@ def test_tap_uses_the_declared_one_to_one_mapping(
     assert "screen=70,70,260,260" in _driver_log(driver)
 
 
-def test_open_app_presses_select_when_the_first_view_is_the_glance(
+def test_launch_pages_down_then_selects_on_a_button_device(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The verified sequence is Down, then select — not select alone."""
+    driver = _driver(tmp_path)
+    driver._started = True
+    driver._device = _device("fenix7")
+    driver._window = "42"
+    driver._definition = _definition(tmp_path)
+    driver._events = [
+        (0.0, "E2E:LANGUAGE;code=eng"),
+        (0.0, "E2E:VIEW;category=glance;view=GlanceSitemapView;depth=1"),
+    ]
+    monkeypatch.setattr(driver, "_window_name", lambda window: "CIQ Simulator - Fenix 7")
+    monkeypatch.setattr(
+        driver, "_geometry", lambda window: {"x": 0, "y": 0, "width": 400, "height": 405}
+    )
+    monkeypatch.setattr("e2e.sim.wine.time.sleep", lambda seconds: None)
+    monkeypatch.setattr("e2e.sim.wine.LAUNCH_ATTEMPT_TIMEOUT", 0.0)
+    fake = FakeRun()
+    driver._run = fake  # type: ignore[method-assign]
+
+    opened = driver.launch(timeout_s=1.0)
+
+    assert opened is False, "no new view was produced by the fake"
+    log = _driver_log(driver)
+    assert "2 x page down, then select" in log
+    assert "launch attempt 1/3: declared hit areas" in log
+    assert "launch step page down x2" in log
+    assert "launch step select" in log
+    assert "launch attempt 2/3: keyboard" in log
+    # Attempt 1 clicks the declared areas, attempt 2 sends the keysyms.
+    assert any(command[1] == "mousemove" for command in fake.commands)
+    assert any(command[1] == "key" for command in fake.commands)
+
+
+def test_launch_stops_when_the_app_opens(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     driver = _driver(tmp_path)
@@ -727,20 +764,25 @@ def test_open_app_presses_select_when_the_first_view_is_the_glance(
         driver, "_geometry", lambda window: {"x": 0, "y": 0, "width": 400, "height": 405}
     )
     monkeypatch.setattr("e2e.sim.wine.time.sleep", lambda seconds: None)
-    fake = FakeRun()
-    driver._run = fake  # type: ignore[method-assign]
 
-    driver._open_app_if_needed(
-        list(parse_lines(driver.events())), time.monotonic() + 0.05
-    )
+    class OpeningRun(FakeRun):
+        def __call__(self, command, **kwargs):  # noqa: ANN001, ANN003
+            completed = super().__call__(command, **kwargs)
+            if command[1] == "mousemove" and "sitemap" not in str(driver._events):
+                driver._events.append(
+                    (0.0, "E2E:VIEW;category=sitemap;view=HomepageMenu;depth=2")
+                )
+            return completed
 
-    assert any(command[1] == "mousemove" for command in fake.commands), "select clicked"
+    driver._run = OpeningRun()  # type: ignore[method-assign]
+
+    assert driver.launch(timeout_s=2.0) is True
     log = _driver_log(driver)
-    assert "started on the glance page" in log
-    assert "still on the glance page" in log
+    assert "launch attempt 1 (declared hit areas) opened the app" in log
+    assert "launch attempt 2/3" not in log, "the retries stop on success"
 
 
-def test_open_app_taps_the_screen_on_a_touch_only_device(
+def test_launch_taps_the_screen_on_a_touch_only_device(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     driver = _driver(tmp_path)
@@ -754,16 +796,14 @@ def test_open_app_taps_the_screen_on_a_touch_only_device(
     ]
     monkeypatch.setattr(driver, "_window_name", lambda window: "CIQ Simulator - venu 2")
     monkeypatch.setattr(
-        driver, "_geometry", lambda window: {"x": 0, "y": 0, "width": 400, "height": 405}
+        driver, "_geometry", lambda window: {"x": 0, "y": 0, "width": 416, "height": 416}
     )
     monkeypatch.setattr("e2e.sim.wine.time.sleep", lambda seconds: None)
+    monkeypatch.setattr("e2e.sim.wine.LAUNCH_ATTEMPT_TIMEOUT", 0.0)
     fake = FakeRun()
     driver._run = fake  # type: ignore[method-assign]
 
-    driver._open_app_if_needed(
-        list(parse_lines(driver.events())), time.monotonic() + 0.05
-    )
-
+    assert driver.launch(timeout_s=1.0) is False
     assert any(command[1] == "mousemove" for command in fake.commands)
     assert not any(command[1] == "key" for command in fake.commands)
     assert "a tap on the screen" in _driver_log(driver)
@@ -959,6 +999,7 @@ def test_mode_and_language_become_ini_updates() -> None:
     ble = ini_updates("fenix7", "ble", "7")
     assert ble == {
         "LastUsedDevice": "fenix7",
+        HTTPS_REQUIREMENTS_KEY: "0",
         "Language": "7",
         "BleState": "2",
         "WifiState": "1",
@@ -2047,9 +2088,8 @@ def test_contract_reports_a_glance_only_app_as_app_entry_failure(
     assert by_name["app-entry"].status == FAIL
     detail = by_name["app-entry"].detail
     assert "glance" in detail
-    assert "no synthetic input reaches the simulator" in detail
-    assert "run the simulator on Windows" in detail
-    assert "#396" in detail, "the separate app-side latch is still named"
+    assert "Down" in detail and "select" in detail
+    assert "logs/driver.log" in detail
 
 
 def test_contract_passes_app_entry_on_a_real_view(tmp_path: Path) -> None:
@@ -2114,8 +2154,8 @@ def test_contract_marks_a_no_effect_press_as_evidence_not_a_failure(
     sequence = by_name["press-sequence"]
     assert sequence.status == FAIL
     assert "DOWN, DOWN, UP produced no effect" in sequence.detail
-    assert "run the simulator on Windows" in sequence.detail
-    assert "the harness cannot" in sequence.detail
+    assert "--key DOWN=" in sequence.detail
+    assert "pointer line" in sequence.detail
 
 
 def test_contract_press_sequence_passes_when_a_later_press_moves(

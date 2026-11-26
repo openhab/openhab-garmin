@@ -230,11 +230,10 @@ def run_contract(
     def app_entry() -> None:
         """`wait_ready` must leave the app on a real view, not the glance.
 
-                The app reaches the sitemap when the glance is selected, which is what a
-                click does on a working simulator. Here no synthetic input arrives at
-                the simulator at all (measured against an idle baseline), so the glance
-                cannot be selected and this case records the environment rather than
-                pretending the initial view ran.
+                The app reaches the sitemap by selecting its glance entry, and that
+                needs the entry focused first: page down once, then select. `wait_ready`
+                runs exactly that sequence (see `WineSimulatorDriver.launch`), so this
+                case fails only when the transition still did not happen.
         """
         parsed = parse_lines(list(driver.events()))
         view = next((event for event in reversed(parsed) if event.event == "VIEW"), None)
@@ -243,18 +242,16 @@ def run_contract(
             raise AssertionError(
                 "the app is still showing the glance (`VIEW;category=glance`), so "
                 "getInitialView() never ran and no request is made.\n"
-                        "The glance is left by selecting it, and on this guest no "
-                        "synthetic input reaches the simulator at all: pointer-verified "
-                        "clicks at the declared hit areas and inside the screen, every "
-                        "candidate keysym, with and without a window manager, and inside "
-                        "a Wine virtual desktop, all measure 0 px against an idle "
-                        "baseline. No coordinate, keysym, focus or window-manager change "
-                        "can fix that.\n"
-                        "If you need UI assertions, run the simulator on Windows or fix "
-                        "Wine input; the harness cannot. The app-side glance latch "
-                        "(OHApp.getGlanceView -> AppLifecycle.setGlance, #396) is a "
-                        "separate concern and is not what this run demonstrates. See "
-                "tests/docs/simulator-driver.md."
+                        "The launch sequence is page down (twice in the measured runs), then "
+                        "select; select alone does nothing. `wait_ready` sends it and logs "
+                        "every attempt with its mechanism, point or keysym, and the view it "
+                        "produced, so read logs/driver.log for which attempt ran and what "
+                        "the view became. `E2E_WINE_LAUNCH_DOWNS` changes the count if this "
+                        "device's entry is a different number of pages away.\n"
+                        "If a press reports no effect at all, the input path is the "
+                        "problem: `--key DOWN=Down` and `--key ENTER=Return` try other "
+                        "bindings, and the pointer line shows whether a click reached the "
+                        "simulator window. See tests/docs/simulator-driver.md."
             )
         if category is None:
             raise AssertionError(
@@ -409,10 +406,9 @@ def run_contract(
             f"(empty-screen baseline {baseline} px): {'; '.join(attempts)}."
             f"{reason}{calibrate}\n"
             "logs/driver.log names the mechanism and window point for each press. "
-            "If the pointer is verified and nothing moves, the environment is not "
-            "delivering input: if you need UI assertions, run the simulator on "
-            "Windows or fix Wine input; the harness cannot. See "
-            "tests/docs/simulator-driver.md."
+            "A press that reports no effect at all means the input path is the "
+            "problem: compare the logged point with the device definition's "
+            "keys[].location, or try `--key <BUTTON>=<keysym>`."
         )
 
     if driver.supports_events:
@@ -476,12 +472,10 @@ def run_contract(
         raise AssertionError(
             "a sequence of DOWN, DOWN, UP produced no effect on any press:\n  "
             + "\n  ".join(seen)
-            + "\nThe mechanism each press used is above. If the pointer was "
-            "verified over the simulator window, this is the environment and not "
-            "a coordinate or keysym problem: no synthetic input reaches the "
-            "simulator under Wine here.\n"
-            "If you need UI assertions, run the simulator on Windows or fix Wine "
-            "input; the harness cannot. See tests/docs/simulator-driver.md."
+            + "\nThe mechanism each press used is above. A silent mouse and an "
+            "ignored keysym look the same; `--key DOWN=<keysym>` tries another "
+            "binding, and the pointer line shows whether a click reached the "
+            "simulator window. See tests/docs/simulator-driver.md."
         )
 
     cases.append(_run_case("press-sequence", press_sequence))
