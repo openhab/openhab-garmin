@@ -913,6 +913,172 @@ The Linux `shell` binary from the official SDK remains the supported path. This
 is a recorded conclusion, not an open question, so it does not have to be
 re-investigated.
 
+## The native Linux simulator: input yes, text no (#402)
+
+The mounted SDK also ships a native build,
+`linux/bin/simulator` (31,142,896 bytes, ELF x86-64, GTK3 + WebKit). It runs the
+same `monkeydo` push protocol, so it would fit the existing driver shape. It was
+exercised end to end on 2026-11-26 in a disposable `ubuntu:22.04` container, and
+it is **not** a replacement for the Wine driver: it accepts input and loads the
+sitemap, but it cannot paint app text — for the same missing-asset reason as
+Wine. This section is the record so it is not re-investigated.
+
+### Getting a window under Xvfb
+
+Ubuntu 22.04 is required: 24.04 dropped `webkit2gtk-4.0`, and `ldd` reports 12
+missing libraries there. With the following the count is 0:
+
+| Purpose | Packages |
+| --- | --- |
+| simulator runtime | `libgtk-3-0 libwebkit2gtk-4.0-37 libsecret-1-0 libnotify4 libusb-1.0-0 librsvg2-common` |
+| display and capture | `xvfb x11-utils x11-xkb-utils xauth xdotool imagemagick` |
+| `monkeydo` (`monkeybrains.jar`) | `default-jre-headless` |
+
+`librsvg2-common` alone is not enough; the pixbuf cache has to be regenerated or
+the first draw aborts on an Adwaita SVG:
+
+```bash
+/usr/lib/x86_64-linux-gnu/gdk-pixbuf-2.0/gdk-pixbuf-query-loaders \
+  > /usr/lib/x86_64-linux-gnu/gdk-pixbuf-2.0/loaders.cache
+```
+
+The binary on the read-only mount is `-rw-rw-r--`, so it has to be copied and
+`chmod +x`, or the mount fixed.
+
+Three things, and only these three, are needed to get a window:
+
+| Requirement | Failure without it |
+| --- | --- |
+| `XDG_DATA_DIRS=/usr/local/share:/usr/share` | GTK cannot load Adwaita's settings, logs `Gtk-CRITICAL: _gtk_style_provider_private_get_settings` and never maps a window |
+| `GTK_THEME=Adwaita`, `GDK_BACKEND=x11` | the theme and backend are explicit rather than inherited |
+| device definitions in `$HOME/.Garmin/ConnectIQ/Devices` | the Linux build reads the same location as `monkeyc`; `python -m e2e link-devices` already stages it |
+
+**No window manager is needed.** Xvfb alone maps a 446×700 window titled
+`CIQ Simulator - fēnix® 7 / quatix® 7 (5.2.0)`. `matchbox-window-manager` was
+tried and is actively unhelpful: it maximises the window to the display size,
+which destroys the `display.location` rectangle (fenix7: `x=77, y=146, 260×260`)
+that pixel checks crop to.
+
+### The single-instance lock is `$HOME/Sim-root`
+
+The native simulator holds `$HOME/Sim-root`, a file containing the PID of the
+instance. A simulator that died without being reaped stays a **zombie**, and
+`kill(pid, 0)` still succeeds for it, so every later start opens the file
+`O_EXCL`, sees it, and exits with code 255 within a second — after nothing but
+the harmless AT-SPI `dbind-WARNING`. There is no other message. Recovering is
+one line:
+
+```bash
+rm -f "$HOME/Sim-root"
+```
+
+This is the Wine driver's "stray simulator" hazard in a different shape; a
+native driver would have to sweep the lock, not just the process.
+
+### What does work
+
+- **Input.** `xdotool windowfocus <window>`, then `xdotool key Down`, `Down`,
+  `Return` (XTEST, no window manager, no pointer verification) opens the app
+  from the glance: `E2E:CONNECTION;mode=BLE`,
+  `E2E:VIEW;category=sitemap;view=LoadingView;depth=1`. Native X input is
+  ordinary input, as expected.
+- **HTTP.** With `UseHttpsRequirements=0` in
+  `$HOME/.Garmin/ConnectIQ/simulator.ini` — the same key and the same flat
+  `key=value` format the Wine driver writes — the app loaded the real sitemap
+  through a local shim: `E2E:SITEMAP;result=success;code=200;bytes=29680`,
+  followed by `E2E:VIEW;category=sitemap;view=HomepageMenu;depth=1`.
+
+Native input deserves to be stated on its own: the older story — "input is
+impossible on Linux" — was really "input is impossible **through Wine** with a
+select-first sequence". XTEST against a native GTK window is ordinary X input and
+is now measured working. Wine stays the driver, but if it regresses further the
+native build is a viable fallback for the input path: `press`, `screenshot` and
+the `monkeydo` event stream all have working primitives here, behind the same
+`SimulatorDriver` interface.
+
+### What does not work: the same `Invalid Font Specified`
+
+**The verdict is not "the simulator cannot render."** The native simulator opens
+`$HOME/.Garmin/ConnectIQ/Fonts/` and that directory is empty, so the device faces
+it needs cannot be resolved. Without it populated, both the native and the Wine
+simulator raise `Invalid Font Specified` and the screen stays on the watch face,
+and Garmin's own `samples/TrueTypeFonts` fails identically. That one sentence
+replaces the earlier "the simulator cannot paint app text" and "Wine cannot paint
+app text" readings: the renderer is fine, the assets are missing.
+
+The next draw after `HomepageMenu` is:
+
+```text
+Error: Invalid Font Specified
+Stack:
+Encountered an app crash.
+```
+
+The device screen then shows only the idle watch face (1,023 light pixels in the
+260×260 screen); the app contributed no text. Garmin's own
+`samples/TrueTypeFonts`, built for fenix7 with `monkeyc`, fails the same way and
+then segfaults the simulator, so this is not a property of our app's fonts.
+
+The chain, measured:
+
+- `Config.UI_ERROR_FONTS` uses `Graphics.FONT_MEDIUM/SMALL/TINY/GLANCE/XTINY`;
+  `Devices/fenix7/simulator.json` maps each to a _filename_ such as
+  `FNT_FENIX6_CDPG_ROBOTO_18B`;
+- **no such file exists in the SDK**: `find <sdk> \( -iname '*.fnt' -o -iname
+  '*.ttf' \)` returns 8 files, all of them assets of `samples/Analog`;
+- the simulator **opens `$HOME/.Garmin/ConnectIQ/Fonts/` successfully and the
+  directory is empty**. Traced on the native build while the app ran
+  (`strace -e trace=openat,stat,access`):
+
+  ```text
+  openat(AT_FDCWD, "/root/.Garmin/ConnectIQ/Fonts/", O_RDONLY) = 7
+  ```
+
+  The open succeeds and the faces it needs are not there, which is the whole
+  cause. That directory is the Linux twin of `%APPDATA%\Garmin\ConnectIQ\Fonts`
+  on Windows, where the maintainer's installation renders.
+
+Installing `fonts-roboto` does not help: the runtime resolves device font
+_filenames_ through its own FNT/FreeType path (`FNT_intf.cpp`,
+`FT_Get_WinFNT_Header` are in the binary), not fontconfig families.
+
+The host was therefore never the variable. Windows renders because that
+installation has the font assets; Wine and native Linux both fail because the
+mounted SDK archive does not.
+
+### When the font pack arrives: the verification to run
+
+1. Obtain the fonts directory from the working Windows installation
+   (`%APPDATA%\Garmin\ConnectIQ\Fonts`). It carries the `FNT_*` files that
+   `Devices/<device>/simulator.json` names by filename.
+1. Put the same directory where each host reads it:
+   - native: `$HOME/.Garmin/ConnectIQ/Fonts`;
+   - Wine: `<WINEPREFIX>/drive_c/users/<user>/AppData/Roaming/Garmin/ConnectIQ/Fonts`
+     — the direct sibling of the device path `wine_devices_target()` resolves in
+     `e2e/sdk.py`.
+1. Run the **same** debug PRG on both drivers and record four facts per host:
+   whether the sitemap reaches `HomepageMenu`, whether text is painted (an OCR of
+   the `display.location` crop is enough evidence), whether
+   `Invalid Font Specified` is gone from the console, and whether `ErrorView`
+   draws.
+1. Record the outcome here. If the native build renders, the visual tier becomes
+   possible on the existing VM and the runner-image question reopens with real
+   evidence: the 22.04 package set and the cost below are already measured, and
+   only the Wine stack would still have to be kept for the Wine driver.
+
+### Verdict and cost
+
+Wine stays the driver and the default. A `linux` driver would buy input, which
+already works under Wine since the "DOWN, then SELECT" correction, and would
+cost a second driver, a 22.04 image and the Wine stack kept alongside; it would
+not buy a single rendered pixel. It is deliberately not implemented.
+
+If it is revisited, the image cost is concrete: base `ubuntu:22.04`, drop the
+`i386` architecture and `wine/wine32:i386/wine64` (roughly the bulk of the
+2.8 GB runner image), and add the packages above. `monkeyc`, the unit tests,
+the fixtures and the compose pins are unaffected by the base change; only the
+`wine` driver would need a Wine image of its own.
+
 ## Stopping the simulator
 
 `pkill -f <pattern>` inside a `docker exec` also matches the exec's own command
