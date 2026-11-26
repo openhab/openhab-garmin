@@ -19,7 +19,11 @@ openhab:
     E2E_LastUpdate: "2026-11-23T10:00:00.000+0100"
     E2E_Window: CLOSED
 language: eng
-timeout_s: 90
+# The Wine driver settles ~50 s before pressing and may spend up to 180 s in
+# launch retries (input delivery is intermittent), so a 90 s budget could expire
+# before the app reached its first view. 300 s covers the settle, the retries
+# and this scenario's own steps.
+timeout_s: 300
 
 covers:
   - sitemap.element-types
