@@ -127,6 +127,8 @@ def run_contract(
     prg: Optional[Path] = None,
     ready_timeout_s: float = 90.0,
     requests: Optional[Callable[[], Optional[int]]] = None,
+    mode: str = "ble",
+    language: str = "deu",
 ) -> List[ContractCase]:
     """Exercise every part of the driver contract against ``driver``.
 
@@ -137,6 +139,12 @@ def run_contract(
     device is taken from the PRG's name when it matches the build's pattern, and
     a ``--device`` that disagrees raises :class:`ContractError`. The driver is
     stopped at the end even when a case fails.
+
+    ``mode`` and ``language`` select what the launch exercises. ``language``
+    defaults to a non-default code so the numeric index path is proven; ``mode``
+    defaults to ``ble``, but a plain-HTTP stack needs ``wifi``: over BLE the
+    platform requires HTTPS, so a plain-HTTP sitemap request is refused with
+    ``-1001`` (see tests/docs/simulator-driver.md).
     """
     workdir = Path(workdir)
     workdir.mkdir(parents=True, exist_ok=True)
@@ -211,7 +219,9 @@ def run_contract(
         cases.append(_run_case("stop", driver.stop))
         return cases
 
-    start = _run_case("start", lambda: driver.start(device, settings, "ble", language="deu"))
+    start = _run_case(
+        "start", lambda: driver.start(device, settings, mode, language=language)
+    )
     cases.append(start)
 
     if start.status != PASS:

@@ -643,6 +643,13 @@ def test_press_refuses_a_pointer_over_another_process(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     driver = _pressing_driver(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        driver,
+        "_geometry",
+        lambda window: {"x": 0, "y": 0, "width": 409, "height": 600}
+        if window == "42"
+        else {"x": 900, "y": 0, "width": 200, "height": 200},
+    )
 
     class ForeignRun(FakeRun):
         def __call__(self, command, **kwargs):  # noqa: ANN001, ANN003
@@ -730,6 +737,7 @@ def test_launch_pages_down_then_selects_on_a_button_device(
     )
     monkeypatch.setattr("e2e.sim.wine.time.sleep", lambda seconds: None)
     monkeypatch.setattr("e2e.sim.wine.LAUNCH_ATTEMPT_TIMEOUT", 0.0)
+    monkeypatch.setattr("e2e.sim.wine.LAUNCH_SETTLE_S", 0.0)
     fake = FakeRun()
     driver._run = fake  # type: ignore[method-assign]
 
@@ -742,6 +750,7 @@ def test_launch_pages_down_then_selects_on_a_button_device(
     assert "launch step page down x2" in log
     assert "launch step select" in log
     assert "launch attempt 2/3: keyboard" in log
+    assert "connection=" in log, "each step logs the connection state"
     # Attempt 1 clicks the declared areas, attempt 2 sends the keysyms.
     assert any(command[1] == "mousemove" for command in fake.commands)
     assert any(command[1] == "key" for command in fake.commands)
@@ -764,6 +773,8 @@ def test_launch_stops_when_the_app_opens(
         driver, "_geometry", lambda window: {"x": 0, "y": 0, "width": 400, "height": 405}
     )
     monkeypatch.setattr("e2e.sim.wine.time.sleep", lambda seconds: None)
+    monkeypatch.setattr("e2e.sim.wine.LAUNCH_SETTLE_S", 0.0)
+    fake = FakeRun()
 
     class OpeningRun(FakeRun):
         def __call__(self, command, **kwargs):  # noqa: ANN001, ANN003
@@ -800,6 +811,7 @@ def test_launch_taps_the_screen_on_a_touch_only_device(
     )
     monkeypatch.setattr("e2e.sim.wine.time.sleep", lambda seconds: None)
     monkeypatch.setattr("e2e.sim.wine.LAUNCH_ATTEMPT_TIMEOUT", 0.0)
+    monkeypatch.setattr("e2e.sim.wine.LAUNCH_SETTLE_S", 0.0)
     fake = FakeRun()
     driver._run = fake  # type: ignore[method-assign]
 
@@ -1942,6 +1954,8 @@ class _FakeDriver(SimulatorDriver):
         if self.fail_start:
             raise NotImplementedError("fake driver cannot start")
         self.started = True
+        self.started_mode = mode
+        self.started_language = language
 
     def wait_ready(self, timeout_s: float) -> None:
         pass
@@ -2288,6 +2302,109 @@ def test_language_scan_refuses_a_read_only_checkout_before_scanning(
     assert message is not None
     assert "Read-only file system" in message
     assert "--output /tmp/languages.json" in message
+
+
+def test_contract_cli_mode_and_language_reach_the_driver(tmp_path: Path) -> None:
+    """A plain-HTTP stack needs `--mode wifi`; `--language` keeps the index path."""
+    prg = tmp_path / "openhab-garmin-fenix7.prg"
+    prg.write_bytes(b"prg")
+    driver = _FakeDriver()
+    run_contract(
+        driver,
+        tmp_path,
+        prg=prg,
+        device_id=None,
+        mode="wifi",
+        language="eng",
+    )
+    assert driver.started_mode == "wifi"
+    assert driver.started_language == "eng"
+
+
+def test_contract_defaults_to_ble_and_german(tmp_path: Path) -> None:
+    prg = tmp_path / "openhab-garmin-fenix7.prg"
+    prg.write_bytes(b"prg")
+    driver = _FakeDriver()
+    run_contract(driver, tmp_path, prg=prg, device_id=None)
+    assert driver.started_mode == "ble"
+    assert driver.started_language == "deu"
+
+
+def test_a_language_mismatch_still_launches_the_app_first(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The language error must not hide a launch failure behind it."""
+    driver = _ready_driver(tmp_path)
+    driver._definition = SimulatorDefinition(display=None, keys=())
+    driver._events = [
+        (0.0, "E2E:LANGUAGE;code=eng"),
+        (0.0, "E2E:VIEW;category=glance;view=GlanceSitemapView;depth=1"),
+    ]
+    monkeypatch.setattr("e2e.sim.wine.time.sleep", lambda seconds: None)
+    monkeypatch.setattr("e2e.sim.wine.LAUNCH_ATTEMPT_TIMEOUT", 0.0)
+    monkeypatch.setattr("e2e.sim.wine.LAUNCH_SETTLE_S", 0.0)
+    fake = FakeRun()
+    driver._run = fake  # type: ignore[method-assign]
+
+    with pytest.raises(DriverError) as error:
+        driver.wait_ready(0.05)
+
+    message = str(error.value)
+    assert "language 'eng'" in message or "reported system language" in message
+    log = _driver_log(driver)
+    assert "language mismatch (deferred)" in log
+    assert "launch attempt 1/3" in log, "the launch ran before the language error"
+
+
+def test_the_ini_language_is_reported_after_start(
+    tmp_path: Path,
+) -> None:
+    """The written index and the file's state after start are both in the log."""
+    driver = _ready_driver(tmp_path, language="deu")
+    ini = tmp_path / "simulator.ini"
+    ini.write_text("LastUsedDevice=fenix7\nLanguage=7\n", encoding="utf-8")
+    driver._ini_path = ini
+    driver._record_ini_language_after_start()
+    log = _driver_log(driver)
+    assert "simulator.ini after start: Language=7" in log
+    assert "expected 'deu'" in log
+
+    ini.write_text("LastUsedDevice=fenix7\n", encoding="utf-8")
+    driver._record_ini_language_after_start()
+    assert "simulator.ini after start: Language=absent" in _driver_log(driver)
+
+
+def test_the_pointer_guard_accepts_a_window_inside_the_simulator(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Wine creates several X windows; one inside the simulator is the simulator."""
+    driver = _driver(tmp_path)
+    driver._window = "42"
+    monkeypatch.setattr(driver, "_root_window_id", lambda: "543")
+    monkeypatch.setattr(
+        driver,
+        "_geometry",
+        lambda window: {
+            "x": 4,
+            "y": 30,
+            "width": 409,
+            "height": 600,
+        }
+        if window == "42"
+        else {"x": 10, "y": 40, "width": 342, "height": 566},
+    )
+
+    class DifferentPidRun(FakeRun):
+        def __call__(self, command, **kwargs):  # noqa: ANN001, ANN003
+            if command[:2] == ["xdotool", "getwindowpid"]:
+                pid = "111\n" if command[-1] == "42" else "222\n"
+                return subprocess.CompletedProcess(list(command), 0, pid, "")
+            return super().__call__(command, **kwargs)
+
+    driver._run = DifferentPidRun()  # type: ignore[method-assign]
+
+    driver._verify_pointer_window("42", 99)  # no raise: 99's rect is inside 42
+    assert "lies inside the simulator window" in _driver_log(driver)
 
 
 def test_key_override_option_sets_the_driver_environment(

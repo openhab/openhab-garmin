@@ -59,9 +59,10 @@ engine reports event and golden assertions as **skipped**, never passed.
 - `input-delivery` presses the declared select once and reports whether the app
   changed a view or its screen area. It does not assume a simulator menu, and it
   verifies the pointer is over the simulator before clicking.
-- The contract starts with `mode=ble, language=deu`. `deu` is provisioned through
-  the measured numeric index and the reported language must match, so a wrong
-  index fails the contract loudly instead of running in English.
+- The contract starts with `language=deu` so the numeric index path is proven;
+  `--language` changes it. It starts in `mode=ble`; a plain-HTTP stack needs
+  `--mode wifi`, because over BLE the platform requires HTTPS and the sitemap
+  request is refused with `-1001` (see "`-1001` on a healthy 200").
 
 ## How the Wine driver works
 
@@ -424,19 +425,33 @@ GET /rest/sitemaps/garmin_e2e -> 200, 207 ms, 11,113 bytes
 That contradiction is not a measurement error. `-1001` is
 `Communications.SECURE_CONNECTION_REQUIRED`, which `docs/USAGE.md` names "secure
 connection required", and `BaseRequest.checkResponseCode()` throws for anything
-but `200`. The request leaves the app, the stack serves it, and the **simulator**
-then rejects the response because the connection is not secure: the E2E stack is
-plain HTTP.
+but `200`.
 
-The simulator's own switch for that is `UseHttpsRequirements`, and the
-maintainer's working installation carries `UseHttpsRequirements=0`. The driver now
-writes that key with `0` on every start (`HTTPS_REQUIREMENTS_KEY` in
-`simulator.ini`), for the same reason it writes `BleState`: the environment, not
-the app, decides whether a plain-HTTP request is acceptable.
+**`UseHttpsRequirements=0` was tested and does not fix it.** The operator wrote
+that key into `simulator.ini` (alongside `LastFplVersion`, `LastUsedDevice`,
+`Language=0`, `BleState=2`, `WifiState=1`), launched, and ran the working
+sequence: the app still reported `SITEMAP;result=error;code=-1001` while the shim
+logged `200, 126 ms`. The key is still written because a working installation has
+it, but it is **not** the cause and the docs must not send the next person there.
 
-If `-1001` still appears with the key written, the next measurements, in order.
-Every one of them needs the deterministic launch above, otherwise a failure is
-ambiguous.
+**The rule is in the app's own documentation:** over **BLE**, "only HTTPS with a
+valid certificate is supported due to Garmin SDK limitations" (`docs/USAGE.md`,
+Platform Support), while over **Wi-Fi** "both HTTP and HTTPS are supported". The
+contract launches in `mode=ble`, the E2E stack serves plain HTTP, and the
+platform therefore refuses the request with `SECURE_CONNECTION_REQUIRED` — while
+the engine still sends it, which is why the shim sees a 200. This is expected
+platform behaviour, not an app defect:
+
+- with a plain-HTTP stack, launch in **Wi-Fi** mode: `contract-test --mode wifi`,
+  and run scenarios with `mode: wifi`;
+- or serve the shim over HTTPS with a certificate the device accepts.
+
+`contract-test --mode` and `--language` exist so this can be tried without a code
+change; the launch exercises `deu` by default to prove the numeric index path.
+
+If `-1001` survives a Wi-Fi-mode launch, the remaining measurements are about the
+transfer, and every one of them needs the deterministic launch above, otherwise a
+failure is ambiguous.
 
 1. **Payload size.** Build the ~1 KB variant with the checked-in fixture and run
    the same contract:
@@ -671,9 +686,11 @@ mouse is silent" measurement before this check had that failure mode.
 1. read its geometry immediately before moving, and move the pointer to
    `window origin + declared point`;
 1. read `xdotool getmouselocation` back and require the pointer to be at that
-   point **and** over the simulator window — the same window id, or another
-   window belonging to the same PID, because Wine parents the client area in a
-   child window;
+   point **and** over the simulator window — the same window id, another window
+   belonging to the same PID, or a window whose rectangle lies inside the
+   simulator window's. Wine creates several X windows per process (a splash and
+   the client area were both seen), so only a window outside the simulator is
+   refused;
 1. only then send the button. The verified window id and point appear in
    `last_press()` and in `logs/driver.log`.
 
@@ -717,12 +734,17 @@ from a log:
 1. **The window is focused before every key** (`windowfocus`, which needs no
    window manager; `windowactivate` is attempted once and is not relied on).
    Skipping the per-key focus was the one run that failed.
+1. **The glance is given 2 s to draw before the first key**
+   (`E2E_WINE_LAUNCH_SETTLE`). The guest's failures clustered on runs that had
+   just rebuilt the PRG, where the first key arrived before the glance had drawn
+   and the app never reported `E2E:CONNECTION` at all.
 1. **Both mechanisms are tried**: the declared hit areas (`nextPage` ×2 then
    `onSelect`, pointer-verified) and the keyboard (`Down` ×2 then `Return`), with
    a 1.5 s gap before the select. `E2E_WINE_LAUNCH_DOWNS` changes the page-down
    count for a device whose entry is a different number of pages away.
 1. **Every attempt is logged with its mechanism, point or keysym, and the view it
-   produced**, with three bounded attempts:
+   produced**, plus the `E2E:CONNECTION` state after each key, with three bounded
+   attempts:
 
 ```text
 launch attempt 1/3: declared hit areas
@@ -843,8 +865,9 @@ index 7) and the input limitation below.
    PRG path and the compiled properties). `--settings` is what compiles the
    app's property defaults in, and the build fails if `monkeyc`'s settings JSON
    does not echo them.
-1. Run `python -m e2e contract-test --driver wine --prg <built.prg>` inside the
-   runner container. Every case should pass: `wait_ready` now runs the measured
+1. Run `python -m e2e contract-test --driver wine --prg <built.prg> --mode wifi`
+   inside the runner container (Wi-Fi, because the stack serves plain HTTP and
+   BLE requires HTTPS). Every case should pass: `wait_ready` runs the measured
    launch sequence (page down ×2, then select) and `app-entry` requires a
    non-glance view. If `app-entry` fails, the `launch attempt …` lines in
    `logs/driver.log` say which attempt ran and what the view became.
@@ -861,11 +884,13 @@ index 7) and the input limitation below.
    languages should execute (no `skipped` runs) and each should confirm its
    reported language. Run one mode scenario (`extended/wifi-mode`) to confirm
    the mode verification path.
-1. Confirm the sitemap request succeeds rather than reporting `-1001`: the shim
-   must log a 200 **and** the trace must reach `E2E:VIEW;category=sitemap`
-   without `SITEMAP;result=error;code=-1001`. If it reports `-1001` with
-   `UseHttpsRequirements=0` written, run the ordered measurements in "`-1001` on
-   a healthy 200".
+1. Confirm the sitemap request succeeds rather than reporting `-1001`. The stack
+   serves plain HTTP, and over BLE the platform requires HTTPS, so run the
+   contract in Wi-Fi mode: `python -m e2e contract-test --driver wine --prg
+   <built.prg> --mode wifi`. The shim must log a 200 **and** the trace must reach
+   `E2E:VIEW;category=sitemap` without `SITEMAP;result=error;code=-1001`. If
+   `-1001` survives a Wi-Fi launch, run the ordered measurements in "`-1001` on a
+   healthy 200".
 1. If taps miss on a device, compare a screenshot with `display.location` in
    the device's `simulator.json` and pin `E2E_WINE_SCREEN_RECT` for the next run.
    The `wait_ready` window-fit check already refuses a window that cannot contain

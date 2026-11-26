@@ -743,6 +743,8 @@ def _cmd_contract_test(args: argparse.Namespace) -> int:
             device_id=args.device,
             prg=prg,
             requests=_shim_request_probe(args.shim_url),
+            mode=args.mode,
+            language=args.language,
         )
     except ContractError as error:
         driver.stop()
@@ -1304,6 +1306,21 @@ def build_parser() -> argparse.ArgumentParser:
             "send this X keysym for a semantic button instead of the driver's "
             "default path, e.g. --key ENTER=Return; repeatable"
         ),
+    )
+    contract.add_argument(
+        "--mode",
+        choices=("ble", "wifi", "offline"),
+        default="ble",
+        help=(
+            "mode the launch exercises (default: ble). With a plain-HTTP stack "
+            "use wifi: over BLE the platform requires HTTPS and the sitemap "
+            "request is refused with -1001"
+        ),
+    )
+    contract.add_argument(
+        "--language",
+        default="deu",
+        help="language the launch exercises (default: deu, to prove the numeric index)",
     )
     contract.add_argument("--json", action="store_true")
     contract.set_defaults(handler=_cmd_contract_test)

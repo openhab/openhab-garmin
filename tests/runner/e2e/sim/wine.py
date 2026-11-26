@@ -106,6 +106,12 @@ LAUNCH_STEP_DELAY_S = 1.5
 LAUNCH_DOWNS = 2
 #: Override for a device whose app entry is a different number of pages away.
 ENV_LAUNCH_DOWNS = "E2E_WINE_LAUNCH_DOWNS"
+#: Seconds to let the glance finish drawing before the first key. The guest's
+#: failures clustered on runs that had just rebuilt the PRG, where the glance
+#: had not drawn yet, so the first key was lost.
+LAUNCH_SETTLE_S = 2.0
+#: Override for the settle, when a slower host needs longer.
+ENV_LAUNCH_SETTLE = "E2E_WINE_LAUNCH_SETTLE"
 #: How long one launch attempt waits for a non-glance view.
 LAUNCH_ATTEMPT_TIMEOUT = 6.0
 #: Total budget for :meth:`WineSimulatorDriver.launch`, across its retries.
@@ -1545,12 +1551,14 @@ class WineSimulatorDriver(SimulatorDriver):
         timeout = timeout_s if timeout_s and timeout_s > 0 else DEFAULT_READY_TIMEOUT
         deadline = time.monotonic() + min(timeout, DEFAULT_READY_TIMEOUT * 2)
         parsed = self._wait_for_startup(timeout)
+        self._record_ini_language_after_start()
         language = next((event for event in parsed if event.event == "LANGUAGE"), None)
         observed = language.get("code") if language is not None else "unknown"
         self.last_language = observed
+        language_error: Optional[str] = None
         if observed != self._language:
             if self._expect_language:
-                raise DriverError(
+                language_error = (
                     f"the app reported system language {observed!r} but the "
                     f"scenario requested {self._language!r}, and this driver "
                     "provisioned it (the numeric simulator index was written).\n"
@@ -1558,14 +1566,20 @@ class WineSimulatorDriver(SimulatorDriver):
                     "ignored the key: correct the map with\n"
                     f"  python -m e2e language-scan --prg <built.prg> --write\n"
                     f"({LANGUAGE_INDEX_FILE}). A run in the wrong language would "
-                    "assert the wrong strings, so it is stopped here."
+                    "assert the wrong strings, so it is stopped here.\n"
+                    "The launch is attempted first so the rest of the run is still "
+                    "diagnosable from the same log."
                 )
-            self._record(
-                f"probed language: the app reported {observed!r} for this index"
-            )
+                self._record(f"language mismatch (deferred): {language_error}")
+            else:
+                self._record(
+                    f"probed language: the app reported {observed!r} for this index"
+                )
         else:
             self._record(f"language confirmed: {observed}")
 
+        # Launch before raising a language mismatch: a run that never opened the
+        # app must not look like a launch failure caused by the language.
         parsed = self._open_app_if_needed(parsed, deadline)
 
         if self._settings is not None and self._settings.url:
@@ -1598,6 +1612,35 @@ class WineSimulatorDriver(SimulatorDriver):
             )
         self._record_device_title()
         self._verify_window_geometry()
+        if language_error:
+            raise DriverError(language_error)
+
+    def _record_ini_language_after_start(self) -> None:
+        """Record what ``simulator.ini`` says after the simulator started.
+
+        The driver writes the file *before* ``simulator.exe``, which is what the
+        maintainer's manual runs do. If the simulator rewrites it on start, the
+        value we wrote is gone and the app never sees the language; only the
+        file's state after start can tell the difference.
+        """
+        path = self._ini_path
+        if path is None:
+            return
+        value = None
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError as error:
+            self._record(f"warning: could not re-read {path}: {error}")
+            return
+        for line in text.splitlines():
+            key, separator, raw = line.partition("=")
+            if separator and key.strip().lower() == "language":
+                value = raw.strip()
+        state = "absent" if value is None else value
+        self._record(
+            f"simulator.ini after start: Language={state} "
+            f"(expected {self._language!r})"
+        )
 
     def _verify_window_geometry(self) -> None:
         """Record the window size and check the declared space fits inside it.
@@ -1694,6 +1737,7 @@ class WineSimulatorDriver(SimulatorDriver):
             "the app started on the glance page; opening it with the measured "
             f"sequence: {self._launch_down_count()} x page down, then select"
         )
+        self._settle_before_launch(deadline)
         plans: List[Tuple[str, str, Optional[str], Optional[str]]] = []
         if device.supports_buttons:
             plans = [
@@ -1757,6 +1801,39 @@ class WineSimulatorDriver(SimulatorDriver):
             value = LAUNCH_DOWNS
         return max(1, min(5, value))
 
+    def _settle_before_launch(self, deadline: float) -> None:
+        """Let the glance finish drawing before the first key.
+
+        Measured on the guest: failures clustered on runs whose PRG had just
+        been rebuilt, with no ``E2E:CONNECTION`` line at all — the glance had not
+        drawn, so the key was lost. A fixed settle bounded by the deadline is
+        cheap compared to a wasted attempt.
+        """
+        raw = os.environ.get(ENV_LAUNCH_SETTLE, "").strip()
+        try:
+            settle = float(raw) if raw else LAUNCH_SETTLE_S
+        except ValueError:
+            settle = LAUNCH_SETTLE_S
+        settle = max(0.0, min(10.0, settle))
+        until = min(time.monotonic() + settle, deadline)
+        remaining = until - time.monotonic()
+        if remaining <= 0:
+            return
+        self._record(
+            f"settling {remaining:.1f}s before the launch sequence so the glance "
+            "has drawn (E2E_WINE_LAUNCH_SETTLE overrides)"
+        )
+        while time.monotonic() < until:
+            time.sleep(min(0.25, until - time.monotonic()))
+
+    def _connection_state(self) -> str:
+        parsed = parse_lines(self.events())
+        mode = next(
+            (event.get("mode") for event in reversed(parsed) if event.event == "CONNECTION"),
+            None,
+        )
+        return f"connection={mode}" if mode else "connection=none"
+
     def _launch_step(
         self,
         button: Button,
@@ -1767,8 +1844,10 @@ class WineSimulatorDriver(SimulatorDriver):
     ) -> None:
         """Send one key of the launch sequence and record what it produced."""
         self.press(button, count, mechanism=mechanism)
-        view = self._current_view()
-        self._record(f"launch step {what}: view is now {view}")
+        self._record(
+            f"launch step {what}: view is now {self._current_view()}; "
+            f"{self._connection_state()}"
+        )
 
     def _current_view(self) -> str:
         parsed = parse_lines(self.events())
@@ -2185,7 +2264,14 @@ class WineSimulatorDriver(SimulatorDriver):
         return parse_mouselocation(completed.stdout or "")
 
     def _verify_pointer_window(self, window: str, pointer_window: int) -> None:
-        """Fail unless the pointer is over the simulator window (or a child)."""
+        """Fail unless the pointer is over the simulator, or inside its window.
+
+        Wine creates several X windows for one application process — a splash
+        window and the client area were both seen — so a pointer over any of
+        them is over the simulator. Accept the same window id, a window owned by
+        the simulator's PID, or a window whose rectangle lies inside the
+        simulator window's rectangle.
+        """
         if str(pointer_window) == str(window):
             return
         root = self._root_window_id()
@@ -2206,11 +2292,34 @@ class WineSimulatorDriver(SimulatorDriver):
             and simulator_pid == pointer_pid
         ):
             return
+        if self._window_inside(window, str(pointer_window)):
+            self._record(
+                f"note: the pointer is over window {pointer_window}, which lies "
+                f"inside the simulator window {window}; that is the simulator's "
+                "own child window (Wine creates several per process)"
+            )
+            return
         raise DriverError(
             f"the pointer is over window {pointer_window}, not the simulator "
-            f"window {window}, so a click would not reach the app.\n"
+            f"window {window} (pid {simulator_pid!r} vs {pointer_pid!r}), and its "
+            "rectangle is not inside the simulator's.\n"
             "Refusing to click blind; see tests/docs/simulator-driver.md."
         )
+
+    def _window_inside(self, outer: str, inner: str) -> bool:
+        """True when ``inner``'s rectangle lies within ``outer``'s."""
+        try:
+            outer_geometry = self._geometry(outer)
+            inner_geometry = self._geometry(inner)
+        except DriverError:
+            return False
+        ox, oy = outer_geometry.get("x", 0), outer_geometry.get("y", 0)
+        ow, oh = outer_geometry.get("width", 0), outer_geometry.get("height", 0)
+        ix, iy = inner_geometry.get("x", 0), inner_geometry.get("y", 0)
+        iw, ih = inner_geometry.get("width", 0), inner_geometry.get("height", 0)
+        if ow <= 0 or oh <= 0 or iw <= 0 or ih <= 0:
+            return False
+        return ix >= ox and iy >= oy and ix + iw <= ox + ow and iy + ih <= oy + oh
 
     def _root_window_id(self) -> Optional[str]:
         cached = getattr(self, "_root_id", None)
@@ -2521,7 +2630,8 @@ class WineSimulatorDriver(SimulatorDriver):
             f"simulator.ini {path}: "
             + ("created" if created else "rewrote")
             + f" written={list(update.written)} appended={list(update.appended)} "
-            + f"removed={list(update.removed)}; {language_note}"
+            + f"removed={list(update.removed)}; {language_note} "
+            + f"({HTTPS_REQUIREMENTS_KEY}={HTTPS_REQUIREMENTS_OFF})"
         )
 
     def _ini_description(self) -> str:
