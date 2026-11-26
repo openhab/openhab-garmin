@@ -427,31 +427,32 @@ That contradiction is not a measurement error. `-1001` is
 connection required", and `BaseRequest.checkResponseCode()` throws for anything
 but `200`.
 
-**`UseHttpsRequirements=0` was tested and does not fix it.** The operator wrote
-that key into `simulator.ini` (alongside `LastFplVersion`, `LastUsedDevice`,
-`Language=0`, `BleState=2`, `WifiState=1`), launched, and ran the working
-sequence: the app still reported `SITEMAP;result=error;code=-1001` while the shim
-logged `200, 126 ms`. The key is still written because a working installation has
-it, but it is **not** the cause and the docs must not send the next person there.
+**Superseded by observation: the same BLE/plain-HTTP configuration loads the
+sitemap once the launch waits long enough.**
 
-**The rule is in the app's own documentation:** over **BLE**, "only HTTPS with a
-valid certificate is supported due to Garmin SDK limitations" (`docs/USAGE.md`,
-Platform Support), while over **Wi-Fi** "both HTTP and HTTPS are supported". The
-contract launches in `mode=ble`, the E2E stack serves plain HTTP, and the
-platform therefore refuses the request with `SECURE_CONNECTION_REQUIRED` — while
-the engine still sends it, which is why the shim sees a 200. This is expected
-platform behaviour, not an app defect:
+```text
+E2E:CONNECTION;mode=BLE
+E2E:VIEW;category=sitemap;view=LoadingView;depth=1
+E2E:SITEMAP;result=success;code=200;bytes=27936
+E2E:VIEW;category=sitemap;view=HomepageMenu;depth=1
+```
 
-- with a plain-HTTP stack, launch in **Wi-Fi** mode: `contract-test --mode wifi`,
-  and run scenarios with `mode: wifi`;
-- or serve the shim over HTTPS with a certificate the device accepts.
+with `UseHttpsRequirements=0`, `Language=0`, `BleState=2` in `simulator.ini` and a
+50 s settle. So `-1001` was **not** a protocol refusal and neither
+`UseHttpsRequirements` nor `--mode wifi` is a fix: the earlier runs pressed keys
+before the app was interactive, so the request the shim logged belonged to a
+launch that then failed differently. The key is still written because a working
+installation has it, and `--mode`/`--language` stay because scenarios legitimately
+differ in what they exercise — but the driver does not depend on either for the
+request to succeed.
 
-`contract-test --mode` and `--language` exist so this can be tried without a code
-change; the launch exercises `deu` by default to prove the numeric index path.
+`bytes=27936` in that line is the app's **estimated** footprint for the
+11,113-byte payload, not the body: the 16 KiB wall documented in
+[fixture-limits.md](fixture-limits.md) applies to the response body.
 
-If `-1001` survives a Wi-Fi-mode launch, the remaining measurements are about the
-transfer, and every one of them needs the deterministic launch above, otherwise a
-failure is ambiguous.
+If a run still reports `-1001`, check the settle first (the launch log says
+whether the screen was stable) before suspecting the transfer; the size and
+protocol measurements below only matter once the launch is deterministic.
 
 1. **Payload size.** Build the ~1 KB variant with the checked-in fixture and run
    the same contract:
@@ -480,9 +481,24 @@ shim log alone.
 
 A related app-side note from the same run: with the error view on screen the app
 died with `Invalid Font Specified` at `ErrorView.mc:144` (`drawTextArea()`), the
-same class of fault as the glance crash in #396 but on the error path. Until it is
-understood, error scenarios cannot render their view even though the error
-detection works. This is app code; the harness records it, it does not patch it.
+same class of fault as the glance crash in #396 but on the error path. `HomepageMenu`
+now fails the same way after the sitemap loads successfully, so three different
+screens — glance, homepage and error view — hit it.
+
+**Likely a simulator-version regression.** Our simulator reports **6.0.4** (SDK
+9.3.0); the maintainer's working simulator is **6.0.3**, where the glance, the
+error view and the homepage render. One platform-level font regression explains
+all three screens; three independent app bugs do not. The experiment:
+
+1. install an SDK that bundles simulator **6.0.3** (an older Connect IQ SDK) in
+   place of the pinned one;
+1. run the same PRG and the same sequence against it;
+1. if the screens render, record the SDK/simulator versions as the cause and keep
+   the pinned SDK out of the E2E stack until it is fixed upstream — the harness
+   does not patch app code either way.
+
+The driver already logs the version from the simulator window title
+(`CIQ Simulator - <device> (<version>)`), so the comparison needs no new code.
 
 ## Window size is per device
 
@@ -734,10 +750,15 @@ from a log:
 1. **The window is focused before every key** (`windowfocus`, which needs no
    window manager; `windowactivate` is attempted once and is not relied on).
    Skipping the per-key focus was the one run that failed.
-1. **The glance is given 2 s to draw before the first key**
-   (`E2E_WINE_LAUNCH_SETTLE`). The guest's failures clustered on runs that had
-   just rebuilt the PRG, where the first key arrived before the glance had drawn
-   and the app never reported `E2E:CONNECTION` at all.
+1. **The glance is given time to become interactive, not just to draw**
+   (`LAUNCH_DWELL_S` = 10 s since app start, then two screen captures 1 s apart
+   that must match, bounded by `LAUNCH_SETTLE_MAX_S` = 60 s;
+   `E2E_WINE_LAUNCH_DWELL` and `E2E_WINE_LAUNCH_SETTLE` override). The guest
+   measured that waiting for the first `E2E:VIEW` is **not** the same as waiting
+   for the app to accept input: with ~50 s after `monkeydo` the sequence worked
+   3/3 times, while a 2 s wait failed all attempts with "no view other than the
+   glance". The dwell-plus-stable-screen rule is the explicit version of that,
+   and it is faster than a blanket 50 s when the screen settles earlier.
 1. **Both mechanisms are tried**: the declared hit areas (`nextPage` ×2 then
    `onSelect`, pointer-verified) and the keyboard (`Down` ×2 then `Return`), with
    a 1.5 s gap before the select. `E2E_WINE_LAUNCH_DOWNS` changes the page-down
@@ -865,12 +886,12 @@ index 7) and the input limitation below.
    PRG path and the compiled properties). `--settings` is what compiles the
    app's property defaults in, and the build fails if `monkeyc`'s settings JSON
    does not echo them.
-1. Run `python -m e2e contract-test --driver wine --prg <built.prg> --mode wifi`
-   inside the runner container (Wi-Fi, because the stack serves plain HTTP and
-   BLE requires HTTPS). Every case should pass: `wait_ready` runs the measured
-   launch sequence (page down ×2, then select) and `app-entry` requires a
-   non-glance view. If `app-entry` fails, the `launch attempt …` lines in
-   `logs/driver.log` say which attempt ran and what the view became.
+1. Run `python -m e2e contract-test --driver wine --prg <built.prg>` inside the
+   runner container. Every case should pass: `wait_ready` settles until the app is
+   interactive (dwell plus a stable screen) and then runs the measured launch
+   sequence. If `app-entry` fails, the `launch attempt …` lines in
+   `logs/driver.log` say whether the screen was stable and what each step
+   produced.
 1. Run `python -m e2e run smoke/launch-and-poll --driver wine` (or `--prg
    <built.prg>`; the run command builds per scenario, with that scenario's
    fixture) and confirm the request assertions are evaluated, not skipped.
@@ -884,13 +905,11 @@ index 7) and the input limitation below.
    languages should execute (no `skipped` runs) and each should confirm its
    reported language. Run one mode scenario (`extended/wifi-mode`) to confirm
    the mode verification path.
-1. Confirm the sitemap request succeeds rather than reporting `-1001`. The stack
-   serves plain HTTP, and over BLE the platform requires HTTPS, so run the
-   contract in Wi-Fi mode: `python -m e2e contract-test --driver wine --prg
-   <built.prg> --mode wifi`. The shim must log a 200 **and** the trace must reach
-   `E2E:VIEW;category=sitemap` without `SITEMAP;result=error;code=-1001`. If
-   `-1001` survives a Wi-Fi launch, run the ordered measurements in "`-1001` on a
-   healthy 200".
+1. Confirm the sitemap loads. With the settle in place the same BLE/plain-HTTP
+   stack succeeds (`SITEMAP;result=success;code=200`); `--mode` selects what a
+   scenario exercises, not a workaround. If a run reports `-1001`, read the
+   launch log first — it says whether the screen was stable before the keys — and
+   only then the ordered measurements in "`-1001` on a healthy 200".
 1. If taps miss on a device, compare a screenshot with `display.location` in
    the device's `simulator.json` and pin `E2E_WINE_SCREEN_RECT` for the next run.
    The `wait_ready` window-fit check already refuses a window that cannot contain

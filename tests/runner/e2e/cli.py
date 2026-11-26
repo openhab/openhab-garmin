@@ -1312,9 +1312,8 @@ def build_parser() -> argparse.ArgumentParser:
         choices=("ble", "wifi", "offline"),
         default="ble",
         help=(
-            "mode the launch exercises (default: ble). With a plain-HTTP stack "
-            "use wifi: over BLE the platform requires HTTPS and the sitemap "
-            "request is refused with -1001"
+            "mode the launch exercises (default: ble); scenarios legitimately "
+            "differ, so this only chooses what this run starts in"
         ),
     )
     contract.add_argument(

@@ -737,7 +737,8 @@ def test_launch_pages_down_then_selects_on_a_button_device(
     )
     monkeypatch.setattr("e2e.sim.wine.time.sleep", lambda seconds: None)
     monkeypatch.setattr("e2e.sim.wine.LAUNCH_ATTEMPT_TIMEOUT", 0.0)
-    monkeypatch.setattr("e2e.sim.wine.LAUNCH_SETTLE_S", 0.0)
+    monkeypatch.setattr("e2e.sim.wine.LAUNCH_DWELL_S", 0.0)
+    monkeypatch.setattr("e2e.sim.wine.LAUNCH_SETTLE_MAX_S", 0.0)
     fake = FakeRun()
     driver._run = fake  # type: ignore[method-assign]
 
@@ -773,7 +774,8 @@ def test_launch_stops_when_the_app_opens(
         driver, "_geometry", lambda window: {"x": 0, "y": 0, "width": 400, "height": 405}
     )
     monkeypatch.setattr("e2e.sim.wine.time.sleep", lambda seconds: None)
-    monkeypatch.setattr("e2e.sim.wine.LAUNCH_SETTLE_S", 0.0)
+    monkeypatch.setattr("e2e.sim.wine.LAUNCH_DWELL_S", 0.0)
+    monkeypatch.setattr("e2e.sim.wine.LAUNCH_SETTLE_MAX_S", 0.0)
     fake = FakeRun()
 
     class OpeningRun(FakeRun):
@@ -811,7 +813,8 @@ def test_launch_taps_the_screen_on_a_touch_only_device(
     )
     monkeypatch.setattr("e2e.sim.wine.time.sleep", lambda seconds: None)
     monkeypatch.setattr("e2e.sim.wine.LAUNCH_ATTEMPT_TIMEOUT", 0.0)
-    monkeypatch.setattr("e2e.sim.wine.LAUNCH_SETTLE_S", 0.0)
+    monkeypatch.setattr("e2e.sim.wine.LAUNCH_DWELL_S", 0.0)
+    monkeypatch.setattr("e2e.sim.wine.LAUNCH_SETTLE_MAX_S", 0.0)
     fake = FakeRun()
     driver._run = fake  # type: ignore[method-assign]
 
@@ -2342,7 +2345,8 @@ def test_a_language_mismatch_still_launches_the_app_first(
     ]
     monkeypatch.setattr("e2e.sim.wine.time.sleep", lambda seconds: None)
     monkeypatch.setattr("e2e.sim.wine.LAUNCH_ATTEMPT_TIMEOUT", 0.0)
-    monkeypatch.setattr("e2e.sim.wine.LAUNCH_SETTLE_S", 0.0)
+    monkeypatch.setattr("e2e.sim.wine.LAUNCH_DWELL_S", 0.0)
+    monkeypatch.setattr("e2e.sim.wine.LAUNCH_SETTLE_MAX_S", 0.0)
     fake = FakeRun()
     driver._run = fake  # type: ignore[method-assign]
 
@@ -2405,6 +2409,46 @@ def test_the_pointer_guard_accepts_a_window_inside_the_simulator(
 
     driver._verify_pointer_window("42", 99)  # no raise: 99's rect is inside 42
     assert "lies inside the simulator window" in _driver_log(driver)
+
+
+def test_launch_waits_for_a_dwell_and_a_stable_screen(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Waiting for the first VIEW is not the same as waiting for input."""
+    driver = _driver(tmp_path)
+    driver._started = True
+    driver._device = _device("fenix7")
+    driver._window = "42"
+    driver._definition = _definition(tmp_path)
+    driver._events = [
+        (0.0, "E2E:LANGUAGE;code=eng"),
+        (0.0, "E2E:VIEW;category=glance;view=GlanceSitemapView;depth=1"),
+    ]
+    driver._app_started_at = time.monotonic() - 30.0
+    monkeypatch.setattr(driver, "_window_name", lambda window: "CIQ Simulator - Fenix 7")
+    monkeypatch.setattr(
+        driver, "_geometry", lambda window: {"x": 0, "y": 0, "width": 400, "height": 405}
+    )
+    monkeypatch.setattr("e2e.sim.wine.time.sleep", lambda seconds: None)
+    monkeypatch.setattr("e2e.sim.wine.LAUNCH_ATTEMPT_TIMEOUT", 0.0)
+    monkeypatch.setattr("e2e.sim.wine.LAUNCH_DWELL_S", 0.0)
+    monkeypatch.setattr("e2e.sim.wine.LAUNCH_SETTLE_MAX_S", 10.0)
+    shots = []
+
+    def fake_screenshot(path):  # noqa: ANN001
+        shots.append(path)
+        return path
+
+    monkeypatch.setattr(driver, "screenshot", fake_screenshot)
+    monkeypatch.setattr(driver, "pixel_difference", lambda a, b: 0)
+    driver._run = FakeRun()  # type: ignore[method-assign]
+
+    driver.launch(timeout_s=5.0)
+
+    log = _driver_log(driver)
+    assert "settling: waiting until 0" in log or "settle complete" in log
+    assert "the screen is stable" in log
+    assert len(shots) >= 2, "two captures are compared"
 
 
 def test_key_override_option_sets_the_driver_environment(

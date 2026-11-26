@@ -106,16 +106,24 @@ LAUNCH_STEP_DELAY_S = 1.5
 LAUNCH_DOWNS = 2
 #: Override for a device whose app entry is a different number of pages away.
 ENV_LAUNCH_DOWNS = "E2E_WINE_LAUNCH_DOWNS"
-#: Seconds to let the glance finish drawing before the first key. The guest's
-#: failures clustered on runs that had just rebuilt the PRG, where the glance
-#: had not drawn yet, so the first key was lost.
-LAUNCH_SETTLE_S = 2.0
-#: Override for the settle, when a slower host needs longer.
+#: Seconds the app must have been running before the first launch key. Waiting
+#: for the first `E2E:VIEW` is not the same as waiting until the app accepts
+#: input: the guest needed ~50 s of blunt waiting, and the empirical rule is a
+#: dwell of at least this long plus a stable screen.
+LAUNCH_DWELL_S = 10.0
+#: Override for the dwell.
+ENV_LAUNCH_DWELL = "E2E_WINE_LAUNCH_DWELL"
+#: Upper bound on the settle (dwell + stability), measured from app start.
+LAUNCH_SETTLE_MAX_S = 60.0
+#: Override for the maximum settle. Replaces the old fixed 2 s wait.
 ENV_LAUNCH_SETTLE = "E2E_WINE_LAUNCH_SETTLE"
+#: Seconds between the two captures that must match before the sequence is sent.
+LAUNCH_STABLE_INTERVAL_S = 1.0
 #: How long one launch attempt waits for a non-glance view.
 LAUNCH_ATTEMPT_TIMEOUT = 6.0
-#: Total budget for :meth:`WineSimulatorDriver.launch`, across its retries.
-DEFAULT_LAUNCH_TIMEOUT = 30.0
+#: Total budget for :meth:`WineSimulatorDriver.launch`, across its settle and
+#: retries. The settle alone may spend ``LAUNCH_SETTLE_MAX_S``.
+DEFAULT_LAUNCH_TIMEOUT = 90.0
 #: Accelerators for the simulator's own menus, kept for diagnostics only: the
 #: guest's simulator has no menu bar, so the driver does not rely on one.
 INPUT_PROBE_KEYS: Tuple[str, ...] = ("alt+s", "alt+c")
@@ -1342,6 +1350,7 @@ class WineSimulatorDriver(SimulatorDriver):
         self._keys: Dict[Button, str] = dict(DEFAULT_KEYS)
         self._definition = SimulatorDefinition()
         self._last_press: Optional[PressResult] = None
+        self._app_started_at: Optional[float] = None
         self._mode = "ble"
         self._language = "eng"
         self._expect_language = True
@@ -1802,29 +1811,82 @@ class WineSimulatorDriver(SimulatorDriver):
         return max(1, min(5, value))
 
     def _settle_before_launch(self, deadline: float) -> None:
-        """Let the glance finish drawing before the first key.
+        """Wait until the app is interactive, not merely drawing.
 
-        Measured on the guest: failures clustered on runs whose PRG had just
-        been rebuilt, with no ``E2E:CONNECTION`` line at all — the glance had not
-        drawn, so the key was lost. A fixed settle bounded by the deadline is
-        cheap compared to a wasted attempt.
+        The guest measured that waiting for the first ``E2E:VIEW`` is not
+        equivalent to the app accepting input: with a ~50 s wait after
+        ``monkeydo`` the sequence worked every time, while a 2 s wait failed all
+        attempts. The rule here is the explicit version of that: the app must
+        have been running for ``LAUNCH_DWELL_S`` **and** the screen must be
+        stable (two captures ``LAUNCH_STABLE_INTERVAL_S`` apart that match),
+        bounded by ``LAUNCH_SETTLE_MAX_S`` and the launch deadline. Both limits
+        and the dwell have environment overrides.
         """
-        raw = os.environ.get(ENV_LAUNCH_SETTLE, "").strip()
-        try:
-            settle = float(raw) if raw else LAUNCH_SETTLE_S
-        except ValueError:
-            settle = LAUNCH_SETTLE_S
-        settle = max(0.0, min(10.0, settle))
-        until = min(time.monotonic() + settle, deadline)
-        remaining = until - time.monotonic()
-        if remaining <= 0:
-            return
-        self._record(
-            f"settling {remaining:.1f}s before the launch sequence so the glance "
-            "has drawn (E2E_WINE_LAUNCH_SETTLE overrides)"
+        dwell = self._seconds_from_env(ENV_LAUNCH_DWELL, LAUNCH_DWELL_S, 0.0, 120.0)
+        maximum = self._seconds_from_env(
+            ENV_LAUNCH_SETTLE, LAUNCH_SETTLE_MAX_S, 0.0, 180.0
         )
-        while time.monotonic() < until:
-            time.sleep(min(0.25, until - time.monotonic()))
+        started = self._app_started_at or time.monotonic()
+        target = min(started + dwell, started + maximum, deadline)
+        if target > time.monotonic():
+            self._record(
+                f"settling: waiting until {dwell:g}s after app start before the "
+                "launch sequence (the app must accept input, not just draw)"
+            )
+            while time.monotonic() < target:
+                time.sleep(min(0.25, target - time.monotonic()))
+
+        stable = self._wait_for_stable_screen(
+            min(
+                deadline,
+                max(
+                    started + maximum,
+                    time.monotonic() + 2 * LAUNCH_STABLE_INTERVAL_S,
+                ),
+            )
+        )
+        self._record(
+            "settle complete: "
+            + ("the screen is stable" if stable else "the screen is still changing")
+            + f"; {time.monotonic() - started:.1f}s since app start"
+        )
+
+    def _seconds_from_env(
+        self, name: str, default: float, low: float, high: float
+    ) -> float:
+        raw = os.environ.get(name, "").strip()
+        try:
+            value = float(raw) if raw else default
+        except ValueError:
+            value = default
+        return max(low, min(high, value))
+
+    def _wait_for_stable_screen(self, deadline: float) -> bool:
+        """Two captures a second apart must match before input is sent."""
+        difference = getattr(self, "pixel_difference", None)
+        if difference is None or not self.supports_screenshots:
+            return False
+        window = self._window
+        if window is None:
+            return False
+        first = self.artifact_dir / "launch-settle-a.png"
+        second = self.artifact_dir / "launch-settle-b.png"
+        first.parent.mkdir(parents=True, exist_ok=True)
+        while time.monotonic() + LAUNCH_STABLE_INTERVAL_S <= deadline:
+            try:
+                self.screenshot(first)
+                time.sleep(LAUNCH_STABLE_INTERVAL_S)
+                self.screenshot(second)
+                measured = difference(first, second)
+            except (DriverError, OSError) as error:
+                self._record(
+                    f"warning: could not measure screen stability ({error}); "
+                    "sending the sequence anyway"
+                )
+                return False
+            if measured is not None and int(measured) == 0:
+                return True
+        return False
 
     def _connection_state(self) -> str:
         parsed = parse_lines(self.events())
@@ -2895,6 +2957,7 @@ class WineSimulatorDriver(SimulatorDriver):
         self._record(
             f"app PID {self._app_process.pid}: {shlex.join(command)}"
         )
+        self._app_started_at = time.monotonic()
         self._app_thread = threading.Thread(target=self._read_console, daemon=True)
         self._app_thread.start()
 

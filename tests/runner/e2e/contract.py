@@ -142,9 +142,10 @@ def run_contract(
 
     ``mode`` and ``language`` select what the launch exercises. ``language``
     defaults to a non-default code so the numeric index path is proven; ``mode``
-    defaults to ``ble``, but a plain-HTTP stack needs ``wifi``: over BLE the
-    platform requires HTTPS, so a plain-HTTP sitemap request is refused with
-    ``-1001`` (see tests/docs/simulator-driver.md).
+    defaults to ``ble`` and only chooses the starting transport, because
+    scenarios legitimately differ. A plain-HTTP stack works in either mode once
+    the launch waits until the app is interactive (see
+    tests/docs/simulator-driver.md).
     """
     workdir = Path(workdir)
     workdir.mkdir(parents=True, exist_ok=True)
