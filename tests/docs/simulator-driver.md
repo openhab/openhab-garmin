@@ -49,10 +49,14 @@ engine reports event and golden assertions as **skipped**, never passed.
   `skipped` with that evidence, not failed, because one press legitimately does
   nothing (navigation at the top of a list). `--key BUTTON=KEYSYM` (repeatable)
   tries a different keysym.
-- `press-sequence` is the input verdict: `DOWN`, `DOWN`, `UP` must produce at
-  least one measurable effect. All three silent fails with every mechanism in
-  the message. A touch-only device (e.g. `venu2`) has no physical buttons, so its
-  press cases are skipped and `tap` covers its input.
+- `press-sequence` is the input verdict **while the app is still on the glance**:
+  `DOWN`, `DOWN`, `UP` must produce at least one measurable effect, and all three
+  silent fails with every mechanism in the message. Once the app is open those
+  keys are ordinary navigation — a one-page menu legitimately does not move — so a
+  silent sequence there is reported `skipped` with the measurements, and
+  `press-effect` judges input on the open app. A touch-only device (e.g. `venu2`)
+  has no physical buttons, so its press cases are skipped and `tap` covers its
+  input.
 - `press-effect` presses ENTER, MENU and DOWN (and taps on touch devices) and
   requires a different view or a screen change in the screen rectangle; a repeat
   of the same view never counts.
@@ -801,12 +805,13 @@ Before the first sequence it also sends one `Down` and measures the screen with
 a before/after capture:
 
 ```text
-selection probe: one page down changed the screen by 4200px (the glance selection moved)
+selection probe at 52.1s since app start: one page down changed the screen by 4200px — the glance selection moved. This is an early signal only; the launch retries below decide whether input lands.
 ```
 
-If that probe is sometimes zero, the simulator is intermittently ignoring input
-early in its life, and the retry loop is the correct answer rather than a
-workaround. `E2E_WINE_LAUNCH_DOWNS` changes the page-down count for a device
+A zero there is **not** a verdict: the probe runs before the first retry, and the
+guest has shown `0px` on a run whose second retry then opened the app. The
+message says so, and records the elapsed time, so the two are not read as a
+contradiction. `E2E_WINE_LAUNCH_DOWNS` changes the page-down count for a device
 whose app entry is a different number of pages away.
 
 Success requires `E2E:CONNECTION`, a view whose category is not `glance`, or an
@@ -878,7 +883,7 @@ is enough to act on it.
 | `press-effect … beat that` | the screen changes on its own by at least the idle baseline, so the press is indistinguishable | freeze the animated region or assert a view instead of pixels |
 | `press-effect … no different VIEW` | the press produced a repeated view or none | check the launch log first: the app is only entered by page down then select |
 | `press[<button>] … effect=none` | the press ran but changed nothing measurable. A single press can legitimately do nothing. Reported as evidence (`skipped`); the sequence is the verdict | check the mechanism and verified pointer in `logs/driver.log`; then the order of the presses |
-| `press-sequence … DOWN, DOWN, UP produced no effect` | no press in the sequence had an effect | read the three mechanisms; `--key DOWN=<keysym>` tries another binding |
+| `press-sequence … produced no effect` | no press in the sequence had an effect **while the app was still on the glance**, so delivery has not been shown | read the three mechanisms; delivery on this guest is nondeterministic and the launch retries, so a single silent sequence is not conclusive. `--key DOWN=<keysym>` tries another binding. On an open app the case reports `skipped` instead |
 | `the pointer never reached the simulator window` | the click would have gone to the root window or another client, so it was refused | the window moved or is not mapped on this display; re-run, and confirm `xdotool getmouselocation` names the simulator window. This is the failure mode behind every "the mouse is silent" measurement |
 | `the app reported system language …` | the numeric index was written but the app reports another language, so the index is wrong or was ignored | run `python -m e2e language-scan --prg <prg> --write` and check `tests/config/simulator-languages.json` |
 | `language 'pol' has no measured simulator index` | the code is not in the measured map, so the run would be in another language | measure it with `language-scan --write`; until then the run is reported blocked |

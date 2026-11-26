@@ -1892,13 +1892,17 @@ class WineSimulatorDriver(SimulatorDriver):
             self._record(f"note: selection probe skipped ({error})")
             return
         changed = int(difference or 0)
+        elapsed = time.monotonic() - (self._app_started_at or time.monotonic())
+        verdict = (
+            "the glance selection moved"
+            if changed > 0
+            else "no visible change, which can happen while the simulator is "
+            "still starting"
+        )
         self._record(
-            f"selection probe: one page down changed the screen by {changed}px "
-            + (
-                "(the glance selection moved)"
-                if changed > 0
-                else "(no visible change — the simulator may be ignoring input)"
-            )
+            f"selection probe at {elapsed:.1f}s since app start: one page down "
+            f"changed the screen by {changed}px — {verdict}. This is an early "
+            "signal only; the launch retries below decide whether input lands."
         )
 
     def _launch_down_count(self) -> int:

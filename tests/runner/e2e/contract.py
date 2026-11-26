@@ -453,10 +453,15 @@ def run_contract(
         cases.append(_run_case(f"press[{button.value}]", press_case))
 
     def press_sequence() -> object:
-        """The delivery verdict: a sequence of navigation presses must move.
+        """The delivery verdict, judged where delivery is still unproven.
 
-        One `DOWN` at the top of a list changes nothing; two do. A device whose
-        navigation is cumulative cannot be judged press by press.
+        On the glance, a sequence of navigation presses must move: one `DOWN` at
+        the top of a list changes nothing, two do, and a device whose navigation
+        is cumulative cannot be judged press by press. Once the app is open, the
+        same keys are ordinary navigation — a page-down on a menu with one page
+        legitimately changes nothing — so a silent sequence there is reported as
+        ``skipped`` with the evidence, not as a failure. `press-effect` is the
+        case that judges input on the open app.
         """
         measured = getattr(driver, "press_measured", None)
         if not device.supports_buttons:
@@ -472,6 +477,11 @@ def run_contract(
                 SKIPPED,
                 f"{driver.name} cannot measure a press, so delivery is unproven",
             )
+        current = next(
+            (event for event in reversed(parse_lines(list(driver.events()))) if event.event == "VIEW"),
+            None,
+        )
+        on_glance = current is None or current.get("category") == "glance"
         seen: List[str] = []
         for button in (Button.DOWN, Button.DOWN, Button.UP):
             result = measured(
@@ -480,13 +490,26 @@ def run_contract(
             seen.append(result.describe())
             if result.effect:
                 return "sequence delivered: " + " | ".join(seen)
+        if not on_glance:
+            where = f"{current.get('category')}/{current.get('view')}"
+            return (
+                SKIPPED,
+                f"the app is on {where}, not the glance, so these keys are "
+                "ordinary navigation there and a one-page menu legitimately does "
+                "not move; `press-effect` judges input on the open app. "
+                "Measurement: " + " | ".join(seen),
+            )
         raise AssertionError(
-            "a sequence of DOWN, DOWN, UP produced no effect on any press:\n  "
+            "a sequence of DOWN, DOWN, UP produced no effect on any press while "
+            "the app was still on the glance, so input has not been shown to "
+            "reach it:\n  "
             + "\n  ".join(seen)
             + "\nThe mechanism each press used is above. A silent mouse and an "
             "ignored keysym look the same; `--key DOWN=<keysym>` tries another "
             "binding, and the pointer line shows whether a click reached the "
-            "simulator window. See tests/docs/simulator-driver.md."
+            "simulator window. Note that delivery on this guest is "
+            "nondeterministic: the launch retries until it lands. See "
+            "tests/docs/simulator-driver.md."
         )
 
     cases.append(_run_case("press-sequence", press_sequence))

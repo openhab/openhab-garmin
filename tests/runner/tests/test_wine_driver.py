@@ -2173,7 +2173,10 @@ def test_contract_marks_a_no_effect_press_as_evidence_not_a_failure(
     prg = tmp_path / "openhab-garmin-fenix7.prg"
     prg.write_bytes(b"prg")
     cases = run_contract(
-        _FakeDriver(press_changes_view=False), tmp_path, prg=prg, device_id=None
+        _FakeDriver(press_changes_view=False, start_category="glance"),
+        tmp_path,
+        prg=prg,
+        device_id=None,
     )
     by_name = {case.name: case for case in cases}
 
@@ -2185,9 +2188,33 @@ def test_contract_marks_a_no_effect_press_as_evidence_not_a_failure(
 
     sequence = by_name["press-sequence"]
     assert sequence.status == FAIL
-    assert "DOWN, DOWN, UP produced no effect" in sequence.detail
+    assert "produced no effect" in sequence.detail
+    assert "still on the glance" in sequence.detail
     assert "--key DOWN=" in sequence.detail
     assert "pointer line" in sequence.detail
+
+
+def test_press_sequence_is_evidence_on_an_open_app(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """On an open app a page-down is navigation, so a still view is not a failure."""
+    import e2e.contract as contract_module
+
+    monkeypatch.setattr(contract_module, "PRESS_EFFECT_TIMEOUT", 0.05)
+    prg = tmp_path / "openhab-garmin-fenix7.prg"
+    prg.write_bytes(b"prg")
+    cases = run_contract(
+        _FakeDriver(press_changes_view=False, start_category="sitemap"),
+        tmp_path,
+        prg=prg,
+        device_id=None,
+    )
+    by_name = {case.name: case for case in cases}
+    sequence = by_name["press-sequence"]
+    assert sequence.status == SKIPPED
+    assert "not the glance" in sequence.detail
+    assert "ordinary navigation" in sequence.detail
+    assert "judges input on the open app" in sequence.detail
 
 
 def test_contract_press_sequence_passes_when_a_later_press_moves(
@@ -2634,8 +2661,10 @@ def test_the_selection_probe_reports_a_moved_or_still_glance(
     driver._probe_selection(time.monotonic() + 5.0)
 
     log = _driver_log(driver)
-    assert "selection probe: one page down changed the screen by 4200px" in log
+    assert "selection probe at" in log
+    assert "changed the screen by 4200px" in log
     assert "the glance selection moved" in log
+    assert "early signal only" in log
 
 
 def test_key_override_option_sets_the_driver_environment(
