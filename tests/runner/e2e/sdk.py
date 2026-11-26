@@ -52,9 +52,18 @@ ENV_VARS = ("CIQ_SDK_ROOT", "CIQ_SDK_PATH")
 ENV_DEVICES_ROOT = "CIQ_DEVICES_ROOT"
 ENV_DEVICES_MOUNT = "CIQ_DEVICES_MOUNT"
 ENV_DEVICES_TARGET = "GARMIN_DEVICES_DIR"
+ENV_FONTS_ROOT = "CIQ_FONTS_ROOT"
+ENV_FONTS_MOUNT = "CIQ_FONTS_MOUNT"
+ENV_FONTS_TARGET = "GARMIN_FONTS_DIR"
 ENV_WINE_PREFIX = "WINEPREFIX"
 
 DEFAULT_DEVICES_MOUNT = Path("/opt/ciq-devices")
+DEFAULT_FONTS_MOUNT = Path("/opt/ciq-fonts")
+
+#: Suffixes a usable font pack contains. Windows installations hold `.ttf`
+#: faces plus `.cft` (compiled font table) files; only the latter are loaded by
+#: the simulator, so either marks a populated pack.
+_FONT_SUFFIXES = (".cft", ".ttf")
 
 _MONKEYC_CANDIDATES = ("linux/bin/monkeyc", "bin/monkeyc")
 _MONKEYDO_CANDIDATES = ("linux/bin/monkeydo", "bin/monkeydo")
@@ -363,6 +372,113 @@ def wine_devices_target(environ: Optional[Mapping[str, str]] = None) -> Path:
     )
 
 
+def wine_fonts_target(environ: Optional[Mapping[str, str]] = None) -> Path:
+    """Where the Windows simulator looks for device fonts under Wine.
+
+    The simulator reads its font pack from the per-user Connect IQ directory,
+    exactly as it does for device definitions.
+    """
+    env = os.environ if environ is None else environ
+    return (
+        wine_prefix(env)
+        / "drive_c"
+        / "users"
+        / wine_user_name(env)
+        / "AppData"
+        / "Roaming"
+        / "Garmin"
+        / "ConnectIQ"
+        / "Fonts"
+    )
+
+
+def fonts_dir(environ: Optional[Mapping[str, str]] = None) -> Path:
+    """Where the simulator resolves the device font faces it draws."""
+    env = os.environ if environ is None else environ
+    configured = env.get(ENV_FONTS_TARGET)
+    if configured:
+        return Path(configured).expanduser()
+    return _home(env) / ".Garmin" / "ConnectIQ" / "Fonts"
+
+
+def font_asset_count(path: Path) -> int:
+    """Number of faces (``.cft``/``.ttf``) a font pack holds, 0 when unusable."""
+    if not path.is_dir():
+        return 0
+    try:
+        return sum(
+            1
+            for entry in path.iterdir()
+            if entry.is_file() and entry.suffix.lower() in _FONT_SUFFIXES
+        )
+    except OSError:
+        return 0
+
+
+def fonts_mount(environ: Optional[Mapping[str, str]] = None) -> Path:
+    """The read-only mount a font pack is staged from, or the default mount."""
+    env = os.environ if environ is None else environ
+    configured = env.get(ENV_FONTS_MOUNT)
+    return Path(configured).expanduser() if configured else DEFAULT_FONTS_MOUNT
+
+
+def fonts_problem(
+    path: Optional[Path] = None,
+    environ: Optional[Mapping[str, str]] = None,
+) -> Optional[str]:
+    """Why the font pack at ``path`` cannot render, or ``None`` when it can.
+
+    The simulator resolves every device face from this directory; an absent or
+    empty directory is not a warning, because the app crashes on its first draw
+    instead of rendering a degraded view.
+    """
+    target = Path(path) if path is not None else fonts_dir(environ)
+    if not target.is_dir():
+        return f"{target} does not exist"
+    if font_asset_count(target):
+        return None
+    try:
+        entries = sum(1 for _ in target.iterdir())
+    except OSError as error:
+        return f"{target} cannot be read: {error}"
+    if not entries:
+        return f"{target} is empty"
+    return (
+        f"{target} holds {entries} entries but no .cft or .ttf font files, so it "
+        "is not a Connect IQ font pack"
+    )
+
+
+def require_fonts(
+    path: Optional[Path] = None,
+    environ: Optional[Mapping[str, str]] = None,
+) -> Path:
+    """Return the font pack directory, or raise with the actionable message.
+
+    The fonts are licensed Garmin assets, so they are never committed and never
+    part of an image: the operator copies them from a working Connect IQ
+    installation or mounts that directory read-only.
+    """
+    target = Path(path) if path is not None else fonts_dir(environ)
+    problem = fonts_problem(target, environ)
+    if problem is not None:
+        mount = fonts_mount(environ)
+        raise SdkError(
+            f"no Connect IQ device fonts are usable at {target}: {problem}.\n"
+            "The simulator resolves each device's faces from that directory; "
+            "without them every app view fails with \"Invalid Font Specified\" "
+            "and the screen stays on the watch face. The SDK archive does not "
+            "ship device fonts.\n"
+            "Copy the Fonts directory from a working Connect IQ installation "
+            "(on Windows %APPDATA%\\Garmin\\ConnectIQ\\Fonts) to that path, or "
+            f"mount it read-only at {mount.as_posix()} (CIQ_FONTS_HOST_PATH in "
+            "tests/compose/.env).\n"
+            "The fonts are licensed Garmin assets: mount or copy them, never "
+            "commit them."
+        )
+    return target
+
+
 def _point_at(target: Path, source: Path) -> None:
     """Replace ``target`` with a symlink to ``source``, or a copy as fallback."""
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -437,6 +553,78 @@ def link_devices(
     )
     _point_at(staged_wine_target, linux_target)
     return DeviceLinks(linux=linux_target, wine=staged_wine_target)
+
+
+@dataclass(frozen=True)
+class FontLinks:
+    """Where :func:`link_fonts` staged the device font pack."""
+
+    linux: Path
+    wine: Path
+    source: Path
+
+
+def find_fonts_source(
+    environ: Optional[Mapping[str, str]] = None,
+) -> Optional[Path]:
+    """A usable font pack to stage, or ``None``.
+
+    Order: ``CIQ_FONTS_ROOT`` (which must be valid), the read-only fonts mount,
+    then the target itself, which an operator may already have populated.
+    """
+    env = os.environ if environ is None else environ
+    override = env.get(ENV_FONTS_ROOT)
+    if override:
+        path = Path(override).expanduser()
+        if fonts_problem(path, env) is not None:
+            raise SdkError(
+                f"{ENV_FONTS_ROOT}={path} is not a usable Connect IQ font pack: "
+                f"{fonts_problem(path, env)}"
+            )
+        return path
+    for candidate in (fonts_mount(env), fonts_dir(env)):
+        if fonts_problem(candidate, env) is None:
+            return candidate
+    return None
+
+
+def link_fonts(
+    mount: Optional[Path] = None,
+    target: Optional[Path] = None,
+    wine_target: Optional[Path] = None,
+    environ: Optional[Mapping[str, str]] = None,
+) -> "FontLinks":
+    """Stage the font pack where both simulators read it.
+
+    Two locations are required, for the same reason as the device definitions:
+
+    - ``$HOME/.Garmin/ConnectIQ/Fonts`` -- what the Linux simulator opens before
+      every draw (and what ``monkeydo`` resolves a device against);
+    - ``<WINEPREFIX>/drive_c/users/<user>/AppData/Roaming/Garmin/ConnectIQ/Fonts``
+      -- what the Windows simulator reads under Wine.
+
+    The Linux target is a symlink to the source (or a copy where symlinks are
+    unavailable); the Wine target is a symlink to the Linux target, so there is
+    exactly one set of 1+ GB of licensed assets on disk. When the target is
+    already the source, nothing is replaced.
+    """
+    env = os.environ if environ is None else environ
+    linux_target = Path(target) if target is not None else fonts_dir(env)
+    source = Path(mount) if mount is not None else find_fonts_source(env)
+    if source is None:
+        # Raises with the directory, the provenance and the licence rule.
+        require_fonts(linux_target, env)
+        raise AssertionError("require_fonts returned without raising")
+    problem = fonts_problem(source, env)
+    if problem is not None:
+        raise SdkError(f"the font pack to stage is unusable: {problem}")
+    if source.resolve() != linux_target.resolve():
+        _point_at(linux_target, source)
+    staged_wine_target = (
+        Path(wine_target) if wine_target is not None else wine_fonts_target(env)
+    )
+    _point_at(staged_wine_target, linux_target)
+    return FontLinks(linux=linux_target, wine=staged_wine_target, source=source)
 
 
 def describe_candidates() -> Sequence[str]:

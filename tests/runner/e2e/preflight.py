@@ -54,6 +54,7 @@ from .config import ConfigError, read_sdk_version
 from .network import Network, load_network
 from .paths import repo_root, tests_root
 from .sdk import SdkError, inspect_sdk
+from .sdk import font_asset_count, fonts_dir, fonts_problem, require_fonts
 
 PASS = "pass"
 FAIL = "fail"
@@ -71,6 +72,7 @@ CHECKS = (
     ("docker.compose-config", "docker"),
     ("compose.files", "compose"),
     ("sdk.layout", "sdk"),
+    ("sdk.fonts", "sdk"),
     ("pins.images", "pins"),
     ("ports.loopback", "ports"),
     ("layout.repository", "layout"),
@@ -545,6 +547,39 @@ def check_sdk(
             "simulator": str(layout.simulator),
         },
     )
+
+
+def check_fonts(environ: Mapping[str, str]) -> CheckResult:
+    """The device font pack the simulator opens before every draw.
+
+    This is a hard requirement, not a warning: with the directory empty the app
+    crashes with `Invalid Font Specified` on its first draw and nothing renders,
+    so a run without it asserts nothing about the UI.
+    """
+    check_id, group = "sdk.fonts", "sdk"
+    target = fonts_dir(environ)
+    problem = fonts_problem(target, environ)
+    if problem is None:
+        assets = font_asset_count(target)
+        return CheckResult(
+            check_id,
+            group,
+            PASS,
+            f"{target} ({assets} font files)",
+            {"directory": str(target), "font_files": assets},
+        )
+    try:
+        require_fonts(target, environ)
+    except SdkError as error:
+        lines = [line.strip() for line in str(error).splitlines() if line.strip()]
+        return CheckResult(
+            check_id,
+            group,
+            FAIL,
+            lines[0] if lines else str(error),
+            {"detail": str(error), "directory": str(target)},
+        )
+    raise AssertionError("require_fonts returned without raising")
 
 
 # ---------------------------------------------------------------------------
@@ -1026,6 +1061,7 @@ def run_preflight(
         "sdk.layout": lambda: check_sdk(
             environ, expected_version=expected_sdk_version
         ),
+        "sdk.fonts": lambda: check_fonts(environ),
         "pins.images": lambda: check_image_pins(),
         "ports.loopback": ports_check,
         "layout.repository": lambda: check_repository_layout(repo_path),

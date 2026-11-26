@@ -207,6 +207,13 @@ Goldens live in `tests/goldens/<device>/<name>.png`. Capture them with
 `--update-goldens`, review the image, then commit it. A golden assertion is
 compared against the screenshot captured earlier in the same scenario.
 
+Capturing needs the Connect IQ device font pack: the harness refuses
+`--update-goldens` when `$HOME/.Garmin/ConnectIQ/Fonts` is missing, empty or has
+no `.cft`/`.ttf` faces, because the app would crash with `Invalid Font Specified`
+and the capture would freeze that crash as the expected state. The pack is
+licensed Garmin content: mount or copy it, never commit it. See
+[sdk.md](sdk.md#device-fonts).
+
 `no_error_view` is a statement about the view the app is showing _now_, not
 about the whole run:
 

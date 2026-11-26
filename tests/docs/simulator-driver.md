@@ -913,15 +913,15 @@ The Linux `shell` binary from the official SDK remains the supported path. This
 is a recorded conclusion, not an open question, so it does not have to be
 re-investigated.
 
-## The native Linux simulator: input yes, text no (#402)
+## The native Linux simulator: input and text (#402)
 
 The mounted SDK also ships a native build,
 `linux/bin/simulator` (31,142,896 bytes, ELF x86-64, GTK3 + WebKit). It runs the
-same `monkeydo` push protocol, so it would fit the existing driver shape. It was
-exercised end to end on 2026-11-26 in a disposable `ubuntu:22.04` container, and
-it is **not** a replacement for the Wine driver: it accepts input and loads the
-sitemap, but it cannot paint app text — for the same missing-asset reason as
-Wine. This section is the record so it is not re-investigated.
+same `monkeydo` push protocol, so it fits the existing driver shape. It was
+exercised end to end on 2026-11-26 in a disposable `ubuntu:22.04` container: it
+accepts input, loads the sitemap and **paints the text**, exactly as the Wine
+simulator does. Wine remains the driver because a second driver buys nothing
+today, not because the native build is unusable.
 
 ### Getting a window under Xvfb
 
@@ -996,88 +996,88 @@ native build is a viable fallback for the input path: `press`, `screenshot` and
 the `monkeydo` event stream all have working primitives here, behind the same
 `SimulatorDriver` interface.
 
-### What does not work: the same `Invalid Font Specified`
+### Two traps when driving either simulator
 
-**The verdict is not "the simulator cannot render."** The native simulator opens
-`$HOME/.Garmin/ConnectIQ/Fonts/` and that directory is empty, so the device faces
-it needs cannot be resolved. Without it populated, both the native and the Wine
-simulator raise `Invalid Font Specified` and the screen stays on the watch face,
-and Garmin's own `samples/TrueTypeFonts` fails identically. That one sentence
-replaces the earlier "the simulator cannot paint app text" and "Wine cannot paint
-app text" readings: the renderer is fine, the assets are missing.
+- **The device screen is scaled inside the window.** The 260×260 device screen is
+  drawn at **309×309**: at `(53,147)` in a native 446×607 window and at
+  `(53,141)` in a 409×600 Wine window. `display.location` is therefore *not* 1:1
+  with the window in this setup, so a crop has to be derived from the window (the
+  dark circular region) or pinned with `E2E_WINE_SCREEN_RECT`. Cropping the
+  declared rectangle lands on the bezel and the idle watch face.
+- **Under Wine the device window only exists after the push.** `simulator.exe`
+  starts with just the 342×666 control window; the device window appears when
+  `monkeydo` pushes the app. Searching for it before the push returns nothing,
+  and keys sent to the control window do nothing.
 
-The next draw after `HomepageMenu` is:
+### The font pack was the whole cause
+
+The native simulator opens `$HOME/.Garmin/ConnectIQ/Fonts/` before every draw
+(traced with `strace -e trace=openat,stat,access`):
 
 ```text
-Error: Invalid Font Specified
-Stack:
-Encountered an app crash.
+openat(AT_FDCWD, "/root/.Garmin/ConnectIQ/Fonts/", O_RDONLY) = 7
 ```
 
-The device screen then shows only the idle watch face (1,023 light pixels in the
-260×260 screen); the app contributed no text. Garmin's own
-`samples/TrueTypeFonts`, built for fenix7 with `monkeyc`, fails the same way and
-then segfaults the simulator, so this is not a property of our app's fonts.
-
-The chain, measured:
-
-- `Config.UI_ERROR_FONTS` uses `Graphics.FONT_MEDIUM/SMALL/TINY/GLANCE/XTINY`;
-  `Devices/fenix7/simulator.json` maps each to a _filename_ such as
-  `FNT_FENIX6_CDPG_ROBOTO_18B`;
-- **no such file exists in the SDK**: `find <sdk> \( -iname '*.fnt' -o -iname
-  '*.ttf' \)` returns 8 files, all of them assets of `samples/Analog`;
-- the simulator **opens `$HOME/.Garmin/ConnectIQ/Fonts/` successfully and the
-  directory is empty**. Traced on the native build while the app ran
-  (`strace -e trace=openat,stat,access`):
-
-  ```text
-  openat(AT_FDCWD, "/root/.Garmin/ConnectIQ/Fonts/", O_RDONLY) = 7
-  ```
-
-  The open succeeds and the faces it needs are not there, which is the whole
-  cause. That directory is the Linux twin of `%APPDATA%\Garmin\ConnectIQ\Fonts`
-  on Windows, where the maintainer's installation renders.
-
-Installing `fonts-roboto` does not help: the runtime resolves device font
+The open succeeds, and with that directory empty the device faces cannot be
+resolved: the app crashed with `Invalid Font Specified` and the screen stayed on
+the watch face. Garmin's own `samples/TrueTypeFonts` failed identically, and
+installing `fonts-roboto` did not help, because the runtime resolves device font
 _filenames_ through its own FNT/FreeType path (`FNT_intf.cpp`,
-`FT_Get_WinFNT_Header` are in the binary), not fontconfig families.
+`FT_Get_WinFNT_Header` are in the binary), not fontconfig families. The SDK
+archive ships no device fonts at all: `find <sdk> \( -iname '*.fnt' -o -iname
+'*.ttf' \)` returns 8 files, all assets of `samples/Analog`.
 
-The host was therefore never the variable. Windows renders because that
-installation has the font assets; Wine and native Linux both fail because the
-mounted SDK archive does not.
+Copying the pack from a working Windows installation
+(`%APPDATA%\Garmin\ConnectIQ\Fonts`, 2,756 entries: 1,332 `.cft` compiled faces,
+46 `.ttf`, 1,378 `.md5`) into `$HOME/.Garmin/ConnectIQ/Fonts` changed everything.
+Measured on both hosts with the same debug PRG, the same `monkeydo` push and the
+same `Down`, `Down`, `Return` sequence:
 
-### When the font pack arrives: the verification to run
+| Host | Sitemap | Text on screen | `Invalid Font Specified` | `ErrorView` |
+| --- | --- | --- | --- | --- |
+| native `linux/bin/simulator` | `SITEMAP;success;code=200;bytes=29680`, `HomepageMenu` | **yes**: OCR of the screen crop reads "My Home / Text / Default / Point and Slider" | no | draws "Request failed" |
+| `simulator.exe` under Wine | same response, same view | **yes**, identical OCR | no | draws "Request failed" |
 
-1. Obtain the fonts directory from the working Windows installation
-   (`%APPDATA%\Garmin\ConnectIQ\Fonts`). It carries the `FNT_*` files that
-   `Devices/<device>/simulator.json` names by filename.
-1. Put the same directory where each host reads it:
-   - native: `$HOME/.Garmin/ConnectIQ/Fonts`;
-   - Wine: `<WINEPREFIX>/drive_c/users/<user>/AppData/Roaming/Garmin/ConnectIQ/Fonts`
-     — the direct sibling of the device path `wine_devices_target()` resolves in
-     `e2e/sdk.py`.
-1. Run the **same** debug PRG on both drivers and record four facts per host:
-   whether the sitemap reaches `HomepageMenu`, whether text is painted (an OCR of
-   the `display.location` crop is enough evidence), whether
-   `Invalid Font Specified` is gone from the console, and whether `ErrorView`
-   draws.
-1. Record the outcome here. If the native build renders, the visual tier becomes
-   possible on the existing VM and the runner-image question reopens with real
-   evidence: the 22.04 package set and the cost below are already measured, and
-   only the Wine stack would still have to be kept for the Wine driver.
+`compare -metric AE` between the native and the Wine screen crops is **0** for
+both the sitemap and the error view (`RMSE 0 (0)`): one rasteriser, no Wine
+artefact. The two simulators are interchangeable for rendering.
+
+### The font pack is a harness requirement
+
+Because the app crashes on its first draw without the pack, the harness treats it
+like the SDK mount: licensed assets that are mounted or copied, never committed
+and never baked into an image.
+
+- `python -m e2e link-fonts` stages the pack into
+  `$HOME/.Garmin/ConnectIQ/Fonts` and the Wine prefix's `ConnectIQ/Fonts`
+  (symlink, or a copy where symlinks are unavailable).
+- `python -m e2e sdk-check` fails — and `entrypoint.sh` therefore refuses to
+  start the runner — when the directory is missing, empty, or holds no `.cft` or
+  `.ttf` file. The message names the directory, says the SDK archive does not
+  ship the fonts, and names `%APPDATA%\Garmin\ConnectIQ\Fonts` as the source.
+- `preflight` reports it as `sdk.fonts` in the `sdk` group, so CI's
+  `--skip docker,sdk,ports` skips it with the rest of the SDK.
+- `run --update-goldens` refuses without the pack and names the directory. With
+  the pack present the capability is available to **every** driver, because the
+  gate is the assets, not the driver name.
+
+Compose mounts the pack read-only at `/opt/ciq-fonts` from
+`CIQ_FONTS_HOST_PATH` (see `tests/compose/.env.example`).
 
 ### Verdict and cost
 
-Wine stays the driver and the default. A `linux` driver would buy input, which
-already works under Wine since the "DOWN, then SELECT" correction, and would
-cost a second driver, a 22.04 image and the Wine stack kept alongside; it would
-not buy a single rendered pixel. It is deliberately not implemented.
+Wine stays the driver and the default: a second driver would buy input, which
+already works, and a rasteriser that is pixel-identical to the one we already
+have. What did change is the **visual tier**: goldens can now be captured on the
+guest from either host, so "goldens must come from Windows" is retired.
 
-If it is revisited, the image cost is concrete: base `ubuntu:22.04`, drop the
-`i386` architecture and `wine/wine32:i386/wine64` (roughly the bulk of the
-2.8 GB runner image), and add the packages above. `monkeyc`, the unit tests,
-the fixtures and the compose pins are unaffected by the base change; only the
-`wine` driver would need a Wine image of its own.
+The native build remains the fallback for the input path if Wine regresses, and
+the path to dropping Wine entirely. If a `linux` driver is written, the image
+cost is concrete: base `ubuntu:22.04`, drop the `i386` architecture and
+`wine/wine32:i386/wine64` (roughly the bulk of the 2.8 GB runner image), and add
+the packages above. `monkeyc`, the unit tests, the fixtures and the compose pins
+are unaffected by the base change; only the `wine` driver would need a Wine image
+of its own.
 
 ## Stopping the simulator
 

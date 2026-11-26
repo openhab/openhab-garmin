@@ -39,7 +39,7 @@ from .scenarios import Scenario, Step
 from .settings import AppSettings, load_settings
 from .shim import ShimClient, ShimError, ShimRequest
 from .sim import Button, DriverError, SimulatorDriver, create_driver
-from .sdk import SdkLayout
+from .sdk import SdkError, SdkLayout, require_fonts
 from .trace import EventMatch, TraceLog
 
 Log = Callable[[str], None]
@@ -444,6 +444,14 @@ class ScenarioRunner:
             else:
                 golden_path = context.goldens_dir / context.device.id / f"{name}.png"
                 if context.update_goldens:
+                    # Defence in depth for the write path: --update-goldens is
+                    # already refused without a font pack, and a capture written
+                    # from a crashed render must never become the baseline.
+                    if not context.dry_run:
+                        try:
+                            require_fonts()
+                        except SdkError as error:
+                            raise AssertionFailure(str(error)) from error
                     assertions.update_golden(actual, golden_path)
                     notes.append(f"golden {name}: updated {golden_path}")
                 else:

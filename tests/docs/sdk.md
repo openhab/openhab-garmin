@@ -125,6 +125,47 @@ way Wine derives it.
 overrides the Linux destination, and the Wine link follows it. On a restart the
 container re-runs the whole staging step, so both paths are re-asserted.
 
+## Device fonts
+
+The simulator resolves every face it draws from
+`$HOME/.Garmin/ConnectIQ/Fonts`, and the Wine prefix's `ConnectIQ/Fonts` for
+`simulator.exe`. The SDK archive does **not** ship them: `find <sdk> \( -iname
+'*.fnt' -o -iname '*.ttf' \)` finds only the assets of `samples/Analog`. With the
+directory empty the app crashes on its first draw with
+`Error: Invalid Font Specified` and the screen stays on the watch face — on the
+native simulator and under Wine alike.
+
+They come from a working Connect IQ installation: `%APPDATA%\Garmin\ConnectIQ\Fonts`
+on Windows, which holds the `.cft` compiled faces (plus `.ttf` sources and `.md5`
+sidecars) that `Devices/<device>/simulator.json` names by filename.
+
+Staging mirrors the device definitions. The source is, in order:
+
+1. `CIQ_FONTS_ROOT`, when set (it must contain `.cft` or `.ttf` files);
+1. `/opt/ciq-fonts`, the mount fed by `CIQ_FONTS_HOST_PATH`;
+1. `$HOME/.Garmin/ConnectIQ/Fonts` itself, when an operator already populated it.
+
+`entrypoint.sh` runs `python -m e2e link-fonts`, which links the pack into both
+locations. Both are required, exactly as for the devices:
+
+| Path | Consumer | If it is missing |
+| --- | --- | --- |
+| `$HOME/.Garmin/ConnectIQ/Fonts` | native `linux/bin/simulator` | `Invalid Font Specified` on the first draw |
+| `<WINEPREFIX>/drive_c/users/<user>/AppData/Roaming/Garmin/ConnectIQ/Fonts` | `simulator.exe` under Wine | the same crash |
+
+A missing, empty or face-less directory is a hard failure at container start
+(`exit 78`), and `run --update-goldens` refuses without it, naming the directory:
+a capture from a crashed render must never become a baseline.
+
+`python -m e2e link-fonts` stages the pack from `--mount` (or the sources above)
+into `--target` and the Wine prefix.
+
+### Licensing
+
+The fonts are licensed Garmin assets, exactly like the SDK: mount or copy them
+from a working installation, never commit them, never bake them into an image,
+and never fetch them from a third party.
+
 ## Device-scoped jungle
 
 `monkey.jungle` declares configuration for every supported device, and
@@ -204,14 +245,17 @@ visible, and a floating SDK would make "it passed last week" meaningless.
 ```bash
 cd tests/runner
 export CIQ_SDK_ROOT=/opt/garmin/connectiq-sdk-9.3.0   # or CIQ_SDK_PATH
+export CIQ_FONTS_HOST_PATH=/home/<user>/.Garmin/ConnectIQ/Fonts   # or link-fonts
 python -m e2e sdk-check
 python -m e2e link-devices
+python -m e2e link-fonts
 ```
 
 Expected output names the root, the version (and the pin), `monkeyc`, `monkeydo`,
-the simulator and the device definitions, or explains exactly which of those is
-missing. Inside the stack the same two commands run from `entrypoint.sh` after
-the SDK has been copied to its writable path.
+the simulator, the device definitions and the font pack, or explains exactly
+which of those is missing. Inside the stack the same commands run from
+`entrypoint.sh` after the SDK has been copied to its writable path; a missing
+font pack stops the container rather than producing a run that renders nothing.
 
 ## Why the module also knows about the simulator
 
@@ -222,6 +266,8 @@ tools. See [simulator-driver.md](simulator-driver.md) for the driver itself.
 ## What an operator must not do
 
 - Do not commit SDK files, `.prg` files or SDK licences.
+- Do not commit the device font pack either: it is licensed Garmin content.
+  Mount it (`CIQ_FONTS_HOST_PATH`) or copy it into the environment.
 - Do not add an SDK download step to a Dockerfile: the SDK must arrive at run time,
   from the operator's own licence holder.
 - Do not mount the SDK read-write to work around the compiler writing into it;

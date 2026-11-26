@@ -14,6 +14,7 @@ from dataclasses import replace
 from pathlib import Path
 from typing import ClassVar, List, Sequence
 
+from e2e import cli
 from e2e import engine
 from e2e.config import default_device_id, find_device
 from e2e.contract import FAIL, PASS, run_contract, summary
@@ -362,3 +363,49 @@ def test_failure_is_reported_for_an_unknown_settings_fixture(tmp_path: Path) -> 
     )
     assert result.status == "failed"
     assert any("unknown settings fixture" in failure for failure in result.failures)
+
+
+# ---------------------------------------------------------------------------
+# golden capture capability (decided by the font pack, not the driver name)
+# ---------------------------------------------------------------------------
+
+def _font_pack(path: Path) -> Path:
+    path.mkdir(parents=True, exist_ok=True)
+    (path / "FNT_TEST_0.cft").write_text("face", encoding="utf-8")
+    (path / "FNT_TEST_0.md5").write_text("hash", encoding="utf-8")
+    return path
+
+
+def test_update_goldens_is_refused_without_device_fonts(tmp_path, monkeypatch, capsys) -> None:
+    """A capture from a crashed render must never become the baseline."""
+    absent = tmp_path / "absent"
+    monkeypatch.setenv("GARMIN_FONTS_DIR", str(absent))
+
+    code = cli.main(["run", "smoke/launch-and-poll", "--update-goldens"])
+
+    captured = capsys.readouterr()
+    assert code == cli.EXIT_CONFIG
+    assert "no Connect IQ device fonts" in captured.err
+    assert str(absent) in captured.err
+    assert "Invalid Font Specified" in captured.err
+
+
+def test_update_goldens_passes_the_font_gate_with_a_pack(tmp_path, monkeypatch, capsys) -> None:
+    """With a pack in place the capability is available to every driver."""
+    pack = _font_pack(tmp_path / "fonts")
+    monkeypatch.setenv("GARMIN_FONTS_DIR", str(pack))
+    calls: List[str] = []
+
+    def stub_layout():
+        calls.append("layout")
+        raise cli.SdkError("sdk stub for the test")
+
+    monkeypatch.setattr(cli, "load_layout", stub_layout)
+
+    code = cli.main(["run", "smoke/launch-and-poll", "--update-goldens"])
+
+    captured = capsys.readouterr()
+    assert calls == ["layout"], "the run must reach the SDK stage, so the font gate passed"
+    assert "no Connect IQ device fonts" not in captured.err
+    assert "sdk stub for the test" in captured.err
+    assert code == cli.EXIT_CONFIG

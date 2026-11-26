@@ -342,6 +342,52 @@ def test_sdk_rejects_a_missing_launcher(tmp_path):
     assert "monkeydo" in result.reason
 
 
+def _font_pack(path: Path, *, faces: int = 2) -> Path:
+    path.mkdir(parents=True, exist_ok=True)
+    for index in range(faces):
+        (path / f"FNT_TEST_{index}.cft").write_text("face", encoding="utf-8")
+        (path / f"FNT_TEST_{index}.md5").write_text("hash", encoding="utf-8")
+    return path
+
+
+def test_fonts_pass_reports_the_directory_and_the_face_count(tmp_path):
+    pack = _font_pack(tmp_path / "fonts")
+
+    result = preflight.check_fonts({"GARMIN_FONTS_DIR": str(pack)})
+
+    assert result.status == preflight.PASS
+    assert str(pack) in result.reason
+    assert "2 font files" in result.reason
+
+
+def test_fonts_fail_names_the_directory_and_the_provenance(tmp_path):
+    """An empty pack is a failure: the app crashes before it draws anything."""
+    empty = tmp_path / "empty"
+    empty.mkdir()
+
+    result = preflight.check_fonts({"GARMIN_FONTS_DIR": str(empty)})
+
+    assert result.status == preflight.FAIL
+    assert str(empty) in result.reason
+    assert "does not ship" in result.details["detail"]
+    assert "Invalid Font Specified" in result.details["detail"]
+
+
+def test_fonts_fail_when_the_directory_is_missing(tmp_path):
+    absent = tmp_path / "absent"
+
+    result = preflight.check_fonts({"GARMIN_FONTS_DIR": str(absent)})
+
+    assert result.status == preflight.FAIL
+    assert "does not exist" in result.details["detail"]
+
+
+def test_fonts_are_part_of_the_sdk_group_so_ci_can_skip_them():
+    """CI has no licensed font pack and must be able to skip the whole group."""
+    assert ("sdk.fonts", "sdk") in preflight.CHECKS
+    assert "sdk" in preflight.GROUPS
+
+
 # ---------------------------------------------------------------------------
 # loopback ports
 # ---------------------------------------------------------------------------

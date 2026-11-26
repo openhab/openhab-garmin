@@ -17,9 +17,14 @@ from e2e.sdk import (
     SdkError,
     device_definition_count,
     find_device_definitions,
+    font_asset_count,
+    fonts_dir,
+    fonts_problem,
     inspect_sdk,
     is_device_definitions,
     link_devices,
+    link_fonts,
+    require_fonts,
     require_simulator,
     sdk_root,
 )
@@ -271,3 +276,102 @@ def test_inspect_sdk_reports_device_definitions(
     layout = inspect_sdk(sdk, expected_version="9.3.0")
     assert layout.has_devices
     assert layout.devices == sdk / "Devices"
+
+
+# ---------------------------------------------------------------------------
+# device fonts
+# ---------------------------------------------------------------------------
+
+def _fonts(root: Path, *, faces: int = 2) -> Path:
+    """A temporary font pack: the faces the simulator loads plus md5 sidecars."""
+    root.mkdir(parents=True, exist_ok=True)
+    for index in range(faces):
+        _touch(root / f"FNT_TEST_{index}.cft", "compiled face")
+        _touch(root / f"FNT_TEST_{index}.md5", "hash")
+    return root
+
+
+def test_font_asset_count_counts_faces_not_sidecars(tmp_path: Path) -> None:
+    pack = _fonts(tmp_path / "fonts", faces=3)
+    _touch(pack / "README.txt", "not a face")
+    assert font_asset_count(pack) == 3
+    assert font_asset_count(tmp_path / "absent") == 0
+
+
+def test_fonts_problem_distinguishes_missing_empty_and_wrong(tmp_path: Path) -> None:
+    assert "does not exist" in (fonts_problem(tmp_path / "absent") or "")
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    assert "is empty" in (fonts_problem(empty) or "")
+    junk = tmp_path / "junk"
+    _touch(junk / "readme.txt", "x")
+    assert "no .cft or .ttf" in (fonts_problem(junk) or "")
+    assert fonts_problem(_fonts(tmp_path / "ok")) is None
+
+
+def test_require_fonts_explains_provenance_and_licence(tmp_path: Path) -> None:
+    with pytest.raises(SdkError) as error:
+        require_fonts(tmp_path / "absent", _home_env(tmp_path))
+    message = str(error.value)
+    assert "Invalid Font Specified" in message
+    assert "%APPDATA%\\Garmin\\ConnectIQ\\Fonts" in message
+    assert "never commit" in message
+    assert "/opt/ciq-fonts" in message
+
+
+def test_fonts_dir_honours_an_explicit_target(tmp_path: Path) -> None:
+    env = dict(_home_env(tmp_path), GARMIN_FONTS_DIR=str(tmp_path / "elsewhere"))
+    assert fonts_dir(env) == tmp_path / "elsewhere"
+
+
+def test_link_fonts_stages_both_toolchain_locations(tmp_path: Path) -> None:
+    source = _fonts(tmp_path / "host-fonts")
+    env = _home_env(tmp_path)
+    links = link_fonts(mount=source, environ=env)
+
+    linux = tmp_path / "home" / ".Garmin" / "ConnectIQ" / "Fonts"
+    wine = (
+        tmp_path
+        / "home"
+        / ".wine"
+        / "drive_c"
+        / "users"
+        / "root"
+        / "AppData"
+        / "Roaming"
+        / "Garmin"
+        / "ConnectIQ"
+        / "Fonts"
+    )
+    assert links.linux == linux
+    assert links.wine == wine
+    assert links.source == source
+    for path in (linux, wine):
+        assert font_asset_count(path) == 2
+
+
+def test_link_fonts_replaces_a_stale_target(tmp_path: Path) -> None:
+    source = _fonts(tmp_path / "host-fonts")
+    env = _home_env(tmp_path)
+    stale = _fonts(tmp_path / "home" / ".Garmin" / "ConnectIQ" / "Fonts", faces=0)
+    _touch(stale / "old.cft", "stale")
+    link_fonts(mount=source, environ=env)
+    assert not (stale / "old.cft").exists()
+    assert font_asset_count(stale) == 2
+
+
+def test_link_fonts_keeps_a_populated_target_in_place(tmp_path: Path) -> None:
+    """An operator who already copied the pack into $HOME must not lose it."""
+    source = _fonts(tmp_path / "home" / ".Garmin" / "ConnectIQ" / "Fonts")
+    links = link_fonts(environ=_home_env(tmp_path))
+    assert links.source == source
+    assert font_asset_count(source) == 2
+    assert not source.is_symlink()
+
+
+def test_link_fonts_explains_when_nothing_is_found(tmp_path: Path) -> None:
+    with pytest.raises(SdkError) as error:
+        link_fonts(environ=_home_env(tmp_path))
+    message = str(error.value)
+    assert "no Connect IQ device fonts" in message
+    assert "Invalid Font Specified" in message

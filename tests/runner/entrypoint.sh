@@ -141,6 +141,14 @@ MSG
     exit 78
 fi
 
+# The simulator opens the font pack before every draw and crashes with
+# "Invalid Font Specified" when it is absent, so a missing pack is a hard
+# failure like a missing SDK. The fonts are licensed Garmin assets: they are
+# mounted read-only and staged here, never committed and never baked in.
+if ! python -m e2e link-fonts --quiet; then
+    exit 78
+fi
+
 if ! python -m e2e sdk-check --quiet; then
     sdk_hint
     exit 78
