@@ -22,7 +22,7 @@ openhab:
     E2E_Light: "ON"            # quote ON/OFF: YAML 1.1 parses bare ON as a boolean
 language: eng                  # eng | deu | fre | ita | spa | pol
                                # or: languages: [eng, deu, fre, ita, spa, pol]
-timeout_s: 90                  # whole-scenario budget, 1..1800
+timeout_s: 300                 # whole-scenario budget, 1..1800; see below
 steps: [...]                   # non-empty; the first step must be `launch`
 covers:                        # optional; #140 scope ids, see Scope coverage below
   - sitemap.element-types
@@ -40,6 +40,24 @@ notes: Free-form operator note.
 Unknown devices, tiers, modes, languages, suites, actions, step keys, settings
 property ids and shim rule keys are all rejected at load time with the file, the
 key and the reason.
+
+### The whole-scenario budget must fit a launch
+
+`timeout_s` covers the whole scenario, and opening the app is the expensive part:
+the Wine driver may settle for up to **90 s** before pressing and then spend up
+to **180 s** retrying the launch sequence, because input delivery is
+intermittent. A launch step can therefore consume **270 s** before the app's
+first view, and a scenario that budgets less fails a slow-but-legitimate run for
+a reason that has nothing to do with the app.
+
+Every scenario here budgets **300 s** (the launch worst case plus room for its
+own steps). The numbers live in one place — `LAUNCH_SETTLE_WORST_CASE_S`,
+`LAUNCH_RETRY_WORST_CASE_S` and `LAUNCH_SCENARIO_MINIMUM_S` in
+`e2e/scenarios.py` — and two CI checks keep them honest:
+`test_the_launch_minimum_mirrors_the_driver` fails when they drift from
+`e2e.sim.wine`, and `test_every_launch_scenario_budgets_for_the_launch_worst_case`
+fails when a scenario drops below the minimum. Do not lower the retry budget to
+fit a shorter scenario: the retries exist because delivery is intermittent.
 
 The `openhab.profile` field selects which fixture tree the scenario expects:
 `stable` uses `fixtures/openhab/conf`, `dev` additionally uses the
@@ -218,6 +236,13 @@ A golden is therefore only valid if it was captured where the pack was present.
 Without it the app crashes on its first draw, so a capture taken in a broken
 environment locks a **blank screen** in as the reference every future run is
 measured against — exactly the failure the capture-time guard exists to prevent.
+
+A golden must also be **re-captured**, not compared, whenever something that
+shapes the pixels changes: the device definition in `Devices/<device>`, the
+app's theme resources, or the fixture sitemap the scenario renders. Otherwise a
+correct test fails for a correct reason, and the tempting "fix" is to regenerate
+the baseline without looking. Capture on purpose, review the image, and say in
+the commit why the baseline moved.
 
 `no_error_view` is a statement about the view the app is showing _now_, not
 about the whole run:

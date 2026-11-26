@@ -155,6 +155,11 @@ checkout. It also runs `python -m e2e pin-images --write` before
 `tests/compose/.env` with `tests/config/openhab.version`, and the committed
 digests make that write offline.
 
+A `markdown-link-check` failure on a file the pull request did not touch is
+almost always a transient upstream status — a GitHub 503 on a `blob/main` link
+has been seen. Re-run the failed job before investigating; if it recurs, pin or
+exclude that link in `.github/mlc_config.json`.
+
 The Connect IQ unit-test tier ([docs/unit-tests.md](docs/unit-tests.md)) has no
 job in this workflow:
 

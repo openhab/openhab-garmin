@@ -1270,6 +1270,10 @@ and/or the glance), per device and language.
 - A golden is only valid when it was captured with the font pack present: without
   it the app crashes on its first draw, so the capture would freeze a blank
   screen as the reference every later run is compared against.
+- A golden must be re-captured when the device definition, the app's theme
+  resources or the fixture sitemap it renders changes — otherwise a correct test
+  fails for a correct reason and someone regenerates the baseline without
+  looking.
 - A golden from one simulator version is never compared with another.
 
 **Command:** `python -m e2e run <capture-scenario> --driver wine
