@@ -108,14 +108,17 @@ In the Connect IQ SDK, resources define:
 
 #### Folder breakdown
 
-- `/resources/base`: Contains resources shared across all device types.
-  - `/resources/base/settings.xml`: Specifies the app’s configuration settings, including default values, types, and user-facing descriptions.
-  - `/resources/base/strings.xml`: Contains the user-facing display strings and error messages used by the app. Hardcoded user-facing text in Monkey C code should be avoided; add a string resource instead. Error messages use `scope="background"` so they remain available during Wi-Fi sync, in the background service, and in glance mode.
-  - `/resources/base/version.xml`: Contains the app name and version number.
+- `/resources/strings`: Contains the user-facing display strings and error messages.
+  - `/resources/strings/eng/strings-eng.xml`: English base strings, also used as the fallback for missing translations. Hardcoded user-facing text in Monkey C code should be avoided; add a string resource instead. Error messages use `scope="background"` so they remain available during Wi-Fi sync, in the background service, and in glance mode. App settings titles use `scope="settings"`.
+  - `/resources/strings/<lang>/strings-<lang>.xml`: Translations for German (`deu`), French (`fre`), Italian (`ita`), Spanish (`spa`), and Polish (`pol`). Missing IDs fall back to English.
+- `/resources/settings/settings.xml`: Specifies the app’s configuration settings, including default values, types, and user-facing titles. The titles reference string resources.
+- `/resources/version/version.xml`: Contains the app name and version number.
 - `/resources/edge`: Contains resources specific to Garmin Edge devices. Some `Drawable` elements are overridden here to account for different sizing requirements.
 - `/resources/icons-interface`: Contains the `icons-interface.xml` file defining the icons used in the app’s user interface, primarily for navigation, along with their corresponding SVG files.
 - `/resources/icons-launcher`: Contains one subdirectory per launcher icon size. Each subdirectory includes a `drawables.xml` resource definition for that specific size. The correct icon is selected via the resource path in the `monkey.jungle` build file, depending on the target device.
 - `/resources/icons-widgets`: Contains the `_icons-widgets.xml` file defining the openHAB icons that can be assigned to widgets, along with their corresponding SVG files.
+
+The resource locations are wired into `monkey.jungle`: `resBase` includes the English strings, settings, version info, and icon folders, while the `base.lang.<code>` properties point to the language-specific string folders. See the [Connect IQ Jungle reference](https://developer.garmin.com/connect-iq/reference-guides/jungle-reference/) for details.
 
 #### Further reading
 
@@ -168,7 +171,7 @@ Follow these steps to prepare and export your app for upload to the Garmin Conne
 
 1. **Update the Version Number**
 
-   Edit the file `resources/base/version.xml` and set the correct version number for this release.
+   Edit the file `resources/version/version.xml` and set the correct version number for this release.
 
 1. **Set the Correct App ID**
 

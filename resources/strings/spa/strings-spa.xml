@@ -1,0 +1,126 @@
+<strings xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="https://developer.garmin.com/downloads/connect-iq/resources.xsd">
+    <!-- General -->
+    <string id="Loading">Cargando...</string>
+    <string id="EmptyPage">Esta página está vacía</string>
+    <string id="NotAvailable">n/a</string>
+
+    <!-- Default label of the derived group control entry -->
+    <string id="GroupControlAll">Todos</string>
+
+    <!-- Settings menu -->
+    <string id="Settings">Ajustes</string>
+    <string id="SettingsAppVersion">Versión de la app</string>
+    <string id="SettingsServer">Servidor</string>
+    <string id="SettingsSitemap">Sitemap</string>
+    <string id="SettingsConnectIqVersion">Vers. Connect IQ</string>
+    <string id="SettingsConnectivityMode">Modo de conexión</string>
+    <string id="SettingsLastSitemapUpdate">Última act.</string>
+    <string id="SettingsUpdateSitemap">Actualizar sitemap&#10;por Wi-Fi</string>
+
+    <!-- App settings (scope=settings, not loaded at runtime) -->
+    <string id="AppSettingUrl" scope="settings">URL (https://servidor:puerto). HTTP solo en iOS; Android requiere HTTPS con certificado válido. myopenhab.org: https://home.myopenhab.org.</string>
+    <string id="AppSettingSitemapName" scope="settings">Nombre de sitemap</string>
+    <string id="AppSettingRestApi" scope="settings">Activar si openHAB admite la API REST JSON para enviar comandos.</string>
+    <string id="AppSettingWebhook" scope="settings">ID de webhook: alternativa a la API REST JSON. Consulta la documentación.</string>
+    <string id="AppSettingUserName" scope="settings">Nombre de usuario (HTTP Basic Authentication)</string>
+    <string id="AppSettingPassword" scope="settings">Contraseña</string>
+    <string id="AppSettingSuppressEmptyResponses" scope="settings">Ocultar errores de respuestas sitemap vacías. Recomendado con myopenhab.org.</string>
+    <string id="AppSettingPollingInterval" scope="settings">Intervalo entre solicitudes (ms). 0 = solicitud inmediata.</string>
+    <string id="AppSettingPostCommandHoldTime" scope="settings">Bloqueo tras comando (ms). 0 = desactivado.</string>
+
+    <!-- Connection state descriptions -->
+    <string id="ConnectionModePhoneBle">Teléfono (BLE)</string>
+    <string id="ConnectionModeWifiChecking">Comprobando el Wi-Fi ...</string>
+    <string id="ConnectionModeWifi">Wi-Fi</string>
+    <string id="ConnectionModeOffline">Sin conexión</string>
+    <string id="ConnectionModeInvalid">No válido</string>
+
+    <!-- Sitemap timestamp -->
+    <string id="SitemapLastUpdateJustNow">Ahora</string>
+    <string id="SitemapLastUpdateUnknown">Desconocido</string>
+
+    <!-- Player commands -->
+    <string id="PlayerPlay">Reproducir</string>
+    <string id="PlayerPause">Pausa</string>
+    <string id="PlayerNext">Siguiente</string>
+    <string id="PlayerPrevious">Anterior</string>
+
+    <!-- Sync progress messages -->
+    <string id="SyncSendingCommand">Enviando comando por Wi-Fi ...</string>
+    <string id="SyncUpdatingSitemap">Actualizando sitemap por Wi-Fi ...</string>
+
+    <!-- Glance: must be available in glance mode -->
+    <string id="GlanceDefaultText" scope="glance">openHAB</string>
+
+    <!--
+        Error messages.
+        Background scope keeps them available in every mode, including Wi-Fi
+        sync, the background service, and glance mode.
+    -->
+    <string id="ErrorUnknownException" scope="background">Error desconocido</string>
+    <string id="ErrorUnknownGlance" scope="background">Error desconocido</string>
+    <string id="ErrorSyncPrefix" scope="background">Error sync $1$</string>
+    <string id="ErrorSitemapSource" scope="background">Sitemap</string>
+    <string id="ErrorCommandSource" scope="background">Comando</string>
+
+    <!-- Communication errors -->
+    <string id="ErrorWifiConnectionLost" scope="background">$1$: conexión Wi-Fi perdida</string>
+    <string id="ErrorNoPhoneDetail" scope="background">$1$: sin teléfono&#10;($2$)</string>
+    <string id="ErrorInvalidResponseDetail" scope="background">Respuesta no válida&#10;($1$)</string>
+    <string id="ErrorSitemapTooLargeDetail" scope="background">Sitemap demasiado grande&#10;($1$)</string>
+    <string id="ErrorRequestFailedDetail" scope="background">Solicitud fallida&#10;($1$)</string>
+    <string id="ErrorNoWifiToast" scope="background">Sin Wi-Fi</string>
+    <string id="ErrorNoPhoneToast" scope="background">Sin teléfono</string>
+    <string id="ErrorCodeInvalidResponse" scope="background">INVRES</string>
+    <string id="ErrorEmptyResponseDetail" scope="background">Respuesta vacía</string>
+    <string id="ErrorUnexpectedResponseDetail" scope="background">Respuesta inesperada ($1$)</string>
+    <string id="ErrorCodeEmptyResponse" scope="background">EMRES</string>
+    <string id="ErrorCodeUnexpectedResponse" scope="background">UNRES</string>
+
+    <!-- Other runtime errors -->
+    <string id="ErrorOfflineNoSitemap" scope="background">Sin conexión y sin sitemap en caché. Acércate al teléfono o al Wi-Fi.</string>
+    <string id="ErrorOutOfMemory" scope="background">Memoria insuficiente ($1$ B libres, $2$ necesarios). Intentando recuperar. Si persiste, reduce el tamaño de la sitemap.</string>
+    <string id="ErrorSettingsChanged" scope="background">Ajustes modificados. Cierra y vuelve a abrir la app.</string>
+    <string id="ErrorFatalUi" scope="background">Error fatal de UI: $1$</string>
+    <string id="ErrorOfflineCommand" scope="background">OFFLINE</string>
+    <string id="ErrorNoSitemapLoaded" scope="background">No se encontró sitemap y falló la carga por Wi-Fi. Reintenta o conecta el teléfono.</string>
+    <string id="ErrorConfigUrlMissing" scope="background">No se ha indicado la URL del servidor. Abre los ajustes de la app en Garmin Connect IQ e introduce la URL de tu servidor openHAB.</string>
+    <string id="ErrorConfigSitemapMissing" scope="background">Ajustes de la app: falta el nombre de sitemap</string>
+    <string id="ErrorConfigPasswordMissing" scope="background">Ajustes de la app: falta la contraseña</string>
+
+    <!-- Sitemap data errors -->
+    <string id="ErrorJsonNotBoolean" scope="background">'$1$' no es un Boolean</string>
+    <string id="ErrorJsonNotNumeric" scope="background">'$1$' no es numérico</string>
+    <string id="ErrorJsonNotArray" scope="background">'$1$' no es un Array</string>
+    <string id="ErrorJsonNotDictionary" scope="background">'$1$' no es un Dictionary</string>
+    <string id="ErrorJsonNotString" scope="background">'$1$' no es un String</string>
+    <string id="ErrorStateNotNumeric" scope="background">Item '$1$': el estado '$2$' no es numérico</string>
+    <string id="ErrorLabelMissingState" scope="background">Etiqueta '$1$' sin etiqueta antes del [estado]</string>
+    <string id="ErrorHomepageNoElements" scope="background">La página de inicio no contiene widgets</string>
+    <string id="ErrorHomepageElementMissing" scope="background">Falta el elemento homepage</string>
+    <string id="ErrorPageTitleMissing" scope="background">Falta el título de la página</string>
+    <string id="ErrorFrameLabelMissing" scope="background">Falta la etiqueta del frame</string>
+    <string id="ErrorUnsupportedElementType" scope="background">Tipo de elemento no compatible '$1$'.</string>
+    <string id="ErrorUnsupportedElementTypeForElement" scope="background">El elemento '$1$' tiene un tipo no compatible '$2$'.</string>
+    <string id="ErrorWidgetWithoutType" scope="background">Widget sin tipo</string>
+    <string id="ErrorWidgetWithoutTypeLabel" scope="background">El widget '$1$' no tiene tipo</string>
+    <string id="ErrorWidgetLabelMissing" scope="background">El widget de tipo '$1$' no tiene etiqueta</string>
+    <string id="ErrorWidgetInvalidLabelColor" scope="background">Widget '$1$': color de etiqueta no válido '$2$'</string>
+    <string id="ErrorWidgetInvalidValueColor" scope="background">Widget '$1$': color de valor no válido '$2$'</string>
+    <string id="ErrorGroupWithoutItem" scope="background">Grupo sin item</string>
+    <string id="ErrorGroupWithoutItemLabel" scope="background">El grupo '$1$' no tiene item</string>
+    <string id="ErrorItemNameMissing" scope="background">Falta el nombre del item</string>
+    <string id="ErrorItemWithoutType" scope="background">El item '$1$' no tiene tipo</string>
+    <string id="ErrorItemNotFound" scope="background">Item no encontrado. Comprueba el nombre.</string>
+    <string id="ErrorNumericStepInvalid" scope="background">el paso debe ser mayor que 0 (actual: $1$)</string>
+    <string id="ErrorNumericMinMaxInvalid" scope="background">maxValue ($1$) debe ser mayor o igual que minValue ($2$)</string>
+    <string id="ErrorNumericTooManySteps" scope="background">$1$ '$2$' admite como máximo $3$ pasos (solicitados: $4$).</string>
+    <string id="ErrorSwitchCommandMissing" scope="background">Switch: falta el comando en el mapping/descripción</string>
+    <string id="ErrorSwitchCommandMissingWithLabel" scope="background">Switch: falta el comando en el mapping/descripción (etiqueta '$1$')</string>
+    <string id="ErrorSwitchValueMissing" scope="background">Switch: falta el valor en la descripción de estado</string>
+    <string id="ErrorSwitchValueMissingWithLabel" scope="background">Switch: falta el valor en la descripción de estado (etiqueta '$1$')</string>
+    <string id="ErrorSwitchLabelMissingWithValue" scope="background">Switch: falta la etiqueta en la descripción de estado (valor '$1$')</string>
+    <string id="ErrorElementNotSupported" scope="background">El elemento '$1$' (tipo '$2$') no es compatible</string>
+    <string id="ErrorUnsupportedState" scope="background">Interruptor '$1$' (item '$2$'): estado '$3$' no compatible.</string>
+    <string id="ErrorNoCommandTransport" scope="background">No se puede enviar el comando '$1$' para el item '$2$': API REST y webhook no disponibles.</string>
+</strings>

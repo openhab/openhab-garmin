@@ -180,7 +180,7 @@ work; it is not the delivery mechanism, and no settings file is needed.
 
 `e2e build` therefore compiles the requested configuration in:
 
-1. A harness-owned copy of `resources/base/settings.xml` is written to
+1. A harness-owned copy of `resources/settings/settings.xml` is written to
    `<artifacts>/build/resource-override-<device>/settings.xml`, with the
    fixture's values as the `<property>` defaults (`${E2E_SHIM_URL}` and the
    other tokens resolve exactly as they do for the fixtures).
