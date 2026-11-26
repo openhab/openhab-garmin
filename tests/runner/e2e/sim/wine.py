@@ -102,6 +102,12 @@ HOLD_MS = 900
 #: Pause after focusing and before the key, as in the verified manual command
 #: (`xdotool windowfocus $W; sleep 0.3; xdotool key Down`).
 FOCUS_SETTLE_S = 0.3
+#: How long a key stays down in the ``keyboard-hold`` mechanism. A wxWidgets app
+#: that polls key state (`GetAsyncKeyState`) sees a held key and not an
+#: instantaneous tap, so the two mechanisms are both tried.
+KEY_HOLD_S = 0.05
+#: How long the primary button stays down in the ``mouse-hold`` mechanism.
+MOUSE_HOLD_MS = 150
 #: Gap between consecutive launch keys, as in the verified manual command
 #: (`sleep 2` between keys). The keys do not register when they arrive faster.
 LAUNCH_KEY_GAP_S = 2.0
@@ -477,6 +483,29 @@ def xdotool_key_command(
         "--delay",
         str(max(0, int(delay_ms))),
         keys,
+    ]
+
+
+def xdotool_keydown_command(keysym: str) -> List[str]:
+    """Press a key and keep it down (a state change, not a tap)."""
+    return ["xdotool", "keydown", "--clearmodifiers", keysym]
+
+
+def xdotool_keyup_command(keysym: str) -> List[str]:
+    """Release a key pressed with :func:`xdotool_keydown_command`."""
+    return ["xdotool", "keyup", "--clearmodifiers", keysym]
+
+
+def xdotool_mousedown_to_window_command(window: str, x: int, y: int) -> List[str]:
+    return [
+        "xdotool",
+        "mousemove",
+        "--window",
+        window,
+        str(int(x)),
+        str(int(y)),
+        "mousedown",
+        "1",
     ]
 
 
@@ -1751,15 +1780,21 @@ class WineSimulatorDriver(SimulatorDriver):
             return False
         self._record(
             "the app started on the glance page; opening it with the measured "
-            f"sequence: {self._launch_down_count()} x page down, then select"
+            f"sequence: {self._launch_down_count()} x page down, then select; "
+            "the delivery variants are tried in order"
         )
         self._settle_before_launch(deadline)
         plans: List[Tuple[str, str, Optional[str], Optional[str]]] = []
         if device.supports_buttons:
+            # Four delivery variants, because the conditions (settle, focus) are
+            # known-good and the remaining question is what the simulator accepts:
+            # a click, a key tap, a held key, and a held mouse button. Each
+            # attempt is one whole sequence with one variant.
             plans = [
                 ("declared hit areas", "mouse", None, None),
-                ("keyboard", "keyboard", "Down", "Return"),
-                ("declared hit areas (slower)", "mouse", None, None),
+                ("keyboard taps", "keyboard", "Down", "Return"),
+                ("keyboard keydown/keyup", "keyboard-hold", "Down", "Return"),
+                ("declared hit areas (hold)", "mouse-hold", None, None),
             ]
         else:
             plans = [("a tap on the screen", "tap", None, None)]
@@ -1944,7 +1979,7 @@ class WineSimulatorDriver(SimulatorDriver):
                 f"warning: focus was on window {focus_before} before {what}, not "
                 f"the simulator window {simulator}"
             )
-        if mechanism == "mouse":
+        if mechanism.startswith("mouse"):
             path = self.artifact_dir / f"launch-step-{what.replace(' ', '-')}.png"
             try:
                 self.screenshot(path)
@@ -2183,20 +2218,29 @@ class WineSimulatorDriver(SimulatorDriver):
             )
             return
 
-        if mechanism == "keyboard":
+        if mechanism in ("keyboard", "keyboard-hold"):
             keysym = PROVEN_KEYSYMS.get(button) or self._keys.get(button)
             if not keysym:
                 raise DriverError(f"no keysym is bound for {button.value}")
-            self._send_keys(window, button, keysym, count, "forced keyboard path")
+            self._send_keys(
+                window,
+                button,
+                keysym,
+                count,
+                "forced keyboard path",
+                hold=mechanism == "keyboard-hold",
+            )
             return
 
-        if mechanism == "mouse":
+        if mechanism in ("mouse", "mouse-hold"):
             declared = self._definition.key_for(button)
             if declared is None:
                 raise DriverError(
                     f"{device.product} declares no hit area for {button.value}"
                 )
-            self._click_declared_key(window, declared, count)
+            self._click_declared_key(
+                window, declared, count, hold=mechanism == "mouse-hold"
+            )
             return
 
         proven = PROVEN_KEYSYMS.get(button)
@@ -2220,32 +2264,55 @@ class WineSimulatorDriver(SimulatorDriver):
         self._send_keys(window, button, keysym, count, "no proven binding or hit area")
 
     def _send_keys(
-        self, window: str, button: Button, keysym: str, count: int, why: str
+        self,
+        window: str,
+        button: Button,
+        keysym: str,
+        count: int,
+        why: str,
+        hold: bool = False,
     ) -> None:
         """Send ``count`` keystrokes, focusing the window before **each** one.
 
         Focus is not stable between keys: the guest lost it mid-sequence and the
         second key went nowhere, which is indistinguishable from a simulator
         that ignores the key unless the focus is re-established and logged.
+
+        ``hold`` sends ``keydown``/``keyup`` as separate events with a short hold
+        instead of one ``key`` tap, for a toolkit that reads key state rather
+        than key messages. The exact argv of every command is recorded, because
+        ``--window``, ``--clearmodifiers`` or ``--delay`` change what the
+        simulator receives and are invisible in a log that only says "a key was
+        sent".
         """
         transport = "XTEST key to the focused window"
         for _ in range(max(1, int(count))):
             self._focus_window(window)
             time.sleep(FOCUS_SETTLE_S)
-            try:
-                self._run(
-                    xdotool_key_command(keysym, 1),
-                    check=True,
-                    action=f"press {button.value}",
-                )
-                transport = "XTEST key to the focused window"
-            except DriverError:
-                self._run(
-                    xdotool_key_to_window_command(window, keysym, 1),
-                    check=True,
-                    action=f"press {button.value} (window-targeted fallback)",
-                )
-                transport = "window-targeted key (XSendEvent)"
+            if hold:
+                down = xdotool_keydown_command(keysym)
+                up = xdotool_keyup_command(keysym)
+                self._run(down, check=True, action=f"press {button.value}")
+                self._record(f"command: {shlex.join(down)}")
+                time.sleep(KEY_HOLD_S)
+                self._run(up, check=True, action=f"release {button.value}")
+                self._record(f"command: {shlex.join(up)}")
+                transport = "keydown/keyup held 50 ms"
+            else:
+                command = xdotool_key_command(keysym, 1)
+                try:
+                    self._run(command, check=True, action=f"press {button.value}")
+                    self._record(f"command: {shlex.join(command)}")
+                    transport = "XTEST key tap to the focused window"
+                except DriverError:
+                    command = xdotool_key_to_window_command(window, keysym, 1)
+                    self._run(
+                        command,
+                        check=True,
+                        action=f"press {button.value} (window-targeted fallback)",
+                    )
+                    self._record(f"command: {shlex.join(command)}")
+                    transport = "window-targeted key (XSendEvent)"
             time.sleep(DEFAULT_KEY_DELAY_MS / 1000.0)
         mechanism = (
             "keyboard (override)" if why == "environment override" else "keyboard"
@@ -2259,7 +2326,7 @@ class WineSimulatorDriver(SimulatorDriver):
         )
 
     def _click_declared_key(
-        self, window: str, key: SimulatorKey, count: int
+        self, window: str, key: SimulatorKey, count: int, hold: bool = False
     ) -> None:
         geometry = self._geometry(window)
         mapper = self._mapper()
@@ -2273,9 +2340,11 @@ class WineSimulatorDriver(SimulatorDriver):
                 f"screenshot, or {ENV_KEY_PREFIX}{key.button.value} with a keysym."
             )
         for _ in range(max(1, int(count))):
-            if key.is_hold:
-                self._pointer_down(window, x, y, action=f"press {key.button.value} (hold)")
-                time.sleep(HOLD_MS / 1000.0)
+            if key.is_hold or hold:
+                self._pointer_down(
+                    window, x, y, action=f"press {key.button.value} (hold)"
+                )
+                time.sleep((HOLD_MS if key.is_hold else MOUSE_HOLD_MS) / 1000.0)
                 self._pointer_up()
             else:
                 self._click_at(window, x, y, action=f"press {key.button.value}")
@@ -2304,10 +2373,14 @@ class WineSimulatorDriver(SimulatorDriver):
     ) -> None:
         """Press the pointer at a verified window point, as real X input."""
         self._move_verified(window, x, y, action)
-        self._run(xdotool_mousedown_command(), check=True, action=action)
+        command = xdotool_mousedown_command()
+        self._run(command, check=True, action=action)
+        self._record(f"command: {shlex.join(command)}")
 
     def _pointer_up(self) -> None:
-        self._run(xdotool_mouseup_command(), check=True, action="release")
+        command = xdotool_mouseup_command()
+        self._run(command, check=True, action="release")
+        self._record(f"command: {shlex.join(command)}")
 
     def _click_at(self, window: str, x: int, y: int, *, action: str) -> None:
         """Click a point that the pointer was verified to be over.
@@ -2317,7 +2390,9 @@ class WineSimulatorDriver(SimulatorDriver):
         click this check exists to prevent.
         """
         self._move_verified(window, x, y, action)
-        self._run(xdotool_click_only_command(1), check=True, action=action)
+        command = xdotool_click_only_command(1)
+        self._run(command, check=True, action=action)
+        self._record(f"command: {shlex.join(command)}")
 
     def _move_verified(self, window: str, x: int, y: int, action: str) -> None:
         """Move the pointer and prove it is over the simulator window.
@@ -2330,11 +2405,13 @@ class WineSimulatorDriver(SimulatorDriver):
         """
         for attempt in (1, 2):
             abs_x, abs_y = self._absolute(window, x, y)
+            move = xdotool_mousemove_command(abs_x, abs_y)
             self._run(
-                xdotool_mousemove_command(abs_x, abs_y),
+                move,
                 check=True,
                 action=f"{action} (move pointer)",
             )
+            self._record(f"command: {shlex.join(move)}")
             location = self._mouse_location()
             if location is None:
                 self._record(

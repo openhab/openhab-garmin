@@ -165,7 +165,7 @@ PIDs instead.
 | `prepare` | implemented | Validates the external tools and copies the PRG. Runs before anything touches Wine. |
 | `start` | implemented | Display check, `simulator.ini`, simulator-window wait, property seeding and `monkeydo` launch. The device name is expected to appear only after the launch. |
 | `wait_ready` | implemented | First view **and** the reported language, both from the trace stream. When the first view is the glance it runs the measured launch sequence and requires a non-glance view. A dead app fails with an actionable message (`no console output at all` = launch/packaging, `output but no E2E: line` = wrong build). |
-| `launch` | implemented, verified on the guest | Page down ×2, then select, with `windowfocus` before every key, both the declared hit areas and the keyboard, bounded retries, and one log line per attempt carrying the mechanism, point or keysym and the resulting view. `E2E_WINE_LAUNCH_DOWNS` changes the page-down count. |
+| `launch` | implemented, sequence verified on the guest | Page down ×2, then select, with `windowfocus` before every key, a 50 s dwell and a stable screen, four bounded delivery variants (click, key tap, keydown/keyup, mouse hold), the exact argv and the focus before/after every key logged, and one line per attempt with the resulting view. `E2E_WINE_LAUNCH_DOWNS` changes the page-down count. |
 | `press` | implemented, input delivered | Path per button, recorded: `E2E_WINE_KEY_<BUTTON>`/`--key` first, then a proven keysym, then the declared hit area (mouse, **pointer verified** before the click). `mechanism` can force `"mouse"` or `"keyboard"` for the launch retries; the window is focused before every key. |
 | `tap` | implemented, pointer verified | The window is focused and the pointer is verified to be over the simulator window before the click (see above). The screen rectangle comes from the device definition's `display.location` (`simulator.json`), with `E2E_WINE_SCREEN_RECT` as the override; a centred fit is only the last resort for an SDK without `simulator.json`. |
 | `screenshot` | implemented | Captures the simulator window. Fails when the capture is not a usable PNG instead of returning a blank image. |
@@ -758,30 +758,48 @@ from a log:
    after `monkeydo`; a launch at 41.7 s failed every attempt even though the
    screen had been stable for a while, so the dwell is the load-bearing part and
    the stability check only confirms it. The app-start budget (`wait_ready`) is
-   150 s to cover the settle plus three attempts.
+   150 s to cover the settle plus four attempts.
 1. **Every key is sent like the verified command**: focus, a 0.3 s pause, the
    key, then a 2 s gap before the next (`LAUNCH_KEY_GAP_S`). The log records
    `xdotool getwindowfocus` before **and** after every key, because focus moving
    between keys (Wine's splash window) is invisible in a log that only says the
    key was sent. After every mouse click it also captures a screenshot
    (`launch-step-<step>.png`) so the click's effect can be seen.
-1. **Both mechanisms are tried**: the declared hit areas (`nextPage` ×2 then
-   `onSelect`, pointer-verified) and the keyboard (`Down` ×2 then `Return`), with
-   a 1.5 s gap before the select. `E2E_WINE_LAUNCH_DOWNS` changes the page-down
-   count for a device whose entry is a different number of pages away.
+1. **The exact argv of every command is logged** (`command: xdotool …`), because
+   `--window`, `--clearmodifiers` and `--delay` change what the simulator
+   receives and are invisible in a log that only says "a key was sent".
+1. **Four delivery variants are tried in order**, because the guest then ruled
+   out the surroundings — 51.5 s dwell, stable screen, focus correct before and
+   after every key — while the sequence still did nothing:
+
+   | Attempt | Variant | What it changes |
+   | --- | --- | --- |
+   | 1 | declared hit areas | `xdotool mousemove … click 1` on `nextPage`/`onSelect` |
+   | 2 | keyboard taps | `xdotool key --clearmodifiers … Down` |
+   | 3 | keyboard keydown/keyup | `keydown`, 50 ms, `keyup` — for a toolkit that polls key _state_ |
+   | 4 | declared hit areas (hold) | `mousedown`, 150 ms, `mouseup` — the same shape as the `MENU` hold |
+
+   `E2E_WINE_LAUNCH_DOWNS` changes the page-down count for a device whose entry
+   is a different number of pages away.
 1. **Every attempt is logged with its mechanism, point or keysym, and the view it
-   produced**, plus the `E2E:CONNECTION` state after each key, with three bounded
+   produced**, plus the `E2E:CONNECTION` state after each key, with four bounded
    attempts:
 
 ```text
-launch attempt 1/3: declared hit areas
-launch step page down x2: view is now glance/GlanceSitemapView
-launch step select: view is now sitemap/LoadingView
+launch attempt 1/4: declared hit areas
+launch step page down 1/2: focus before=10485763; focus after=10485763; view=glance/…; connection=none
+command: xdotool mousemove 43 370
+command: xdotool click --repeat 1 --delay 150 1
+launch step select: … view=sitemap/LoadingView …
 launch attempt 1 (declared hit areas) opened the app: VIEW;category=sitemap;view=LoadingView;depth=1
 ```
 
 Success requires a view whose category is not `glance` (or an `ERRORVIEW`), so a
-silent attempt cannot pass as a launch.
+silent attempt cannot pass as a launch. The guest ruled out the surroundings —
+51.5 s dwell, stable screen, focus correct before and after every key — while the
+sequence still did nothing, which is why the four variants above exist: the
+remaining variable is what the simulator accepts as a key or click, not when or
+where it is sent.
 
 The app also latches glance mode in its own process:
 

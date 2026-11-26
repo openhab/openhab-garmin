@@ -79,6 +79,8 @@ from e2e.sim.wine import (
     xdotool_geometry_command,
     xdotool_key_command,
     xdotool_key_to_window_command,
+    xdotool_keydown_command,
+    xdotool_keyup_command,
     xdotool_mousedown_command,
     xdotool_mouselocation_command,
     xdotool_mousemove_command,
@@ -747,12 +749,15 @@ def test_launch_pages_down_then_selects_on_a_button_device(
     assert opened is False, "no new view was produced by the fake"
     log = _driver_log(driver)
     assert "2 x page down, then select" in log
-    assert "launch attempt 1/3: declared hit areas" in log
+    assert "launch attempt 1/4: declared hit areas" in log
     assert "launch step page down 1/2" in log
     assert "launch step page down 2/2" in log
     assert "launch step select" in log
     assert "focus before=" in log and "focus after=" in log
-    assert "launch attempt 2/3: keyboard" in log
+    assert "command: xdotool" in log, "the exact argv is logged"
+    assert "launch attempt 2/4: keyboard taps" in log
+    assert "launch attempt 3/4: keyboard keydown/keyup" in log
+    assert "launch attempt 4/4: declared hit areas (hold)" in log
     assert "connection=" in log, "each step logs the connection state"
     # Attempt 1 clicks the declared areas, attempt 2 sends the keysyms.
     assert any(command[1] == "mousemove" for command in fake.commands)
@@ -794,7 +799,7 @@ def test_launch_stops_when_the_app_opens(
     assert driver.launch(timeout_s=2.0) is True
     log = _driver_log(driver)
     assert "launch attempt 1 (declared hit areas) opened the app" in log
-    assert "launch attempt 2/3" not in log, "the retries stop on success"
+    assert "launch attempt 2/4" not in log, "the retries stop on success"
 
 
 def test_launch_taps_the_screen_on_a_touch_only_device(
@@ -2359,7 +2364,7 @@ def test_a_language_mismatch_still_launches_the_app_first(
     assert "language 'eng'" in message or "reported system language" in message
     log = _driver_log(driver)
     assert "language mismatch (deferred)" in log
-    assert "launch attempt 1/3" in log, "the launch ran before the language error"
+    assert "launch attempt 1/4" in log, "the launch ran before the language error"
 
 
 def test_the_ini_language_is_reported_after_start(
@@ -2451,6 +2456,92 @@ def test_launch_waits_for_a_dwell_and_a_stable_screen(
     assert "settling: waiting until 0" in log or "settle complete" in log
     assert "the screen is stable" in log
     assert len(shots) >= 2, "two captures are compared"
+
+
+def test_keyboard_hold_sends_keydown_and_keyup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A toolkit that polls key state sees a held key, not an instantaneous tap."""
+    driver = _driver(tmp_path)
+    driver._started = True
+    driver._device = _device("fenix7")
+    driver._window = "42"
+    driver._definition = _definition(tmp_path)
+    monkeypatch.setattr(driver, "_window_name", lambda window: "CIQ Simulator - Fenix 7")
+    monkeypatch.setattr("e2e.sim.wine.time.sleep", lambda seconds: None)
+    fake = FakeRun()
+    driver._run = fake  # type: ignore[method-assign]
+
+    driver.press(Button.DOWN, 1, mechanism="keyboard-hold")
+
+    commands = [command[1] for command in fake.commands]
+    assert "keydown" in commands and "keyup" in commands
+    assert "key" not in commands
+    log = _driver_log(driver)
+    assert "command: xdotool keydown --clearmodifiers Down" in log
+    assert "command: xdotool keyup --clearmodifiers Down" in log
+
+
+def test_the_exact_key_argv_is_logged(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`--window`, `--clearmodifiers` or `--delay` change what the simulator gets."""
+    driver = _driver(tmp_path)
+    driver._started = True
+    driver._device = _device("fenix7")
+    driver._window = "42"
+    driver._definition = _definition(tmp_path)
+    monkeypatch.setattr(driver, "_window_name", lambda window: "CIQ Simulator - Fenix 7")
+    monkeypatch.setattr("e2e.sim.wine.time.sleep", lambda seconds: None)
+    driver._run = FakeRun()  # type: ignore[method-assign]
+
+    driver.press(Button.DOWN, 1, mechanism="keyboard")
+
+    assert (
+        "command: xdotool key --clearmodifiers --repeat 1 --delay 150 Down"
+        in _driver_log(driver)
+    )
+
+
+def test_mouse_hold_presses_and_releases_the_button(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    driver = _driver(tmp_path)
+    driver._started = True
+    driver._device = _device("fenix7")
+    driver._window = "42"
+    driver._definition = _definition(tmp_path)
+    monkeypatch.setattr(driver, "_window_name", lambda window: "CIQ Simulator - Fenix 7")
+    monkeypatch.setattr(
+        driver, "_geometry", lambda window: {"x": 0, "y": 0, "width": 409, "height": 600}
+    )
+    monkeypatch.setattr("e2e.sim.wine.time.sleep", lambda seconds: None)
+    fake = FakeRun()
+    driver._run = fake  # type: ignore[method-assign]
+
+    driver.press(Button.ENTER, 1, mechanism="mouse-hold")
+
+    commands = [command[1] for command in fake.commands]
+    assert "mousedown" in commands and "mouseup" in commands
+    assert "click" not in commands
+    log = _driver_log(driver)
+    assert "command: xdotool mousedown 1" in log
+    assert "command: xdotool mouseup 1" in log
+
+
+def test_keydown_and_keyup_command_builders() -> None:
+    assert xdotool_keydown_command("Down") == [
+        "xdotool",
+        "keydown",
+        "--clearmodifiers",
+        "Down",
+    ]
+    assert xdotool_keyup_command("Down") == [
+        "xdotool",
+        "keyup",
+        "--clearmodifiers",
+        "Down",
+    ]
 
 
 def test_key_override_option_sets_the_driver_environment(
