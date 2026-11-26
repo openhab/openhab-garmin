@@ -21,7 +21,7 @@ openhab:
   items:
     E2E_Temperature: "18.5"
 language: eng
-timeout_s: 120
+timeout_s: 300
 
 covers:
   - communication.modes-start

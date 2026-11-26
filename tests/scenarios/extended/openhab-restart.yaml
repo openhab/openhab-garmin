@@ -24,7 +24,7 @@ openhab:
   items:
     E2E_Temperature: "20.0"
 language: eng
-timeout_s: 180
+timeout_s: 300
 
 covers:
   - resilience.openhab-restart

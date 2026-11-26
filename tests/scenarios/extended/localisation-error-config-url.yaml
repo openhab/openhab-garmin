@@ -21,7 +21,7 @@ openhab:
   profile: stable
   sitemap: garmin_localisation
 languages: [eng, deu, fre, ita, spa, pol]
-timeout_s: 120
+timeout_s: 300
 
 covers:
   - localisation.languages

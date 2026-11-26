@@ -20,7 +20,7 @@ openhab:
   profile: stable
   sitemap: garmin_limit_near
 language: eng
-timeout_s: 180
+timeout_s: 300
 
 covers:
   - limits.size-limit

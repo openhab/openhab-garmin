@@ -20,10 +20,6 @@ openhab:
     E2E_Temperature: "21.5"
     E2E_EntranceGates_Status: CLOSED
 language: eng
-# The Wine driver settles ~50 s before pressing and may spend up to 180 s in
-# launch retries (input delivery is intermittent), so a 90 s budget could expire
-# before the app reached its first view. 300 s covers the settle, the retries
-# and this scenario's own steps.
 timeout_s: 300
 
 covers:

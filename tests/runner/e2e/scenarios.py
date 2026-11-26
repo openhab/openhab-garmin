@@ -17,7 +17,10 @@ Top level (all required unless noted)::
     openhab         {profile: stable|dev, sitemap: <name>, items: {item: state}}
     language        eng | deu | fre | ita | spa | pol
                     (or `languages: [...]` for a matrix, see below)
-    timeout_s       whole-scenario budget, 1..1800
+    timeout_s       whole-scenario budget, 1..1800. A scenario that launches the
+                    app must budget at least LAUNCH_SCENARIO_MINIMUM_S (300 s),
+                    because the launch step can spend the settle and retry
+                    budget before the app's first view; CI enforces it.
     steps           non-empty list, see ACTIONS below
 
 Optional::
@@ -58,6 +61,22 @@ TIERS = ("protocol", "ui")
 SUITES = ("smoke", "regression", "extended")
 MODES = ("ble", "wifi", "offline")
 LANGUAGES = ("eng", "deu", "fre", "ita", "spa", "pol")
+
+#: Worst case a single ``launch`` step can consume, in seconds. The Wine driver
+#: may settle for ``LAUNCH_SETTLE_MAX_S`` (90 s) before pressing and then spend
+#: ``LAUNCH_RETRY_BUDGET_S`` (180 s) retrying, because input delivery is
+#: intermittent. ``test_the_launch_minimum_mirrors_the_driver`` asserts these
+#: numbers still match ``e2e.sim.wine``; change them together.
+LAUNCH_SETTLE_WORST_CASE_S = 90
+LAUNCH_RETRY_WORST_CASE_S = 180
+LAUNCH_STEP_WORST_CASE_S = LAUNCH_SETTLE_WORST_CASE_S + LAUNCH_RETRY_WORST_CASE_S  # 270
+
+#: Minimum whole-scenario budget for a scenario that launches the app: the
+#: launch worst case plus room for the scenario's own steps. A smaller budget
+#: fails a slow-but-legitimate run for a reason unrelated to the app, which is
+#: why every launch scenario is checked against this rather than a hand-picked
+#: number per file.
+LAUNCH_SCENARIO_MINIMUM_S = LAUNCH_STEP_WORST_CASE_S + 30  # 300
 OPENHAB_PROFILES = ("stable", "dev")
 BUTTONS = ("START", "UP", "DOWN", "ENTER", "BACK", "MENU")
 COMMAND_TRANSPORTS = ("rest", "shim")
@@ -551,6 +570,23 @@ class Scenario:
     def shim_script(self) -> Dict[str, Any]:
         """The fault script document installed before the run."""
         return {"version": 1, "rules": [dict(rule) for rule in self.shim_rules]}
+
+
+def launch_budget_problems(scenarios: Iterable[Scenario]) -> List[Tuple[str, int]]:
+    """Launching scenarios whose budget cannot fit a launch, as (id, timeout).
+
+    This is the invariant behind ``LAUNCH_SCENARIO_MINIMUM_S``: a launch step is
+    allowed 270 s before the app's first view, so a smaller whole-scenario budget
+    turns a slow-but-legitimate run into a timeout that looks like an app
+    failure. Scenarios without a launch step are not constrained; the schema
+    currently requires exactly one, so this guards a future relaxation.
+    """
+    return [
+        (scenario.scenario_id, scenario.timeout_s)
+        for scenario in scenarios
+        if any(step.action == "launch" for step in scenario.steps)
+        and scenario.timeout_s < LAUNCH_SCENARIO_MINIMUM_S
+    ]
 
 
 def _parse_openhab(raw: Any, where: str) -> OpenHabSpec:

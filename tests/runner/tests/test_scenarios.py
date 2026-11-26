@@ -9,16 +9,22 @@ rule in the repository must load.
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 import yaml
 
 from e2e.config import SCENARIO_DIR
 from e2e.scenarios import (
+    LAUNCH_SCENARIO_MINIMUM_S,
+    LAUNCH_SETTLE_WORST_CASE_S,
+    LAUNCH_RETRY_WORST_CASE_S,
+    LAUNCH_STEP_WORST_CASE_S,
     ScenarioError,
     discover_scenarios,
     find_scenario,
     find_scenarios,
+    launch_budget_problems,
     load_scenario,
     load_scenarios,
 )
@@ -592,3 +598,50 @@ def test_discovery_can_be_limited_to_one_suite(tmp_path: Path) -> None:
 def test_scenario_directory_constant_points_at_the_repository() -> None:
     assert SCENARIO_DIR.is_dir()
     assert (SCENARIO_DIR / "smoke").is_dir()
+
+
+# ---------------------------------------------------------------------------
+# whole-scenario budget versus the launch step
+# ---------------------------------------------------------------------------
+
+def _load_document(tmp_path: Path, name: str, **overrides):
+    document = dict(BASE)
+    document.update({"name": name})
+    document.update(overrides)
+    path = tmp_path / f"{name}.yaml"
+    path.write_text(yaml.safe_dump(document), encoding="utf-8")
+    return load_scenario(path)
+
+
+def test_every_launch_scenario_budgets_for_the_launch_worst_case() -> None:
+    """A legitimate slow launch must not present itself as an app failure."""
+    problems = launch_budget_problems(discover_scenarios())
+    assert not problems, (
+        "these scenarios launch the app but budget less than "
+        f"{LAUNCH_SCENARIO_MINIMUM_S}s, which cannot fit the launch worst case "
+        f"({LAUNCH_STEP_WORST_CASE_S}s of settle plus retries) and their own "
+        f"steps: {problems}"
+    )
+
+
+def test_the_launch_minimum_mirrors_the_driver() -> None:
+    """The invariant is only honest while its numbers match the driver."""
+    from e2e.sim import wine
+
+    assert LAUNCH_SETTLE_WORST_CASE_S == int(wine.LAUNCH_SETTLE_MAX_S)
+    assert LAUNCH_RETRY_WORST_CASE_S == int(wine.LAUNCH_RETRY_BUDGET_S)
+
+
+def test_an_undersized_launch_budget_is_reported(tmp_path: Path) -> None:
+    scenario = _load_document(tmp_path, "short-launch", timeout_s=90)
+    assert launch_budget_problems([scenario]) == [("smoke/short-launch", 90)]
+
+
+def test_a_scenario_without_launch_is_left_alone() -> None:
+    """The invariant is about launching; the schema requires one today."""
+    stub = SimpleNamespace(
+        scenario_id="smoke/no-launch",
+        timeout_s=30,
+        steps=[SimpleNamespace(action="screenshot")],
+    )
+    assert launch_budget_problems([stub]) == []
