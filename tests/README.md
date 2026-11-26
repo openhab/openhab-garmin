@@ -327,11 +327,14 @@ run, so the results are not attributable to the app).
 - `--key BUTTON=KEYSYM` (repeatable) sends that X keysym for a button instead of
   the driver's default path, e.g. `--key ENTER=Return`.
 - `--update-goldens` writes new golden images instead of comparing; review the
-  screenshots before committing them. It needs the device font pack — without it
-  the command refuses and names the directory, because a capture from a crashed
-  render must never become a baseline — and write access to `tests/goldens`,
-  which the read-only checkout mount does not have, so capture goldens from a
-  checkout on the host, not inside the runner container.
+  screenshots before committing them. A golden is the **device screen** crop,
+  not the simulator window — the window chrome is simulator-version and driver
+  specific, so the run keeps the window as a diagnostic artifact but compares
+  the screen. It needs the device font pack (without it the command refuses and
+  names the directory, because a capture from a crashed render must never
+  become a baseline) and write access to `tests/goldens`, which the read-only
+  checkout mount does not have, so capture goldens from a checkout on the host,
+  not inside the runner container.
 - `--developer-key <file>` signs the build with a key you provide; without it a
   throwaway RSA key is generated per invocation under `<artifacts>/keys/` and
   deleted afterwards. It is never committed and never reused.

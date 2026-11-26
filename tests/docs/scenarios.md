@@ -225,6 +225,16 @@ Goldens live in `tests/goldens/<device>/<name>.png`. Capture them with
 `--update-goldens`, review the image, then commit it. A golden assertion is
 compared against the screenshot captured earlier in the same scenario.
 
+The golden is the **device screen**, not the simulator window: the run crops the
+window capture to the screen before comparing, and keeps the full window as a
+diagnostic artifact. The window chrome is simulator-version and driver specific
+(Wine renders 409×600, the native build 446×607) while the device screen is the
+same in both, so a window-sized golden would fail whenever the chrome changed for
+a reason unrelated to the app. The crop is detected per run from the screen's
+dark disc; pin `E2E_WINE_SCREEN_RECT=x,y,width,height` when detection is
+ambiguous (for example a light-themed screen). A driver that cannot isolate the
+screen reports the golden as skipped instead of comparing the wrong pixels.
+
 Capturing needs the Connect IQ device font pack: the harness refuses
 `--update-goldens` when `$HOME/.Garmin/ConnectIQ/Fonts` is missing, empty or has
 no `.cft`/`.ttf` faces, because the app would crash with `Invalid Font Specified`
