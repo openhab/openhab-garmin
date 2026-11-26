@@ -1048,9 +1048,11 @@ Because the app crashes on its first draw without the pack, the harness treats i
 like the SDK mount: licensed assets that are mounted or copied, never committed
 and never baked into an image.
 
-- `python -m e2e link-fonts` stages the pack into
-  `$HOME/.Garmin/ConnectIQ/Fonts` and the Wine prefix's `ConnectIQ/Fonts`
-  (symlink, or a copy where symlinks are unavailable).
+- `python -m e2e link-fonts` copies the pack into
+  `$HOME/.Garmin/ConnectIQ/Fonts` and links that directory into the Wine
+  prefix's `ConnectIQ/Fonts`. The home copy is real files on purpose: the Wine
+  simulator did not follow a symlink chain into the read-only mount and still
+  raised `Invalid Font Specified`.
 - `python -m e2e sdk-check` fails — and `entrypoint.sh` therefore refuses to
   start the runner — when the directory is missing, empty, or holds no `.cft` or
   `.ttf` file. The message names the directory, says the SDK archive does not

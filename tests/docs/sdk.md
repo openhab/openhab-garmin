@@ -145,13 +145,19 @@ Staging mirrors the device definitions. The source is, in order:
 1. `/opt/ciq-fonts`, the mount fed by `CIQ_FONTS_HOST_PATH`;
 1. `$HOME/.Garmin/ConnectIQ/Fonts` itself, when an operator already populated it.
 
-`entrypoint.sh` runs `python -m e2e link-fonts`, which links the pack into both
-locations. Both are required, exactly as for the devices:
+`entrypoint.sh` runs `python -m e2e link-fonts`, which copies the pack to
+`$HOME/.Garmin/ConnectIQ/Fonts` and links that directory into the Wine prefix.
+Both locations are required, exactly as for the devices:
 
 | Path | Consumer | If it is missing |
 | --- | --- | --- |
 | `$HOME/.Garmin/ConnectIQ/Fonts` | native `linux/bin/simulator` | `Invalid Font Specified` on the first draw |
 | `<WINEPREFIX>/drive_c/users/<user>/AppData/Roaming/Garmin/ConnectIQ/Fonts` | `simulator.exe` under Wine | the same crash |
+
+The home path must hold real files: `simulator.exe` did not resolve a symlink
+_chain_ (prefix -> home -> read-only mount) and still raised
+`Invalid Font Specified`, while it does read a single symlink to the copied
+directory, the same way it reads the device definitions.
 
 A missing, empty or face-less directory is a hard failure at container start
 (`exit 78`), and `run --update-goldens` refuses without it, naming the directory:

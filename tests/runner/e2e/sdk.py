@@ -492,6 +492,16 @@ def _point_at(target: Path, source: Path) -> None:
         shutil.copytree(source, target)
 
 
+def _copy_tree(target: Path, source: Path) -> None:
+    """Replace ``target`` with a real copy of ``source``."""
+    target.parent.mkdir(parents=True, exist_ok=True)
+    if target.is_symlink() or target.is_file():
+        target.unlink()
+    elif target.is_dir():
+        shutil.rmtree(target)
+    shutil.copytree(source, target)
+
+
 @dataclass(frozen=True)
 class DeviceLinks:
     """Where :func:`link_devices` staged the device definitions."""
@@ -603,10 +613,13 @@ def link_fonts(
     - ``<WINEPREFIX>/drive_c/users/<user>/AppData/Roaming/Garmin/ConnectIQ/Fonts``
       -- what the Windows simulator reads under Wine.
 
-    The Linux target is a symlink to the source (or a copy where symlinks are
-    unavailable); the Wine target is a symlink to the Linux target, so there is
-    exactly one set of 1+ GB of licensed assets on disk. When the target is
-    already the source, nothing is replaced.
+    The Linux target is a real copy and the Wine target is a symlink to it, so
+    there is exactly one set of 1+ GB of licensed assets on disk. The copy is
+    deliberate: the Wine simulator did not resolve a symlink *chain* (prefix ->
+    home -> read-only mount) and still raised `Invalid Font Specified`, while it
+    does read a single symlink to the copied tree, exactly as it does for the
+    device definitions. When the target is already the source, nothing is
+    replaced.
     """
     env = os.environ if environ is None else environ
     linux_target = Path(target) if target is not None else fonts_dir(env)
@@ -619,7 +632,7 @@ def link_fonts(
     if problem is not None:
         raise SdkError(f"the font pack to stage is unusable: {problem}")
     if source.resolve() != linux_target.resolve():
-        _point_at(linux_target, source)
+        _copy_tree(linux_target, source)
     staged_wine_target = (
         Path(wine_target) if wine_target is not None else wine_fonts_target(env)
     )

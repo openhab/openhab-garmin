@@ -346,6 +346,10 @@ def test_link_fonts_stages_both_toolchain_locations(tmp_path: Path) -> None:
     assert links.linux == linux
     assert links.wine == wine
     assert links.source == source
+    assert not linux.is_symlink(), (
+        "the native target must be real files: the Wine simulator did not follow "
+        "a symlink chain into the mount and still raised Invalid Font Specified"
+    )
     for path in (linux, wine):
         assert font_asset_count(path) == 2
 
