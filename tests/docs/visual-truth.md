@@ -31,6 +31,16 @@ older SDK (see
 [simulator-driver.md](simulator-driver.md#-1001-on-a-healthy-200)). A `VIEW`
 line means a view was **constructed**, not painted.
 
+Revision note (2026-11-26, native Linux simulator): the SDK's
+`linux/bin/simulator` was run end to end. Input works (DOWN, DOWN, SELECT opens
+the app and the sitemap request returns `code=200;bytes=29680`), but it crashes
+on the next draw with the **same** `Invalid Font Specified`, and so does Garmin's
+own `samples/TrueTypeFonts`. The failure is a missing device font pack in the
+mounted SDK, not Wine, so "goldens must come from Windows" stands for a
+different reason than the note below assumes. Details and the exact recovery
+step in
+[simulator-driver.md](simulator-driver.md#the-native-linux-simulator-input-yes-text-no-402).
+
 The short answer:
 
 - **Structure is still the only dependable gate.** The `E2E:` trace, the shim
