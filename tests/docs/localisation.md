@@ -56,17 +56,12 @@ The language runs are wired to prove `LANGUAGE` comes from
 `System.getDeviceSettings().systemLanguage`; a `wait_for_event` on
 `LANGUAGE;code=<lang>` fails when the app reports another language.
 
-> **Blocked: the harness cannot provision a language.** The simulator applies
-> its device language from its own UI. `Language` in `simulator.ini` is written
-> and preserved but not applied, and `LANG`/`LANGUAGE`/`LC_ALL` make no
-> difference — the app reports `eng` in every case, and `CIQ_LOG.YML` confirms
-> `Language-Code: eng` (measurements in
-> [simulator-driver.md](simulator-driver.md#language-cannot-be-provisioned)).
-> The engine therefore reports the `deu`/`fre`/`ita`/`spa`/`pol` runs as
-> **skipped** with a reason, and [coverage.md](coverage.md) marks them
-> **blocked** rather than counting them as evidence. Only `eng` is runnable
-> until the simulator's Simulation menu (device settings) or a persistence file
-> it reads becomes available.
+> **Language is provisioned through its numeric index.** `simulator.ini` stores
+> the device language as an index (`Language=7` is German), measured for every
+> language in the matrix, so all six runs execute and each verifies the reported
+> `LANGUAGE` from the trace. A run whose reported language does not match fails
+> rather than passing in the wrong language. See
+> [simulator-driver.md](simulator-driver.md#language-is-a-numeric-index).
 
 ## Strings covered
 

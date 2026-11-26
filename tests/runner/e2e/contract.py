@@ -125,8 +125,10 @@ def run_contract(
     device_id: Optional[str] = None,
     settings_fixture: str = "default",
     prg: Optional[Path] = None,
-    ready_timeout_s: float = 90.0,
+    ready_timeout_s: float = 300.0,
     requests: Optional[Callable[[], Optional[int]]] = None,
+    mode: str = "ble",
+    language: str = "deu",
 ) -> List[ContractCase]:
     """Exercise every part of the driver contract against ``driver``.
 
@@ -137,6 +139,13 @@ def run_contract(
     device is taken from the PRG's name when it matches the build's pattern, and
     a ``--device`` that disagrees raises :class:`ContractError`. The driver is
     stopped at the end even when a case fails.
+
+    ``mode`` and ``language`` select what the launch exercises. ``language``
+    defaults to a non-default code so the numeric index path is proven; ``mode``
+    defaults to ``ble`` and only chooses the starting transport, because
+    scenarios legitimately differ. A plain-HTTP stack works in either mode once
+    the launch waits until the app is interactive (see
+    tests/docs/simulator-driver.md).
     """
     workdir = Path(workdir)
     workdir.mkdir(parents=True, exist_ok=True)
@@ -211,7 +220,9 @@ def run_contract(
         cases.append(_run_case("stop", driver.stop))
         return cases
 
-    start = _run_case("start", lambda: driver.start(device, settings, "ble", language="deu"))
+    start = _run_case(
+        "start", lambda: driver.start(device, settings, mode, language=language)
+    )
     cases.append(start)
 
     if start.status != PASS:
@@ -230,11 +241,10 @@ def run_contract(
     def app_entry() -> None:
         """`wait_ready` must leave the app on a real view, not the glance.
 
-                The app reaches the sitemap when the glance is selected, which is what a
-                click does on a working simulator. Here no synthetic input arrives at
-                the simulator at all (measured against an idle baseline), so the glance
-                cannot be selected and this case records the environment rather than
-                pretending the initial view ran.
+                The app reaches the sitemap by selecting its glance entry, and that
+                needs the entry focused first: page down once, then select. `wait_ready`
+                runs exactly that sequence (see `WineSimulatorDriver.launch`), so this
+                case fails only when the transition still did not happen.
         """
         parsed = parse_lines(list(driver.events()))
         view = next((event for event in reversed(parsed) if event.event == "VIEW"), None)
@@ -243,18 +253,16 @@ def run_contract(
             raise AssertionError(
                 "the app is still showing the glance (`VIEW;category=glance`), so "
                 "getInitialView() never ran and no request is made.\n"
-                        "The glance is left by selecting it, and on this guest no "
-                        "synthetic input reaches the simulator at all: pointer-verified "
-                        "clicks at the declared hit areas and inside the screen, every "
-                        "candidate keysym, with and without a window manager, and inside "
-                        "a Wine virtual desktop, all measure 0 px against an idle "
-                        "baseline. No coordinate, keysym, focus or window-manager change "
-                        "can fix that.\n"
-                        "If you need UI assertions, run the simulator on Windows or fix "
-                        "Wine input; the harness cannot. The app-side glance latch "
-                        "(OHApp.getGlanceView -> AppLifecycle.setGlance, #396) is a "
-                        "separate concern and is not what this run demonstrates. See "
-                "tests/docs/simulator-driver.md."
+                        "The launch sequence is page down (twice in the measured runs), then "
+                        "select; select alone does nothing. `wait_ready` sends it and logs "
+                        "every attempt with its mechanism, point or keysym, and the view it "
+                        "produced, so read logs/driver.log for which attempt ran and what "
+                        "the view became. `E2E_WINE_LAUNCH_DOWNS` changes the count if this "
+                        "device's entry is a different number of pages away.\n"
+                        "If a press reports no effect at all, the input path is the "
+                        "problem: `--key DOWN=Down` and `--key ENTER=Return` try other "
+                        "bindings, and the pointer line shows whether a click reached the "
+                        "simulator window. See tests/docs/simulator-driver.md."
             )
         if category is None:
             raise AssertionError(
@@ -409,10 +417,9 @@ def run_contract(
             f"(empty-screen baseline {baseline} px): {'; '.join(attempts)}."
             f"{reason}{calibrate}\n"
             "logs/driver.log names the mechanism and window point for each press. "
-            "If the pointer is verified and nothing moves, the environment is not "
-            "delivering input: if you need UI assertions, run the simulator on "
-            "Windows or fix Wine input; the harness cannot. See "
-            "tests/docs/simulator-driver.md."
+            "A press that reports no effect at all means the input path is the "
+            "problem: compare the logged point with the device definition's "
+            "keys[].location, or try `--key <BUTTON>=<keysym>`."
         )
 
     if driver.supports_events:
@@ -446,10 +453,15 @@ def run_contract(
         cases.append(_run_case(f"press[{button.value}]", press_case))
 
     def press_sequence() -> object:
-        """The delivery verdict: a sequence of navigation presses must move.
+        """The delivery verdict, judged where delivery is still unproven.
 
-        One `DOWN` at the top of a list changes nothing; two do. A device whose
-        navigation is cumulative cannot be judged press by press.
+        On the glance, a sequence of navigation presses must move: one `DOWN` at
+        the top of a list changes nothing, two do, and a device whose navigation
+        is cumulative cannot be judged press by press. Once the app is open, the
+        same keys are ordinary navigation — a page-down on a menu with one page
+        legitimately changes nothing — so a silent sequence there is reported as
+        ``skipped`` with the evidence, not as a failure. `press-effect` is the
+        case that judges input on the open app.
         """
         measured = getattr(driver, "press_measured", None)
         if not device.supports_buttons:
@@ -465,6 +477,11 @@ def run_contract(
                 SKIPPED,
                 f"{driver.name} cannot measure a press, so delivery is unproven",
             )
+        current = next(
+            (event for event in reversed(parse_lines(list(driver.events()))) if event.event == "VIEW"),
+            None,
+        )
+        on_glance = current is None or current.get("category") == "glance"
         seen: List[str] = []
         for button in (Button.DOWN, Button.DOWN, Button.UP):
             result = measured(
@@ -473,15 +490,26 @@ def run_contract(
             seen.append(result.describe())
             if result.effect:
                 return "sequence delivered: " + " | ".join(seen)
+        if not on_glance:
+            where = f"{current.get('category')}/{current.get('view')}"
+            return (
+                SKIPPED,
+                f"the app is on {where}, not the glance, so these keys are "
+                "ordinary navigation there and a one-page menu legitimately does "
+                "not move; `press-effect` judges input on the open app. "
+                "Measurement: " + " | ".join(seen),
+            )
         raise AssertionError(
-            "a sequence of DOWN, DOWN, UP produced no effect on any press:\n  "
+            "a sequence of DOWN, DOWN, UP produced no effect on any press while "
+            "the app was still on the glance, so input has not been shown to "
+            "reach it:\n  "
             + "\n  ".join(seen)
-            + "\nThe mechanism each press used is above. If the pointer was "
-            "verified over the simulator window, this is the environment and not "
-            "a coordinate or keysym problem: no synthetic input reaches the "
-            "simulator under Wine here.\n"
-            "If you need UI assertions, run the simulator on Windows or fix Wine "
-            "input; the harness cannot. See tests/docs/simulator-driver.md."
+            + "\nThe mechanism each press used is above. A silent mouse and an "
+            "ignored keysym look the same; `--key DOWN=<keysym>` tries another "
+            "binding, and the pointer line shows whether a click reached the "
+            "simulator window. Note that delivery on this guest is "
+            "nondeterministic: the launch retries until it lands. See "
+            "tests/docs/simulator-driver.md."
         )
 
     cases.append(_run_case("press-sequence", press_sequence))

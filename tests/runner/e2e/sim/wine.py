@@ -94,11 +94,53 @@ ENV_KEY_PREFIX = "E2E_WINE_KEY_"
 #: Startup and readiness budgets in seconds.
 ENV_STARTUP_TIMEOUT = "E2E_WINE_STARTUP_TIMEOUT"
 DEFAULT_STARTUP_TIMEOUT = 120.0
-DEFAULT_READY_TIMEOUT = 90.0
+DEFAULT_READY_TIMEOUT = 300.0
 #: Delay between repeated xdotool events, so the app can process each one.
 DEFAULT_KEY_DELAY_MS = 150
 #: How long a declared ``isHold`` key stays pressed.
 HOLD_MS = 900
+#: Pause after focusing and before the key, as in the verified manual command
+#: (`xdotool windowfocus $W; sleep 0.3; xdotool key Down`).
+FOCUS_SETTLE_S = 0.3
+#: How long a key stays down in the ``keyboard-hold`` mechanism. A wxWidgets app
+#: that polls key state (`GetAsyncKeyState`) sees a held key and not an
+#: instantaneous tap, so the two mechanisms are both tried.
+KEY_HOLD_S = 0.05
+#: How long the primary button stays down in the ``mouse-hold`` mechanism.
+MOUSE_HOLD_MS = 150
+#: Gap between consecutive launch keys, as in the verified manual command
+#: (`sleep 2` between keys). The keys do not register when they arrive faster.
+LAUNCH_KEY_GAP_S = 2.0
+#: Page-downs before select, as measured on the guest (2/2 runs with them).
+LAUNCH_DOWNS = 2
+#: Override for a device whose app entry is a different number of pages away.
+ENV_LAUNCH_DOWNS = "E2E_WINE_LAUNCH_DOWNS"
+#: Seconds the app must have been running before the first launch key. Waiting
+#: for the first `E2E:VIEW` is not the same as waiting until the app accepts
+#: input: the guest's verified command waits **50 s** after `monkeydo`, and a
+#: launch at 41.7 s failed every attempt while the screen was already stable.
+LAUNCH_DWELL_S = 50.0
+#: Override for the dwell.
+ENV_LAUNCH_DWELL = "E2E_WINE_LAUNCH_DWELL"
+#: Upper bound on the settle (dwell + stability), measured from app start.
+LAUNCH_SETTLE_MAX_S = 90.0
+#: Override for the maximum settle. Replaces the old fixed 2 s wait.
+ENV_LAUNCH_SETTLE = "E2E_WINE_LAUNCH_SETTLE"
+#: Seconds between the two captures that must match before the sequence is sent.
+LAUNCH_STABLE_INTERVAL_S = 1.0
+#: How long one launch retry waits for `E2E:CONNECTION` or a new view.
+LAUNCH_RESPONSE_WAIT_S = 4.0
+#: Seconds between launch retries. The guest's successful runs took anywhere
+#: between one and several minutes after launch, and the same command alternated
+#: between working and doing nothing, so retrying is the fix, not tuning.
+LAUNCH_RETRY_INTERVAL_S = 10.0
+#: Total time spent retrying the launch sequence, after the settle.
+LAUNCH_RETRY_BUDGET_S = 180.0
+ENV_LAUNCH_RETRY_INTERVAL = "E2E_WINE_LAUNCH_RETRY_INTERVAL"
+ENV_LAUNCH_RETRY_BUDGET = "E2E_WINE_LAUNCH_RETRY_BUDGET"
+#: Total budget for :meth:`WineSimulatorDriver.launch`: the settle (up to
+#: ``LAUNCH_SETTLE_MAX_S``) plus the retry budget.
+DEFAULT_LAUNCH_TIMEOUT = 260.0
 #: Accelerators for the simulator's own menus, kept for diagnostics only: the
 #: guest's simulator has no menu bar, so the driver does not rely on one.
 INPUT_PROBE_KEYS: Tuple[str, ...] = ("alt+s", "alt+c")
@@ -107,11 +149,9 @@ INPUT_PROBE_KEYS: Tuple[str, ...] = ("alt+s", "alt+c")
 #: changes thousands.
 PIXEL_CHANGE_THRESHOLD = 2000
 
-#: Keyboard keysyms the guest has **proven** this simulator honours. Mouse
-#: clicks are silent under this Wine/Xvfb (measured at every point, with and
-#: without a window manager), so a proven keyboard binding is preferred over a
-#: click. The select key is still unknown: `Return`, `KP_Enter`, `Escape`,
-#: `Menu`, `space`, `F5`, `F6` and clicks all produced no screen change.
+#: Keyboard keysyms the guest has proven this simulator honours. The select
+#: path (declared hit areas) works as well; the keyboard is preferred for
+#: navigation because it needs no coordinates.
 PROVEN_KEYSYMS: Mapping[Button, str] = {
     Button.UP: "Up",
     Button.DOWN: "Down",
@@ -183,6 +223,14 @@ MODE_INI_VALUES: Mapping[str, Mapping[str, str]] = {
     "wifi": {"BleState": "1", "WifiState": "2"},
     "offline": {"BleState": "1", "WifiState": "0"},
 }
+
+#: The simulator enforces "secure connection required" for web requests unless
+#: this is off, and the E2E stack is plain HTTP. The app's own documentation
+#: calls a ``-1001`` response "secure connection required", and a working
+#: installation carries this key, so writing it is what turns a served 200 into
+#: a 200 the app can read instead of a ``-1001``.
+HTTPS_REQUIREMENTS_KEY = "UseHttpsRequirements"
+HTTPS_REQUIREMENTS_OFF = "0"
 
 #: The app starts in BLE and only leaves it after a request fails
 #: (``ConnectionManager``), so a requested mode is consistent with these runtime
@@ -371,6 +419,27 @@ def read_device_display_name(devices_root: Optional[Path], product: str) -> str:
     return str(name).strip() if isinstance(name, str) else ""
 
 
+def read_device_runtime_version(devices_root: Optional[Path], product: str) -> str:
+    """``connectIQVersion`` from ``<devices_root>/<product>/compiler.json``.
+
+    This is the Connect IQ runtime the *device definition emulates* (fenix7
+    5.2.0, fenix847mm 6.0.3), not the simulator's build version. The window title
+    prints this number, which is why it is easy to mistake for the simulator
+    version.
+    """
+    if devices_root is None:
+        return ""
+    path = Path(devices_root) / product / "compiler.json"
+    try:
+        document = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return ""
+    if not isinstance(document, Mapping):
+        return ""
+    version = document.get("connectIQVersion")
+    return str(version).strip() if isinstance(version, str) else ""
+
+
 # ---------------------------------------------------------------------------
 # pure helpers: process command lines
 # ---------------------------------------------------------------------------
@@ -446,6 +515,29 @@ def xdotool_key_command(
     ]
 
 
+def xdotool_keydown_command(keysym: str) -> List[str]:
+    """Press a key and keep it down (a state change, not a tap)."""
+    return ["xdotool", "keydown", "--clearmodifiers", keysym]
+
+
+def xdotool_keyup_command(keysym: str) -> List[str]:
+    """Release a key pressed with :func:`xdotool_keydown_command`."""
+    return ["xdotool", "keyup", "--clearmodifiers", keysym]
+
+
+def xdotool_mousedown_to_window_command(window: str, x: int, y: int) -> List[str]:
+    return [
+        "xdotool",
+        "mousemove",
+        "--window",
+        window,
+        str(int(x)),
+        str(int(y)),
+        "mousedown",
+        "1",
+    ]
+
+
 def xdotool_key_to_window_command(
     window: str,
     keys: str,
@@ -503,6 +595,10 @@ def xdotool_window_pid_command(window: str) -> List[str]:
 
 def xwininfo_root_command() -> List[str]:
     return ["xwininfo", "-root"]
+
+
+def xdotool_getwindowfocus_command() -> List[str]:
+    return ["xdotool", "getwindowfocus"]
 
 
 def parse_mouselocation(text: str) -> Optional[Dict[str, int]]:
@@ -961,7 +1057,10 @@ def ini_updates(product: str, mode: str, language_value: Optional[str]) -> Dict[
     """
     if mode not in MODE_INI_VALUES:
         raise DriverError(f"unknown mode {mode!r}; expected one of {sorted(MODE_INI_VALUES)}")
-    updates: Dict[str, str] = {"LastUsedDevice": product}
+    updates: Dict[str, str] = {
+        "LastUsedDevice": product,
+        HTTPS_REQUIREMENTS_KEY: HTTPS_REQUIREMENTS_OFF,
+    }
     if language_value is not None:
         updates["Language"] = str(language_value)
     updates.update(MODE_INI_VALUES[mode])
@@ -1316,6 +1415,7 @@ class WineSimulatorDriver(SimulatorDriver):
         self._keys: Dict[Button, str] = dict(DEFAULT_KEYS)
         self._definition = SimulatorDefinition()
         self._last_press: Optional[PressResult] = None
+        self._app_started_at: Optional[float] = None
         self._mode = "ble"
         self._language = "eng"
         self._expect_language = True
@@ -1500,6 +1600,13 @@ class WineSimulatorDriver(SimulatorDriver):
         devices_root = find_device_definitions(self.layout.root)
         self._definition = read_simulator_definition(devices_root, device.product)
         self._display_name = read_device_display_name(devices_root, device.product)
+        runtime = read_device_runtime_version(devices_root, device.product)
+        if runtime:
+            self._record(
+                f"device runtime: {device.product} emulates Connect IQ {runtime} "
+                "(compiler.json connectIQVersion; this is the number in the "
+                "window title and it is NOT the simulator build)"
+            )
         self._keys = key_bindings(self._definition.keys)
         self._record(
             "device definition: "
@@ -1525,12 +1632,14 @@ class WineSimulatorDriver(SimulatorDriver):
         timeout = timeout_s if timeout_s and timeout_s > 0 else DEFAULT_READY_TIMEOUT
         deadline = time.monotonic() + min(timeout, DEFAULT_READY_TIMEOUT * 2)
         parsed = self._wait_for_startup(timeout)
+        self._record_ini_language_after_start()
         language = next((event for event in parsed if event.event == "LANGUAGE"), None)
         observed = language.get("code") if language is not None else "unknown"
         self.last_language = observed
+        language_error: Optional[str] = None
         if observed != self._language:
             if self._expect_language:
-                raise DriverError(
+                language_error = (
                     f"the app reported system language {observed!r} but the "
                     f"scenario requested {self._language!r}, and this driver "
                     "provisioned it (the numeric simulator index was written).\n"
@@ -1538,14 +1647,20 @@ class WineSimulatorDriver(SimulatorDriver):
                     "ignored the key: correct the map with\n"
                     f"  python -m e2e language-scan --prg <built.prg> --write\n"
                     f"({LANGUAGE_INDEX_FILE}). A run in the wrong language would "
-                    "assert the wrong strings, so it is stopped here."
+                    "assert the wrong strings, so it is stopped here.\n"
+                    "The launch is attempted first so the rest of the run is still "
+                    "diagnosable from the same log."
                 )
-            self._record(
-                f"probed language: the app reported {observed!r} for this index"
-            )
+                self._record(f"language mismatch (deferred): {language_error}")
+            else:
+                self._record(
+                    f"probed language: the app reported {observed!r} for this index"
+                )
         else:
             self._record(f"language confirmed: {observed}")
 
+        # Launch before raising a language mismatch: a run that never opened the
+        # app must not look like a launch failure caused by the language.
         parsed = self._open_app_if_needed(parsed, deadline)
 
         if self._settings is not None and self._settings.url:
@@ -1569,6 +1684,11 @@ class WineSimulatorDriver(SimulatorDriver):
             f"ready: language={observed} mode(s)={modes or ['<none>']} "
             f"requested mode={self._mode}"
         )
+        self._record(
+            "note: an E2E:VIEW line means the view was constructed, not that it "
+            "was painted; a paint failure appears as `Invalid Font Specified` in "
+            "CIQ_LOG.YML"
+        )
         expected = MODE_CONNECTION_NAMES.get(self._mode, ())
         if expected and modes and not set(modes) & set(expected):
             self._record(
@@ -1578,6 +1698,35 @@ class WineSimulatorDriver(SimulatorDriver):
             )
         self._record_device_title()
         self._verify_window_geometry()
+        if language_error:
+            raise DriverError(language_error)
+
+    def _record_ini_language_after_start(self) -> None:
+        """Record what ``simulator.ini`` says after the simulator started.
+
+        The driver writes the file *before* ``simulator.exe``, which is what the
+        maintainer's manual runs do. If the simulator rewrites it on start, the
+        value we wrote is gone and the app never sees the language; only the
+        file's state after start can tell the difference.
+        """
+        path = self._ini_path
+        if path is None:
+            return
+        value = None
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError as error:
+            self._record(f"warning: could not re-read {path}: {error}")
+            return
+        for line in text.splitlines():
+            key, separator, raw = line.partition("=")
+            if separator and key.strip().lower() == "language":
+                value = raw.strip()
+        state = "absent" if value is None else value
+        self._record(
+            f"simulator.ini after start: Language={state} "
+            f"(expected {self._language!r})"
+        )
 
     def _verify_window_geometry(self) -> None:
         """Record the window size and check the declared space fits inside it.
@@ -1643,109 +1792,366 @@ class WineSimulatorDriver(SimulatorDriver):
             f"{display.height} fits the {width}x{height} window 1:1"
         )
 
+    def launch(self, timeout_s: float = DEFAULT_LAUNCH_TIMEOUT) -> bool:
+        """Open the app from the glance by retrying until the app responds.
+
+        The sequence is *page down, then select* (two page-downs), with every key
+        sent after re-taking focus and a 2 s gap. The guest then measured that
+        input delivery itself is **nondeterministic**: the same command, same PRG,
+        same container and same focus alternated between working and doing
+        nothing, roughly one run in two, and the successful ones took anywhere
+        between one and several minutes after launch. The variant did not matter.
+
+        So this is a retry loop, not a one-shot sequence: after the settle it
+        sends one sequence, waits ``LAUNCH_RESPONSE_WAIT_S`` for
+        ``E2E:CONNECTION`` or a non-glance view, and repeats every
+        ``LAUNCH_RETRY_INTERVAL_S`` until ``LAUNCH_RETRY_BUDGET_S`` or the
+        deadline. Variants cycle — the declared hit areas, keyboard taps,
+        keydown/keyup, and a held mouse button — because they are cheap
+        alternatives and any of them may be the one that lands.
+
+        Every retry logs its index, elapsed time, variant, the ``E2E:CONNECTION``
+        state and the view, so the flakiness is data in the log rather than a
+        bug hunt. Success is ``E2E:CONNECTION`` or a view whose category is not
+        ``glance``, or an ``ERRORVIEW``.
+        """
+        deadline = time.monotonic() + max(1.0, timeout_s)
+        parsed = parse_lines(self.events())
+        current = next((event for event in reversed(parsed) if event.event == "VIEW"), None)
+        if current is not None and current.get("category") != "glance":
+            return True
+        device = self._device
+        if device is None:
+            return False
+        started = self._app_started_at or time.monotonic()
+        self._record(
+            "the app started on the glance page; opening it with the measured "
+            f"sequence: {self._launch_down_count()} x page down, then select, "
+            "retried until the app responds"
+        )
+        self._settle_before_launch(deadline)
+        self._probe_selection(deadline)
+        plans: List[Tuple[str, str, Optional[str], Optional[str]]] = []
+        if device.supports_buttons:
+            plans = [
+                ("declared hit areas", "mouse", None, None),
+                ("keyboard taps", "keyboard", "Down", "Return"),
+                ("keyboard keydown/keyup", "keyboard-hold", "Down", "Return"),
+                ("declared hit areas (hold)", "mouse-hold", None, None),
+            ]
+        else:
+            plans = [("a tap on the screen", "tap", None, None)]
+
+        retry_budget = self._seconds_from_env(
+            ENV_LAUNCH_RETRY_BUDGET, LAUNCH_RETRY_BUDGET_S, 0.0, 600.0
+        )
+        interval = self._seconds_from_env(
+            ENV_LAUNCH_RETRY_INTERVAL, LAUNCH_RETRY_INTERVAL_S, 0.0, 60.0
+        )
+        stop = min(deadline, time.monotonic() + retry_budget)
+        retry = 0
+        while time.monotonic() < stop:
+            retry += 1
+            label, mechanism, down_key, select_key = plans[(retry - 1) % len(plans)]
+            mark = len(self.events())
+            elapsed = time.monotonic() - started
+            self._record(
+                f"launch retry {retry}: variant={label}; elapsed={elapsed:.1f}s"
+            )
+            try:
+                if mechanism == "tap":
+                    self.tap(
+                        device.screen_width // 2, device.screen_height // 2, 1
+                    )
+                else:
+                    downs = self._launch_down_count()
+                    for step in range(downs):
+                        self._launch_step(
+                            Button.DOWN,
+                            mechanism,
+                            down_key,
+                            f"page down {step + 1}/{downs}",
+                        )
+                        time.sleep(LAUNCH_KEY_GAP_S)
+                    self._launch_step(
+                        Button.ENTER, mechanism, select_key, "select"
+                    )
+            except DriverError as error:
+                self._record(f"warning: launch retry {retry} failed: {error}")
+            else:
+                if self._wait_for_app_view(mark, stop, retry, label):
+                    return True
+                if self._app_died():
+                    return False
+            self._record(
+                f"launch retry {retry} result: connection="
+                f"{self._connection_state().split('=', 1)[-1]}; "
+                f"view={self._current_view()}; elapsed={time.monotonic() - started:.1f}s"
+            )
+            next_tick = min(time.monotonic() + interval, stop)
+            while time.monotonic() < next_tick:
+                time.sleep(min(0.25, next_tick - time.monotonic()))
+        self._record(
+            f"the launch sequence left the app on the glance page after "
+            f"{retry} retr{'y' if retry == 1 else 'ies'} over "
+            f"{retry_budget:g}s. Every retry above records the variant, the "
+            "focus, the view and the connection state. The guest measured this "
+            "as nondeterministic rather than wrong: the same command works on "
+            "one run and not the next."
+        )
+        return False
+
+    def _probe_selection(self, deadline: float) -> None:
+        """One page down, then measure whether the glance selection moved.
+
+        If a single `Down` sometimes moves the highlight and sometimes does not,
+        the simulator is intermittently ignoring input and the retry loop is the
+        right answer. Cheap, and it makes that visible in the log.
+        """
+        if not self.supports_screenshots or time.monotonic() >= deadline:
+            return
+        region = self.screen_region()
+        if region is None:
+            return
+        before = self.artifact_dir / "launch-probe-before.png"
+        after = self.artifact_dir / "launch-probe-after.png"
+        try:
+            self.screenshot(before)
+            self.press(Button.DOWN, 1)
+            time.sleep(1.0)
+            self.screenshot(after)
+            difference = self.region_pixel_difference(before, after, region)
+        except (DriverError, OSError) as error:
+            self._record(f"note: selection probe skipped ({error})")
+            return
+        changed = int(difference or 0)
+        elapsed = time.monotonic() - (self._app_started_at or time.monotonic())
+        verdict = (
+            "the glance selection moved"
+            if changed > 0
+            else "no visible change, which can happen while the simulator is "
+            "still starting"
+        )
+        self._record(
+            f"selection probe at {elapsed:.1f}s since app start: one page down "
+            f"changed the screen by {changed}px — {verdict}. This is an early "
+            "signal only; the launch retries below decide whether input lands."
+        )
+
+    def _launch_down_count(self) -> int:
+        """How many page-downs the launch sequence sends (measured: 2)."""
+        raw = os.environ.get(ENV_LAUNCH_DOWNS, "").strip()
+        try:
+            value = int(raw) if raw else LAUNCH_DOWNS
+        except ValueError:
+            value = LAUNCH_DOWNS
+        return max(1, min(5, value))
+
+    def _settle_before_launch(self, deadline: float) -> None:
+        """Wait until the app is interactive, not merely drawing.
+
+        The guest measured that waiting for the first ``E2E:VIEW`` is not
+        equivalent to the app accepting input: with a ~50 s wait after
+        ``monkeydo`` the sequence worked every time, while a 2 s wait failed all
+        attempts. The rule here is the explicit version of that: the app must
+        have been running for ``LAUNCH_DWELL_S`` **and** the screen must be
+        stable (two captures ``LAUNCH_STABLE_INTERVAL_S`` apart that match),
+        bounded by ``LAUNCH_SETTLE_MAX_S`` and the launch deadline. Both limits
+        and the dwell have environment overrides.
+        """
+        dwell = self._seconds_from_env(ENV_LAUNCH_DWELL, LAUNCH_DWELL_S, 0.0, 120.0)
+        maximum = self._seconds_from_env(
+            ENV_LAUNCH_SETTLE, LAUNCH_SETTLE_MAX_S, 0.0, 180.0
+        )
+        started = self._app_started_at or time.monotonic()
+        target = min(started + dwell, started + maximum, deadline)
+        if target > time.monotonic():
+            self._record(
+                f"settling: waiting until {dwell:g}s after app start before the "
+                "launch sequence (the app must accept input, not just draw)"
+            )
+            while time.monotonic() < target:
+                time.sleep(min(0.25, target - time.monotonic()))
+
+        stable = self._wait_for_stable_screen(
+            min(
+                deadline,
+                max(
+                    started + maximum,
+                    time.monotonic() + 2 * LAUNCH_STABLE_INTERVAL_S,
+                ),
+            )
+        )
+        self._record(
+            "settle complete: "
+            + ("the screen is stable" if stable else "the screen is still changing")
+            + f"; {time.monotonic() - started:.1f}s since app start"
+        )
+
+    def _seconds_from_env(
+        self, name: str, default: float, low: float, high: float
+    ) -> float:
+        raw = os.environ.get(name, "").strip()
+        try:
+            value = float(raw) if raw else default
+        except ValueError:
+            value = default
+        return max(low, min(high, value))
+
+    def _wait_for_stable_screen(self, deadline: float) -> bool:
+        """Two captures a second apart must match before input is sent."""
+        difference = getattr(self, "pixel_difference", None)
+        if difference is None or not self.supports_screenshots:
+            return False
+        window = self._window
+        if window is None:
+            return False
+        first = self.artifact_dir / "launch-settle-a.png"
+        second = self.artifact_dir / "launch-settle-b.png"
+        first.parent.mkdir(parents=True, exist_ok=True)
+        while time.monotonic() + LAUNCH_STABLE_INTERVAL_S <= deadline:
+            try:
+                self.screenshot(first)
+                time.sleep(LAUNCH_STABLE_INTERVAL_S)
+                self.screenshot(second)
+                measured = difference(first, second)
+            except (DriverError, OSError) as error:
+                self._record(
+                    f"warning: could not measure screen stability ({error}); "
+                    "sending the sequence anyway"
+                )
+                return False
+            if measured is not None and int(measured) == 0:
+                return True
+        return False
+
+    def _connection_state(self) -> str:
+        parsed = parse_lines(self.events())
+        mode = next(
+            (event.get("mode") for event in reversed(parsed) if event.event == "CONNECTION"),
+            None,
+        )
+        return f"connection={mode}" if mode else "connection=none"
+
+    def _window_focus(self) -> Optional[str]:
+        """The window X currently considers focused, or ``None``."""
+        try:
+            completed = self._run(
+                xdotool_getwindowfocus_command(),
+                check=False,
+                action="xdotool getwindowfocus",
+            )
+        except DriverError:
+            return None
+        value = (completed.stdout or "").strip()
+        return value or None
+
+    def _launch_step(
+        self,
+        button: Button,
+        mechanism: str,
+        keysym: Optional[str],
+        what: str,
+    ) -> None:
+        """Send one key of the launch sequence and record what it produced.
+
+        Records the focused window before and after each key: focus can move
+        between keys (Wine's splash window takes it), which is invisible in a log
+        that only says "the key was sent" and is indistinguishable from a
+        simulator that ignores it.
+        """
+        focus_before = self._window_focus()
+        self.press(button, 1, mechanism=mechanism)
+        focus_after = self._window_focus()
+        self._record(
+            f"launch step {what}: focus before={focus_before}; "
+            f"focus after={focus_after}; view={self._current_view()}; "
+            f"{self._connection_state()}"
+        )
+        simulator = str(self._window) if self._window else None
+        if simulator and focus_before and focus_before != simulator:
+            self._record(
+                f"warning: focus was on window {focus_before} before {what}, not "
+                f"the simulator window {simulator}"
+            )
+        if mechanism.startswith("mouse"):
+            path = self.artifact_dir / f"launch-step-{what.replace(' ', '-')}.png"
+            try:
+                self.screenshot(path)
+            except (DriverError, OSError) as error:
+                self._record(f"note: no screenshot after {what}: {error}")
+            else:
+                self._record(f"screenshot after {what}: {path}")
+
+    def _current_view(self) -> str:
+        parsed = parse_lines(self.events())
+        view = next((event for event in reversed(parsed) if event.event == "VIEW"), None)
+        if view is None:
+            return "none"
+        return f"{view.get('category')}/{view.get('view')}"
+
+    def _app_died(self) -> bool:
+        process = self._app_process
+        if process is not None and process.poll() is not None:
+            self._record(
+                f"monkeydo exited with code {process.returncode} during the "
+                "launch sequence"
+            )
+            return True
+        return False
+
+    def _wait_for_app_view(
+        self, mark: int, deadline: float, number: int, label: str
+    ) -> bool:
+        """Wait for ``E2E:CONNECTION`` or a non-glance view after one retry.
+
+        ``E2E:CONNECTION`` is the app actually starting, which the guest uses as
+        the success signal; a different view (or an ``ERRORVIEW``) counts too.
+        After a connection line it waits a little longer for the view, so a
+        caller that runs immediately afterwards sees the new screen.
+        """
+        until = min(time.monotonic() + LAUNCH_RESPONSE_WAIT_S, deadline)
+        connected = False
+        while time.monotonic() < until:
+            if self._app_died():
+                return False
+            for event in parse_lines(list(self.events())[mark:]):
+                if event.event == "CONNECTION":
+                    connected = True
+                if event.event == "ERRORVIEW" or (
+                    event.event == "VIEW" and event.get("category") != "glance"
+                ):
+                    self._record(
+                        f"launch retry {number} ({label}) opened the app: "
+                        f"{event.describe()}"
+                    )
+                    return True
+            if connected:
+                # The app started; give it a moment for the first view.
+                until = min(until + 1.0, deadline)
+                connected = False
+                self._record(
+                    f"launch retry {number} ({label}) produced E2E:CONNECTION; "
+                    "waiting for the first view"
+                )
+            time.sleep(0.25)
+        self._record(
+            f"launch retry {number} ({label}) produced no connection and no view "
+            f"other than the glance (view is {self._current_view()})"
+        )
+        return False
+
     def _open_app_if_needed(
         self, parsed: Sequence[TraceEvent], deadline: float
     ) -> List[TraceEvent]:
-        """Open the app when the simulator left the glance page on screen.
-
-        ``monkeydo`` can leave the device on the glance carousel: only
-        ``E2E:VIEW;category=glance`` appears and ``getInitialView()`` never
-        runs, so no request is made. The physical select button is what opens
-        the app on the device, so the driver presses the declared ``onSelect``
-        hit area, then the ``onMenu`` hold, then select again — with the
-        declared hit areas, not keystrokes. If none of that works the run
-        continues and the log says the app never left the glance.
-        """
+        """Run :meth:`launch` when the first view is the glance."""
         current = next(
             (event for event in reversed(parsed) if event.event == "VIEW"), None
         )
         if current is None or current.get("category") != "glance":
             return list(parsed)
-
-        self._record(
-            "the app started on the glance page (`VIEW;category=glance`); pressing "
-            "select to open it and run the initial view"
-        )
-        device = self._device
-        actions: List[Tuple[str, Callable[[], None]]] = []
-        if device is not None and device.supports_buttons:
-            actions = [
-                ("the declared onSelect hit area", lambda: self.press(Button.ENTER, 1)),
-                ("the declared onMenu hold", lambda: self.press(Button.MENU, 1)),
-                ("a second select after the hold", lambda: self.press(Button.ENTER, 1)),
-            ]
-        elif device is not None:
-            centre_x = device.screen_width // 2
-            centre_y = device.screen_height // 2
-            actions = [
-                ("a tap on the screen", lambda: self.tap(centre_x, centre_y, 1)),
-                ("a second tap", lambda: self.tap(centre_x, centre_y, 1)),
-            ]
-        for label, action in actions:
-            if time.monotonic() >= deadline:
-                break
-            mark = len(self.events())
-            try:
-                action()
-            except DriverError as error:
-                self._record(f"warning: {label} failed: {error}")
-                continue
-            until = min(time.monotonic() + 5.0, deadline)
-            while time.monotonic() < until:
-                process = self._app_process
-                if process is not None and process.poll() is not None:
-                    return list(parse_lines(self.events()))
-                for event in parse_lines(list(self.events())[mark:]):
-                    if event.event == "ERRORVIEW" or (
-                        event.event == "VIEW" and event.get("category") != "glance"
-                    ):
-                        self._record(f"app opened with {event.describe()} via {label}")
-                        return list(parse_lines(self.events()))
-                time.sleep(0.25)
-            self._record(f"note: {label} did not open the app")
-
-        # Hypothesis from the guest: the simulator may run only the glance entry
-        # point, in which case no input can reach the app. Relaunch once and look
-        # for a non-glance view; the console log is appended, not replaced.
-        if self._device is not None and time.monotonic() < deadline:
-            self._record(
-                "the app is still on the glance page; relaunching the PRG in case "
-                "only the glance process started"
-            )
-            mark = len(self.events())
-            try:
-                self._stop_app()
-                time.sleep(1.0)
-                self._launch_app(
-                    self._device, reset_events=False, append_log=True
-                )
-            except DriverError as error:
-                self._record(f"warning: relaunch failed: {error}")
-            else:
-                until = min(time.monotonic() + 15.0, deadline)
-                while time.monotonic() < until:
-                    process = self._app_process
-                    if process is not None and process.poll() is not None:
-                        break
-                    for event in parse_lines(list(self.events())[mark:]):
-                        if event.event == "ERRORVIEW" or (
-                            event.event == "VIEW" and event.get("category") != "glance"
-                        ):
-                            self._record(
-                                f"relaunch opened the app with {event.describe()}"
-                            )
-                            return list(parse_lines(self.events()))
-                    time.sleep(0.25)
-                self._record("note: the relaunch stayed on the glance page too")
-
-        self._record(
-            "warning: the app is still on the glance page, so its initial view never "
-            "ran and no request will be made. The driver tried every declared way in "
-            "(select and hold on button devices, a tap on touch devices) and one "
-            "relaunch. Check the mapped click points in this log (window coordinates "
-            "plus the client origin), the input-delivery probe, and whether the "
-            "simulator runs the app process at all."
-        )
+        remaining = max(1.0, deadline - time.monotonic())
+        self.launch(min(remaining, DEFAULT_LAUNCH_TIMEOUT))
         return list(parse_lines(self.events()))
 
     def _record_device_title(self) -> None:
@@ -1895,16 +2301,19 @@ class WineSimulatorDriver(SimulatorDriver):
         """The copied simulator log in the artifacts, once collected."""
         return self._ciq_log
 
-    def press(self, button: Button, count: int = 1) -> None:
+    def press(
+        self, button: Button, count: int = 1, *, mechanism: Optional[str] = None
+    ) -> None:
         """Press a device button ``count`` times.
 
         A device definition declares its physical buttons as clickable hit
-        areas (``keys[].location`` with a ``behavior``), not keyboard keys, so
-        the driver clicks the declared rectangle. An ``E2E_WINE_KEY_<BUTTON>``
-        override, or an SDK that still declares virtual-key codes, falls back to
-        ``xdotool key``; the log says which mechanism was used, because a
+        areas (``keys[].location`` with a ``behavior``) and the simulator also
+        takes keystrokes, so the driver records which mechanism it used: a
         keystroke the simulator ignores is indistinguishable from a successful
-        press unless it is recorded.
+        press unless it is recorded. ``mechanism`` forces one path
+        (``"mouse"`` or ``"keyboard"``) for the launch sequence's retries; by
+        default a proven keysym wins over a click for navigation, then the
+        declared hit area, then the bound keysym.
         """
         device = self._require_started()
         if not device.supports_buttons:
@@ -1917,13 +2326,40 @@ class WineSimulatorDriver(SimulatorDriver):
 
         override = os.environ.get(f"{ENV_KEY_PREFIX}{button.value}")
         if override:
-            self._send_keys(window, button, override.strip(), count, "environment override")
+            self._send_keys(
+                window, button, override.strip(), count, "environment override"
+            )
+            return
+
+        if mechanism in ("keyboard", "keyboard-hold"):
+            keysym = PROVEN_KEYSYMS.get(button) or self._keys.get(button)
+            if not keysym:
+                raise DriverError(f"no keysym is bound for {button.value}")
+            self._send_keys(
+                window,
+                button,
+                keysym,
+                count,
+                "forced keyboard path",
+                hold=mechanism == "keyboard-hold",
+            )
+            return
+
+        if mechanism in ("mouse", "mouse-hold"):
+            declared = self._definition.key_for(button)
+            if declared is None:
+                raise DriverError(
+                    f"{device.product} declares no hit area for {button.value}"
+                )
+            self._click_declared_key(
+                window, declared, count, hold=mechanism == "mouse-hold"
+            )
             return
 
         proven = PROVEN_KEYSYMS.get(button)
         if proven:
-            # The guest proved the simulator honours these keys; mouse clicks
-            # are silent under this Wine/Xvfb, so the keyboard path wins.
+            # The guest proved the simulator honours these keys, and they need
+            # no coordinates; the declared hit area is the alternative path.
             self._send_keys(window, button, proven, count, "proven keyboard binding")
             return
 
@@ -1941,22 +2377,56 @@ class WineSimulatorDriver(SimulatorDriver):
         self._send_keys(window, button, keysym, count, "no proven binding or hit area")
 
     def _send_keys(
-        self, window: str, button: Button, keysym: str, count: int, why: str
+        self,
+        window: str,
+        button: Button,
+        keysym: str,
+        count: int,
+        why: str,
+        hold: bool = False,
     ) -> None:
-        try:
-            self._run(
-                xdotool_key_command(keysym, count),
-                check=True,
-                action=f"press {button.value}",
-            )
-            transport = "XTEST key to the focused window"
-        except DriverError:
-            self._run(
-                xdotool_key_to_window_command(window, keysym, count),
-                check=True,
-                action=f"press {button.value} (window-targeted fallback)",
-            )
-            transport = "window-targeted key (XSendEvent)"
+        """Send ``count`` keystrokes, focusing the window before **each** one.
+
+        Focus is not stable between keys: the guest lost it mid-sequence and the
+        second key went nowhere, which is indistinguishable from a simulator
+        that ignores the key unless the focus is re-established and logged.
+
+        ``hold`` sends ``keydown``/``keyup`` as separate events with a short hold
+        instead of one ``key`` tap, for a toolkit that reads key state rather
+        than key messages. The exact argv of every command is recorded, because
+        ``--window``, ``--clearmodifiers`` or ``--delay`` change what the
+        simulator receives and are invisible in a log that only says "a key was
+        sent".
+        """
+        transport = "XTEST key to the focused window"
+        for _ in range(max(1, int(count))):
+            self._focus_window(window)
+            time.sleep(FOCUS_SETTLE_S)
+            if hold:
+                down = xdotool_keydown_command(keysym)
+                up = xdotool_keyup_command(keysym)
+                self._run(down, check=True, action=f"press {button.value}")
+                self._record(f"command: {shlex.join(down)}")
+                time.sleep(KEY_HOLD_S)
+                self._run(up, check=True, action=f"release {button.value}")
+                self._record(f"command: {shlex.join(up)}")
+                transport = "keydown/keyup held 50 ms"
+            else:
+                command = xdotool_key_command(keysym, 1)
+                try:
+                    self._run(command, check=True, action=f"press {button.value}")
+                    self._record(f"command: {shlex.join(command)}")
+                    transport = "XTEST key tap to the focused window"
+                except DriverError:
+                    command = xdotool_key_to_window_command(window, keysym, 1)
+                    self._run(
+                        command,
+                        check=True,
+                        action=f"press {button.value} (window-targeted fallback)",
+                    )
+                    self._record(f"command: {shlex.join(command)}")
+                    transport = "window-targeted key (XSendEvent)"
+            time.sleep(DEFAULT_KEY_DELAY_MS / 1000.0)
         mechanism = (
             "keyboard (override)" if why == "environment override" else "keyboard"
         )
@@ -1965,11 +2435,11 @@ class WineSimulatorDriver(SimulatorDriver):
         )
         self._record(
             f"press {button.value} x{count} -> keysym {keysym!r} ({transport}; "
-            f"{why})"
+            f"{why}; window focused before each key)"
         )
 
     def _click_declared_key(
-        self, window: str, key: SimulatorKey, count: int
+        self, window: str, key: SimulatorKey, count: int, hold: bool = False
     ) -> None:
         geometry = self._geometry(window)
         mapper = self._mapper()
@@ -1983,9 +2453,11 @@ class WineSimulatorDriver(SimulatorDriver):
                 f"screenshot, or {ENV_KEY_PREFIX}{key.button.value} with a keysym."
             )
         for _ in range(max(1, int(count))):
-            if key.is_hold:
-                self._pointer_down(window, x, y, action=f"press {key.button.value} (hold)")
-                time.sleep(HOLD_MS / 1000.0)
+            if key.is_hold or hold:
+                self._pointer_down(
+                    window, x, y, action=f"press {key.button.value} (hold)"
+                )
+                time.sleep((HOLD_MS if key.is_hold else MOUSE_HOLD_MS) / 1000.0)
                 self._pointer_up()
             else:
                 self._click_at(window, x, y, action=f"press {key.button.value}")
@@ -2014,10 +2486,14 @@ class WineSimulatorDriver(SimulatorDriver):
     ) -> None:
         """Press the pointer at a verified window point, as real X input."""
         self._move_verified(window, x, y, action)
-        self._run(xdotool_mousedown_command(), check=True, action=action)
+        command = xdotool_mousedown_command()
+        self._run(command, check=True, action=action)
+        self._record(f"command: {shlex.join(command)}")
 
     def _pointer_up(self) -> None:
-        self._run(xdotool_mouseup_command(), check=True, action="release")
+        command = xdotool_mouseup_command()
+        self._run(command, check=True, action="release")
+        self._record(f"command: {shlex.join(command)}")
 
     def _click_at(self, window: str, x: int, y: int, *, action: str) -> None:
         """Click a point that the pointer was verified to be over.
@@ -2027,24 +2503,28 @@ class WineSimulatorDriver(SimulatorDriver):
         click this check exists to prevent.
         """
         self._move_verified(window, x, y, action)
-        self._run(xdotool_click_only_command(1), check=True, action=action)
+        command = xdotool_click_only_command(1)
+        self._run(command, check=True, action=action)
+        self._record(f"command: {shlex.join(command)}")
 
     def _move_verified(self, window: str, x: int, y: int, action: str) -> None:
         """Move the pointer and prove it is over the simulator window.
 
-        Clicking blind is how "the mouse is silent" is born: on the guest the
-        pointer was over the root window (`xdotool getmouselocation` reported
-        the root id) and Wine received no button event at all. The window
+        Clicking blind is how the "silent mouse" verdict was born: on the guest
+        the pointer was once over the root window (`xdotool getmouselocation`
+        reported the root id) and Wine received no button event at all. The window
         position can change between runs, so the geometry is re-read and the
         move retried once before failing.
         """
         for attempt in (1, 2):
             abs_x, abs_y = self._absolute(window, x, y)
+            move = xdotool_mousemove_command(abs_x, abs_y)
             self._run(
-                xdotool_mousemove_command(abs_x, abs_y),
+                move,
                 check=True,
                 action=f"{action} (move pointer)",
             )
+            self._record(f"command: {shlex.join(move)}")
             location = self._mouse_location()
             if location is None:
                 self._record(
@@ -2079,7 +2559,14 @@ class WineSimulatorDriver(SimulatorDriver):
         return parse_mouselocation(completed.stdout or "")
 
     def _verify_pointer_window(self, window: str, pointer_window: int) -> None:
-        """Fail unless the pointer is over the simulator window (or a child)."""
+        """Fail unless the pointer is over the simulator, or inside its window.
+
+        Wine creates several X windows for one application process — a splash
+        window and the client area were both seen — so a pointer over any of
+        them is over the simulator. Accept the same window id, a window owned by
+        the simulator's PID, or a window whose rectangle lies inside the
+        simulator window's rectangle.
+        """
         if str(pointer_window) == str(window):
             return
         root = self._root_window_id()
@@ -2100,11 +2587,34 @@ class WineSimulatorDriver(SimulatorDriver):
             and simulator_pid == pointer_pid
         ):
             return
+        if self._window_inside(window, str(pointer_window)):
+            self._record(
+                f"note: the pointer is over window {pointer_window}, which lies "
+                f"inside the simulator window {window}; that is the simulator's "
+                "own child window (Wine creates several per process)"
+            )
+            return
         raise DriverError(
             f"the pointer is over window {pointer_window}, not the simulator "
-            f"window {window}, so a click would not reach the app.\n"
+            f"window {window} (pid {simulator_pid!r} vs {pointer_pid!r}), and its "
+            "rectangle is not inside the simulator's.\n"
             "Refusing to click blind; see tests/docs/simulator-driver.md."
         )
+
+    def _window_inside(self, outer: str, inner: str) -> bool:
+        """True when ``inner``'s rectangle lies within ``outer``'s."""
+        try:
+            outer_geometry = self._geometry(outer)
+            inner_geometry = self._geometry(inner)
+        except DriverError:
+            return False
+        ox, oy = outer_geometry.get("x", 0), outer_geometry.get("y", 0)
+        ow, oh = outer_geometry.get("width", 0), outer_geometry.get("height", 0)
+        ix, iy = inner_geometry.get("x", 0), inner_geometry.get("y", 0)
+        iw, ih = inner_geometry.get("width", 0), inner_geometry.get("height", 0)
+        if ow <= 0 or oh <= 0 or iw <= 0 or ih <= 0:
+            return False
+        return ix >= ox and iy >= oy and ix + iw <= ox + ow and iy + ih <= oy + oh
 
     def _root_window_id(self) -> Optional[str]:
         cached = getattr(self, "_root_id", None)
@@ -2415,7 +2925,8 @@ class WineSimulatorDriver(SimulatorDriver):
             f"simulator.ini {path}: "
             + ("created" if created else "rewrote")
             + f" written={list(update.written)} appended={list(update.appended)} "
-            + f"removed={list(update.removed)}; {language_note}"
+            + f"removed={list(update.removed)}; {language_note} "
+            + f"({HTTPS_REQUIREMENTS_KEY}={HTTPS_REQUIREMENTS_OFF})"
         )
 
     def _ini_description(self) -> str:
@@ -2582,7 +3093,18 @@ class WineSimulatorDriver(SimulatorDriver):
         into the void.
         """
         activate, focus = xdotool_focus_commands(window)
-        activated = self._run(activate, check=False, action="xdotool windowactivate")
+        if not getattr(self, "_activate_attempted", False):
+            # windowactivate needs a window manager; try it once for the session,
+            # then use windowfocus only, which works on bare Xvfb.
+            self._activate_attempted = True
+            activated = self._run(
+                activate, check=False, action="xdotool windowactivate"
+            )
+            if activated.returncode != 0:
+                self._record(
+                    "note: xdotool windowactivate failed (no window manager on "
+                    "Xvfb); windowfocus succeeds, which is enough for input"
+                )
         focused = self._run(focus, check=False, action="xdotool windowfocus")
         if focused.returncode != 0:
             raise DriverError(
@@ -2593,12 +3115,6 @@ class WineSimulatorDriver(SimulatorDriver):
                 "Check that the display has a focusable window "
                 f"(DISPLAY={self.display}) and that no other client grabs input."
             )
-        if activated.returncode != 0:
-            self._record(
-                "note: xdotool windowactivate failed (no window manager on "
-                "Xvfb); windowfocus succeeded, which is enough for input"
-            )
-
     def _geometry(self, window: str) -> Dict[str, int]:
         completed = self._run(
             xdotool_geometry_command(window),
@@ -2674,6 +3190,7 @@ class WineSimulatorDriver(SimulatorDriver):
         self._record(
             f"app PID {self._app_process.pid}: {shlex.join(command)}"
         )
+        self._app_started_at = time.monotonic()
         self._app_thread = threading.Thread(target=self._read_console, daemon=True)
         self._app_thread.start()
 

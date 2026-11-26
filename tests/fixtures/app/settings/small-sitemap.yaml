@@ -1,0 +1,25 @@
+# App settings fixture: the ~1 KB sitemap, for the `-1001` payload experiment.
+#
+# The default fixture requests `garmin_e2e` (about 11 KB). A sitemap request
+# that the shim serves with 200 but the app reports as `-1001`
+# (`Communications.SECURE_CONNECTION_REQUIRED`) is a transport question, not a
+# size question: if this small sitemap also reports `-1001`, payload size and
+# response time are ruled out. Build and run it with:
+#
+#   python -m e2e build --device fenix7 --settings small-sitemap
+#   python -m e2e contract-test --driver wine --prg <built.prg>
+#
+# See tests/docs/simulator-driver.md, "`-1001` on a healthy 200".
+
+name: small-sitemap
+description: Default settings pointed at the ~1 KB long-value sitemap.
+properties:
+  url_0: ${E2E_SHIM_URL}/
+  sitemap_0: garmin_localisation_long
+  restapi_0: true
+  webhook_0: ""
+  user_0: ""
+  password_0: ""
+  suppressEmptyResponseExceptions_0: false
+  pollingInterval_0: 1000
+  postCommandHoldTime_0: 2000

@@ -16,7 +16,9 @@
 | `events()` | app console lines, oldest first |
 
 `WineSimulatorDriver` additionally exposes `timed_events()`, which returns
-`(monotonic_timestamp, line)` pairs for the same buffer.
+`(monotonic_timestamp, line)` pairs for the same buffer, and `launch()`, the
+measured way out of the glance page: page down ×2, then select (see "Opening the
+app: DOWN, then SELECT"). `wait_ready` calls it.
 
 Class attributes state what a driver can actually do: `supports_events` and
 `supports_screenshots`. A driver that cannot provide them must not pretend: the
@@ -47,19 +49,24 @@ engine reports event and golden assertions as **skipped**, never passed.
   `skipped` with that evidence, not failed, because one press legitimately does
   nothing (navigation at the top of a list). `--key BUTTON=KEYSYM` (repeatable)
   tries a different keysym.
-- `press-sequence` is the input verdict: `DOWN`, `DOWN`, `UP` must produce at
-  least one measurable effect. All three silent fails with every mechanism in
-  the message. A touch-only device (e.g. `venu2`) has no physical buttons, so its
-  press cases are skipped and `tap` covers its input.
+- `press-sequence` is the input verdict **while the app is still on the glance**:
+  `DOWN`, `DOWN`, `UP` must produce at least one measurable effect, and all three
+  silent fails with every mechanism in the message. Once the app is open those
+  keys are ordinary navigation — a one-page menu legitimately does not move — so a
+  silent sequence there is reported `skipped` with the measurements, and
+  `press-effect` judges input on the open app. A touch-only device (e.g. `venu2`)
+  has no physical buttons, so its press cases are skipped and `tap` covers its
+  input.
 - `press-effect` presses ENTER, MENU and DOWN (and taps on touch devices) and
   requires a different view or a screen change in the screen rectangle; a repeat
   of the same view never counts.
 - `input-delivery` presses the declared select once and reports whether the app
   changed a view or its screen area. It does not assume a simulator menu, and it
   verifies the pointer is over the simulator before clicking.
-- The contract starts with `mode=ble, language=deu`. `deu` is provisioned through
-  the measured numeric index and the reported language must match, so a wrong
-  index fails the contract loudly instead of running in English.
+- The contract starts with `language=deu` so the numeric index path is proven;
+  `--language` changes it. It starts in `mode=ble`; a plain-HTTP stack needs
+  `--mode wifi`, because over BLE the platform requires HTTPS and the sitemap
+  request is refused with `-1001` (see "`-1001` on a healthy 200").
 
 ## How the Wine driver works
 
@@ -161,8 +168,9 @@ PIDs instead.
 | --- | --- | --- |
 | `prepare` | implemented | Validates the external tools and copies the PRG. Runs before anything touches Wine. |
 | `start` | implemented | Display check, `simulator.ini`, simulator-window wait, property seeding and `monkeydo` launch. The device name is expected to appear only after the launch. |
-| `wait_ready` | implemented | First view **and** the reported language, both from the trace stream. A dead app fails with an actionable message (`no console output at all` = launch/packaging, `output but no E2E: line` = wrong build, trace but no view = still on the glance). |
-| `press` | implemented, input delivered | Path per button, recorded: `E2E_WINE_KEY_<BUTTON>`/`--key` first, then a documented keysym, then the declared hit area (mouse, **pointer verified** before the click). Input reaches the app: from the glance, DOWN then SELECT opens it. The readiness path still presses SELECT first, so `app-entry` remains the measurement of that sequence. |
+| `wait_ready` | implemented | First view **and** the reported language, both from the trace stream. When the first view is the glance it runs the measured launch sequence and requires a non-glance view. A dead app fails with an actionable message (`no console output at all` = launch/packaging, `output but no E2E: line` = wrong build). |
+| `launch` | implemented, retries until the app responds | Page down ×2, then select, with `windowfocus` before every key, a 50 s dwell and a stable screen, then a retry loop (`LAUNCH_RESPONSE_WAIT_S` 4 s, every `LAUNCH_RETRY_INTERVAL_S` 10 s, up to `LAUNCH_RETRY_BUDGET_S` 180 s) cycling click, key tap, keydown/keyup and mouse hold. Each retry logs its index, elapsed time, variant, the focus before/after every key, the exact argv and the resulting view/connection. |
+| `press` | implemented, input delivered | Path per button, recorded: `E2E_WINE_KEY_<BUTTON>`/`--key` first, then a proven keysym, then the declared hit area (mouse, **pointer verified** before the click). `mechanism` can force `"mouse"` or `"keyboard"` for the launch retries; the window is focused before every key. |
 | `tap` | implemented, pointer verified | The window is focused and the pointer is verified to be over the simulator window before the click (see above). The screen rectangle comes from the device definition's `display.location` (`simulator.json`), with `E2E_WINE_SCREEN_RECT` as the override; a centred fit is only the last resort for an SDK without `simulator.json`. |
 | `screenshot` | implemented | Captures the simulator window. Fails when the capture is not a usable PNG instead of returning a blank image. |
 | `events` | implemented | `monkeydo` stdout/stderr with receipt timestamps; `stdbuf` disables its block buffering when available. |
@@ -259,7 +267,7 @@ python -m e2e language-scan --prg <built.prg> --write     # on the guest
 
 `language-scan` starts the simulator once per index (default `0-24`), reads
 `E2E:LANGUAGE;code=...` from the app and merges `code -> index` into that file.
-The whole table was measured on the guest (fenix7, Connect IQ 6.0.4 simulator):
+The whole table was measured on the guest (fenix7, SDK 9.3.0):
 
 | Index | Code | Index | Code | Index | Code |
 | --- | --- | --- | --- | --- | --- |
@@ -402,6 +410,114 @@ The earlier `GlanceViewDelegate` idea is recorded here so it is not retried:
 as "Invoked when certain glance event occurs, none for now". There is no select
 handling, so a delegate cannot be why the simulator stays in glance mode.
 
+## `-1001` on a healthy 200
+
+Once the launch sequence worked, the app reached the sitemap request and reported:
+
+```text
+E2E:VIEW;category=sitemap;view=LoadingView;depth=1
+E2E:SITEMAP;result=error;code=-1001;bytes=-
+E2E:ERRORVIEW;id=S:-1001;code=-1001
+```
+
+while the shim logged the same request as a success:
+
+```text
+GET /rest/sitemaps/garmin_e2e -> 200, 207 ms, 11,113 bytes
+```
+
+That contradiction is not a measurement error. `-1001` is
+`Communications.SECURE_CONNECTION_REQUIRED`, which `docs/USAGE.md` names "secure
+connection required", and `BaseRequest.checkResponseCode()` throws for anything
+but `200`.
+
+**Superseded by observation: the same BLE/plain-HTTP configuration loads the
+sitemap once the launch waits long enough.**
+
+```text
+E2E:CONNECTION;mode=BLE
+E2E:VIEW;category=sitemap;view=LoadingView;depth=1
+E2E:SITEMAP;result=success;code=200;bytes=27936
+E2E:VIEW;category=sitemap;view=HomepageMenu;depth=1
+```
+
+with `UseHttpsRequirements=0`, `Language=0`, `BleState=2` in `simulator.ini` and a
+50 s settle. So `-1001` was **not** a protocol refusal and neither
+`UseHttpsRequirements` nor `--mode wifi` is a fix: the earlier runs were launches
+whose keys never landed (input delivery on this guest is nondeterministic, see
+"Opening the app: DOWN, then SELECT"), so the request the shim logged belonged to
+a launch that then failed differently. The key is still written because a working
+installation has it, and `--mode`/`--language` stay because scenarios legitimately
+differ in what they exercise — but the driver does not depend on either for the
+request to succeed.
+
+`bytes=27936` in that line is the app's **estimated** footprint for the
+11,113-byte payload, not the body: the 16 KiB wall documented in
+[fixture-limits.md](fixture-limits.md) applies to the response body.
+
+If a run still reports `-1001`, check the settle first (the launch log says
+whether the screen was stable) before suspecting the transfer; the size and
+protocol measurements below only matter once the launch is deterministic.
+
+1. **Payload size.** Build the ~1 KB variant with the checked-in fixture and run
+   the same contract:
+
+   ```bash
+   python -m e2e build --device fenix7 --settings small-sitemap
+   python -m e2e contract-test --driver wine --prg <built.prg>
+   ```
+
+   `small-sitemap` points the app at `garmin_localisation_long` (1,014 bytes)
+   instead of the ~11 KB `garmin_e2e`. If both sizes report `-1001`, payload size
+   and response time are ruled out; if only the large one does, it is a
+   size/timeout effect in the simulator's HTTP stack (the 16 KiB _parse_ limit is
+   a separate wall).
+1. **Protocol.** Run the shim with HTTP/1.0 instead of HTTP/1.1 (the committed
+   shim uses 1.1). A stack that waits for the connection to close would also fail
+   after a served 200. The operator measured one HTTP/1.0 run that served a
+   request in 107 ms but did not reach the app — with the broken launch sequence,
+   so that result is **untested, not disproven**; repeat it now.
+1. **The simulator's own view.** `CIQ_LOG.YML` records the transfer from the
+   simulator side and is copied to `<artifacts>/logs/CIQ_LOG.YML`.
+
+Record which combination produces `E2E:VIEW;category=sitemap` rather than
+`SITEMAP;result=error;code=-1001`, because the two are indistinguishable in the
+shim log alone.
+
+A related app-side note from the same run: with the error view on screen the app
+died with `Invalid Font Specified` at `ErrorView.mc:144` (`drawTextArea()`), the
+same class of fault as the glance crash in #396 but on the error path. It now
+also happens after the sitemap loads: `HomepageMenu` fails the same way, so three
+different screens — glance, homepage and error view — hit it, and it reproduces
+on devices emulating Connect IQ 3.4.5, 5.2.0 and 6.0.3 alike.
+
+**It is not a simulator-version regression.** The number in the window title
+(`CIQ Simulator - <device> (6.0.3)`) is the **emulated device runtime**, taken
+from `Devices/<device>/compiler.json` `connectIQVersion` (fenix7 5.2.0,
+fenix847mm 6.0.3, fenix9pro47mm 6.0.3, fenix6pro 3.4.5, edge540 6.0.0); it is not
+the simulator's build. The maintainer runs SDK 9.3.0 exactly as we do, so
+installing an older SDK cannot test anything — that experiment is withdrawn. The
+driver now logs the emulated runtime from `compiler.json` at start, so the title
+number cannot be misread again.
+
+The remaining difference between the working setup (Windows) and this one is how
+Wine handles fonts. Two experiments, in order:
+
+1. **Install a standard font set into the Wine prefix** (`drive_c/windows/Fonts`,
+   or `corefonts` via winetricks when it is available in the runner image) and
+   rerun the same PRG and launch sequence. If the simulator asks GDI+ for a face
+   the prefix lacks, this is a runner-image fix, not an app fix.
+1. **Run once with `WINEDEBUG=+font`** and capture which faces are requested and
+   what Wine returns around the `Invalid Font Specified` crash. That log is the
+   evidence to act on if installing fonts changes nothing.
+
+Record both outcomes here when they are measured.
+
+One distinction that matters when reading a run: `E2E:VIEW;category=sitemap;view=HomepageMenu`
+means the view was **constructed**, not painted. The trace can assert structure
+today; it cannot yet assert that anything appeared, because the paint path is
+where the font failure lives.
+
 ## Window size is per device
 
 The simulator persists a window size per device and sizes the window to that
@@ -527,10 +643,10 @@ place to look. The device-backed pointer run showed the same thing from the
 other side: a real device moved the pointer, and a select-first click still did
 nothing.
 
-The `press`/`tap` machinery is kept and is correct: it delivers input. What
-fails now is the sequence the readiness path uses, not the machinery. The
-contract cases (`app-entry`, `input-delivery`, `press-effect`) remain the
-measurement of that sequence.
+The `press`/`tap` machinery is kept and is correct: it delivers input. What was
+missing was the sequence the readiness path used, and `launch()` now sends the
+measured one. The contract cases (`app-entry`, `input-delivery`, `press-effect`)
+measure that sequence.
 
 **`press-effect` must not pass without an effect, and now cannot.** It once passed
 while the app was not running at all, because a pixel comparison cannot tell "the
@@ -604,9 +720,11 @@ mouse is silent" measurement before this check had that failure mode.
 1. read its geometry immediately before moving, and move the pointer to
    `window origin + declared point`;
 1. read `xdotool getmouselocation` back and require the pointer to be at that
-   point **and** over the simulator window — the same window id, or another
-   window belonging to the same PID, because Wine parents the client area in a
-   child window;
+   point **and** over the simulator window — the same window id, another window
+   belonging to the same PID, or a window whose rectangle lies inside the
+   simulator window's. Wine creates several X windows per process (a splash and
+   the client area were both seen), so only a window outside the simulator is
+   refused;
 1. only then send the button. The verified window id and point appear in
    `last_press()` and in `logs/driver.log`.
 
@@ -630,11 +748,87 @@ not repeat the earlier confusion.
 
 ### Opening the app: DOWN, then SELECT
 
-The app opens from the glance on **DOWN, then SELECT** (measured 2026-11-26).
-The driver does not do that yet: `_open_app_if_needed` presses SELECT, then the
-`onMenu` hold, then SELECT again, then relaunches, and never presses DOWN. That
-is why `wait_ready` leaves the app on the glance. Adopting the measured sequence
-there is the follow-up; no coordinate, keysym or focus work is needed.
+The app opens from the glance on **page down (twice in the measured runs), then
+SELECT** (measured 2026-11-26). `WineSimulatorDriver.launch()` implements exactly
+that and `wait_ready` calls it, so the app now reaches `getInitialView()` and the
+sitemap request runs.
+
+An earlier three-run comparison of `Down`, `Down`, `Return` suggested per-key
+focus made it deterministic (2/2 with focus, 0/1 without), but the later runs
+below show that was luck: the same focused command also fails. Focus is still
+taken before every key, because it costs nothing and focus did move between keys
+in one run, but it is not the deciding factor.
+
+**Input delivery is nondeterministic on this guest, so `launch()` retries.** The
+guest ran the same command in the same container, same PRG, same 50 s dwell and
+same focused client window three times:
+
+| Keys | Result |
+| --- | --- |
+| `xdotool key --clearmodifiers Down` ×2, `Return` | worked: `E2E:CONNECTION`, `SITEMAP;result=success;code=200`, `LoadingView` |
+| `xdotool key Down` ×2, `Return` | failed: no `E2E:CONNECTION` |
+| `--clearmodifiers` again, after resolving the client window explicitly | failed: no `E2E:CONNECTION` |
+
+So `--clearmodifiers`, the window choice and the variant are all fine; the same
+command alternates between working and doing nothing, roughly one run in two, and
+the successful runs took anywhere between one and several minutes after launch.
+The answer is a loop, not a better single sequence:
+
+1. **Settle until the app is interactive** (below), then send **one** sequence.
+1. **Wait `LAUNCH_RESPONSE_WAIT_S` = 4 s** for `E2E:CONNECTION` or a non-glance
+   view. `E2E:CONNECTION` is the app starting, which is the guest's success
+   signal; a different view or an `ERRORVIEW` also counts.
+1. **Repeat every `LAUNCH_RETRY_INTERVAL_S` = 10 s** for up to
+   `LAUNCH_RETRY_BUDGET_S` = 180 s (`E2E_WINE_LAUNCH_RETRY_BUDGET`,
+   `E2E_WINE_LAUNCH_RETRY_INTERVAL`), stopping the moment the app responds. The
+   whole `wait_ready` budget is 300 s.
+1. **Cycle the four delivery variants** — declared hit areas, keyboard taps,
+   keydown/keyup held 50 ms, and a held mouse button — as cheap alternatives
+   inside the loop, not as one-shot attempts. The variant does not appear to
+   matter; retrying the same one is what succeeded on the guest.
+
+Each retry logs its index, elapsed time, variant, the `E2E:CONNECTION` state and
+the view, so the flakiness is data in the log:
+
+```text
+launch retry 3: variant=keyboard keydown/keyup; elapsed=71.4s
+launch step page down 1/2: focus before=10485763; focus after=10485763; view=glance/…; connection=none
+command: xdotool keydown --clearmodifiers Down
+launch retry 3 (keyboard keydown/keyup) opened the app: VIEW;category=sitemap;view=LoadingView;depth=1
+```
+
+The settle itself has three properties:
+
+1. **The window is focused before every key** (`windowfocus`, which needs no
+   window manager; `windowactivate` is attempted once and is not relied on).
+1. **The glance is given time to become interactive, not just to draw.** The app
+   must have been running for `LAUNCH_DWELL_S` = **50 s** since app start
+   (`E2E_WINE_LAUNCH_DWELL`), and the screen must be stable (two captures 1 s
+   apart that match), bounded at `LAUNCH_SETTLE_MAX_S` = 90 s
+   (`E2E_WINE_LAUNCH_SETTLE`). The guest's verified manual command waits 50 s
+   after `monkeydo`; a launch at 41.7 s failed every attempt even though the
+   screen had been stable for a while.
+1. **Every key is sent like the verified command**: focus, a 0.3 s pause, the
+   key, then a 2 s gap before the next (`LAUNCH_KEY_GAP_S`), the exact argv
+   logged (`command: xdotool …`), and `xdotool getwindowfocus` recorded before
+   **and** after every key. After every mouse click it captures
+   `launch-step-<step>.png`.
+
+Before the first sequence it also sends one `Down` and measures the screen with
+a before/after capture:
+
+```text
+selection probe at 52.1s since app start: one page down changed the screen by 4200px — the glance selection moved. This is an early signal only; the launch retries below decide whether input lands.
+```
+
+A zero there is **not** a verdict: the probe runs before the first retry, and the
+guest has shown `0px` on a run whose second retry then opened the app. The
+message says so, and records the elapsed time, so the two are not read as a
+contradiction. `E2E_WINE_LAUNCH_DOWNS` changes the page-down count for a device
+whose app entry is a different number of pages away.
+
+Success requires `E2E:CONNECTION`, a view whose category is not `glance`, or an
+`ERRORVIEW`, so a silent retry cannot pass as a launch.
 
 The app also latches glance mode in its own process:
 
@@ -655,9 +849,9 @@ glance the separate process hardware gives it. Three builds on the guest:
 Neither the harness nor a build profile may patch the lifecycle: a test build
 that changes the semantics would test a different application. The three rows
 above were measured with the select-first sequence; they are kept only to show
-what that wrong sequence produced. The `watch-app` profile and the `app-entry`,
-`input-delivery`, `press-effect` and `press-sequence` cases are the right shape;
-the input path delivers, so the missing piece is DOWN then SELECT.
+what that wrong sequence produced. With the measured launch sequence the app
+reaches the sitemap, and the `app-entry`, `input-delivery`, `press-effect` and
+`press-sequence` cases measure the app, not the sequence.
 
 Two related measurements, so they are not repeated: replacing the glance with a
 cleared background changed nothing, and `GlanceViewDelegate` is not a candidate
@@ -694,15 +888,15 @@ is enough to act on it.
 | `device title … does not match` / `does not name a device` | **warning only**; the trace stream already proved the app is running | check `LastUsedDevice` in `simulator.ini` if results look wrong |
 | `monkeydo exited with code …` | wrong PRG or device name | read `logs/console.log` |
 | `app-ready … no console line` | the app started but produced no `E2E:` line | check the PRG is a debug build and the device wiring (`link-devices` is accurate here) |
-| `warning: the app is still on the glance page` | the glance transition did not happen because the readiness path pressed SELECT first | see "Input: the sequence that was missing" in [simulator-input.md](simulator-input.md); DOWN then SELECT opens the app |
-| `app-entry … still showing the glance` | `getInitialView()` did not run because the readiness sequence is select-first | input works; the driver's `_open_app_if_needed` needs DOWN then SELECT (see [simulator-input.md](simulator-input.md)) |
+| `warning: the app is still on the glance page` | the launch sequence did not open the app | read the `launch attempt …` lines: mechanism, point or keysym, and the view each step produced. `E2E_WINE_LAUNCH_DOWNS` changes the page-down count |
+| `app-entry … still showing the glance` | `getInitialView()` did not run; the launch sequence did not open the app | read the `launch attempt …` lines: each records the mechanism, the point or keysym, and the view it produced. `E2E_WINE_LAUNCH_DOWNS` changes the page-down count |
 | `app-ready … no console output at all` | the app never started: `monkeydo` produced nothing, so this is launch/packaging for that device, not the glance | read `logs/console.log` and the build log; confirm the PRG is the device's build and fits its memory; launch `monkeydo <prg> <device>` by hand |
 | `app-ready … output but no 'E2E:' line` | something ran, but not this E2E build | pass the debug PRG built by `e2e build`; a release build prints no trace |
 | `press-effect … no E2E: console output at all` | the app was not running, so no pixel change is attributable to input | same as `app-ready`: fix the launch first |
 | `press-effect … beat that` | the screen changes on its own by at least the idle baseline, so the press is indistinguishable | freeze the animated region or assert a view instead of pixels |
-| `press-effect … no different VIEW` | the press produced a repeated view or none; a select-first click legitimately does nothing on the glance | check whether the run pressed DOWN then SELECT; the sequence, not the event source, is the suspect |
-| `press[<button>] … effect=none` | the press ran but changed nothing measurable. A single press can legitimately do nothing. Reported as evidence (`skipped`); the sequence is the verdict | check the mechanism and verified pointer in `logs/driver.log`; then check the order of the presses |
-| `press-sequence … DOWN, DOWN, UP produced no effect` | the implemented sequence never presses SELECT after the DOWN, so it cannot open the glance | the case needs DOWN then SELECT (see [simulator-input.md](simulator-input.md)); not an environment failure |
+| `press-effect … no different VIEW` | the press produced a repeated view or none | check the launch log first: the app is only entered by page down then select |
+| `press[<button>] … effect=none` | the press ran but changed nothing measurable. A single press can legitimately do nothing. Reported as evidence (`skipped`); the sequence is the verdict | check the mechanism and verified pointer in `logs/driver.log`; then the order of the presses |
+| `press-sequence … produced no effect` | no press in the sequence had an effect **while the app was still on the glance**, so delivery has not been shown | read the three mechanisms; delivery on this guest is nondeterministic and the launch retries, so a single silent sequence is not conclusive. `--key DOWN=<keysym>` tries another binding. On an open app the case reports `skipped` instead |
 | `the pointer never reached the simulator window` | the click would have gone to the root window or another client, so it was refused | the window moved or is not mapped on this display; re-run, and confirm `xdotool getmouselocation` names the simulator window. This is the failure mode behind every "the mouse is silent" measurement |
 | `the app reported system language …` | the numeric index was written but the app reports another language, so the index is wrong or was ignored | run `python -m e2e language-scan --prg <prg> --write` and check `tests/config/simulator-languages.json` |
 | `language 'pol' has no measured simulator index` | the code is not in the measured map, so the run would be in another language | measure it with `language-scan --write`; until then the run is reported blocked |
@@ -746,27 +940,29 @@ index 7) and the input limitation below.
    app's property defaults in, and the build fails if `monkeyc`'s settings JSON
    does not echo them.
 1. Run `python -m e2e contract-test --driver wine --prg <built.prg>` inside the
-   runner container. `app-entry`, `input-delivery`, `press-effect` and
-   `press-sequence` reflect the readiness sequence, which still presses SELECT
-   first; input itself is delivered (see
-   [simulator-input.md](simulator-input.md)). The other cases should pass.
+   runner container. It may take several minutes: the driver settles ~50 s, then
+   retries the launch sequence for up to 3 minutes until `E2E:CONNECTION`
+   appears. Every case should pass; if `app-entry` fails, the `launch retry …`
+   lines say how many retries ran, with which variant, and what the view and
+   connection state were each time.
 1. Run `python -m e2e run smoke/launch-and-poll --driver wine` (or `--prg
    <built.prg>`; the run command builds per scenario, with that scenario's
-   fixture) and confirm the trace-driven assertions are evaluated, not skipped.
+   fixture) and confirm the request assertions are evaluated, not skipped.
 1. Open `logs/driver.log` and `logs/CIQ_LOG.YML`: the first should show the
-   `simulator.ini` keys (`Language=7` for `deu`, `Language` removed for `eng`),
-   the transport, `app properties come from the build`, the device-title
-   corroboration and the window geometry; the second is the evidence when
-   anything crashed. `logs/ciq-log-errors.txt` lists the classified errors.
+   `simulator.ini` keys (`Language=7` for `deu`, `Language` removed for `eng`,
+   `UseHttpsRequirements=0`), the transport, `app properties come from the
+   build`, the launch attempts, the device title and the window geometry; the
+   second is the evidence when anything crashed. `logs/ciq-log-errors.txt` lists
+   the classified errors.
 1. Run one language scenario (`extended/localisation-sitemap`): all six
    languages should execute (no `skipped` runs) and each should confirm its
    reported language. Run one mode scenario (`extended/wifi-mode`) to confirm
    the mode verification path.
-1. Input is available. From the glance, DOWN then SELECT opens the app; the
-   trace must show a non-glance `E2E:VIEW` and the shim must log the sitemap
-   request. If a run still shows the glance, the driver's readiness sequence is
-   the suspect (it presses SELECT first), not the environment. See
-   [simulator-input.md](simulator-input.md).
+1. Confirm the sitemap loads. With the settle in place the same BLE/plain-HTTP
+   stack succeeds (`SITEMAP;result=success;code=200`); `--mode` selects what a
+   scenario exercises, not a workaround. If a run reports `-1001`, read the
+   launch log first — it says whether the screen was stable before the keys — and
+   only then the ordered measurements in "`-1001` on a healthy 200".
 1. If taps miss on a device, compare a screenshot with `display.location` in
    the device's `simulator.json` and pin `E2E_WINE_SCREEN_RECT` for the next run.
    The `wait_ready` window-fit check already refuses a window that cannot contain

@@ -39,6 +39,13 @@ def test_fixtures_point_at_the_shim(monkeypatch) -> None:
     assert settings.sitemap == "garmin_e2e"
 
 
+def test_the_small_sitemap_fixture_exists_for_the_1001_experiment() -> None:
+    """A ~1 KB request separates a transport -1001 from a payload-size effect."""
+    settings = load_settings("small-sitemap")
+    assert settings.sitemap == "garmin_localisation_long"
+    assert settings.properties["sitemap_0"] == "garmin_localisation_long"
+
+
 def test_shim_url_token_follows_the_stack_environment() -> None:
     # The bridge profile passes the service alias to the runner; the fixture
     # resolves to exactly the same value, so the app cannot drift from the
