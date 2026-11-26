@@ -94,27 +94,30 @@ ENV_KEY_PREFIX = "E2E_WINE_KEY_"
 #: Startup and readiness budgets in seconds.
 ENV_STARTUP_TIMEOUT = "E2E_WINE_STARTUP_TIMEOUT"
 DEFAULT_STARTUP_TIMEOUT = 120.0
-DEFAULT_READY_TIMEOUT = 90.0
+DEFAULT_READY_TIMEOUT = 150.0
 #: Delay between repeated xdotool events, so the app can process each one.
 DEFAULT_KEY_DELAY_MS = 150
 #: How long a declared ``isHold`` key stays pressed.
 HOLD_MS = 900
-#: Gap between the page-downs and the select of the launch sequence. The
-#: guest's verified runs used ~1.5 s; shorter gaps did not register.
-LAUNCH_STEP_DELAY_S = 1.5
+#: Pause after focusing and before the key, as in the verified manual command
+#: (`xdotool windowfocus $W; sleep 0.3; xdotool key Down`).
+FOCUS_SETTLE_S = 0.3
+#: Gap between consecutive launch keys, as in the verified manual command
+#: (`sleep 2` between keys). The keys do not register when they arrive faster.
+LAUNCH_KEY_GAP_S = 2.0
 #: Page-downs before select, as measured on the guest (2/2 runs with them).
 LAUNCH_DOWNS = 2
 #: Override for a device whose app entry is a different number of pages away.
 ENV_LAUNCH_DOWNS = "E2E_WINE_LAUNCH_DOWNS"
 #: Seconds the app must have been running before the first launch key. Waiting
 #: for the first `E2E:VIEW` is not the same as waiting until the app accepts
-#: input: the guest needed ~50 s of blunt waiting, and the empirical rule is a
-#: dwell of at least this long plus a stable screen.
-LAUNCH_DWELL_S = 10.0
+#: input: the guest's verified command waits **50 s** after `monkeydo`, and a
+#: launch at 41.7 s failed every attempt while the screen was already stable.
+LAUNCH_DWELL_S = 50.0
 #: Override for the dwell.
 ENV_LAUNCH_DWELL = "E2E_WINE_LAUNCH_DWELL"
 #: Upper bound on the settle (dwell + stability), measured from app start.
-LAUNCH_SETTLE_MAX_S = 60.0
+LAUNCH_SETTLE_MAX_S = 90.0
 #: Override for the maximum settle. Replaces the old fixed 2 s wait.
 ENV_LAUNCH_SETTLE = "E2E_WINE_LAUNCH_SETTLE"
 #: Seconds between the two captures that must match before the sequence is sent.
@@ -534,6 +537,10 @@ def xdotool_window_pid_command(window: str) -> List[str]:
 
 def xwininfo_root_command() -> List[str]:
     return ["xwininfo", "-root"]
+
+
+def xdotool_getwindowfocus_command() -> List[str]:
+    return ["xdotool", "getwindowfocus"]
 
 
 def parse_mouselocation(text: str) -> Optional[Dict[str, int]]:
@@ -1767,20 +1774,20 @@ class WineSimulatorDriver(SimulatorDriver):
                         device.screen_width // 2, device.screen_height // 2, 1
                     )
                 else:
-                    # Measured: 2 page-downs, then select, with focus before
-                    # every key. `E2E_WINE_LAUNCH_DOWNS` changes the count for a
-                    # device whose app entry is one page away instead of two.
+                    # Exactly the verified manual command: one key at a time,
+                    # `LAUNCH_KEY_GAP_S` apart, focus re-taken before each.
                     downs = self._launch_down_count()
-                    self._launch_step(
-                        Button.DOWN,
-                        mechanism,
-                        down_key,
-                        f"page down x{downs}",
-                        count=downs,
-                    )
-                    time.sleep(
-                        LAUNCH_STEP_DELAY_S * (2.0 if number == len(plans) else 1.0)
-                    )
+                    for step in range(downs):
+                        self._launch_step(
+                            Button.DOWN,
+                            mechanism,
+                            down_key,
+                            f"page down {step + 1}/{downs}",
+                        )
+                        time.sleep(
+                            LAUNCH_KEY_GAP_S
+                            * (2.0 if number == len(plans) else 1.0)
+                        )
                     self._launch_step(
                         Button.ENTER, mechanism, select_key, "select"
                     )
@@ -1896,20 +1903,55 @@ class WineSimulatorDriver(SimulatorDriver):
         )
         return f"connection={mode}" if mode else "connection=none"
 
+    def _window_focus(self) -> Optional[str]:
+        """The window X currently considers focused, or ``None``."""
+        try:
+            completed = self._run(
+                xdotool_getwindowfocus_command(),
+                check=False,
+                action="xdotool getwindowfocus",
+            )
+        except DriverError:
+            return None
+        value = (completed.stdout or "").strip()
+        return value or None
+
     def _launch_step(
         self,
         button: Button,
         mechanism: str,
         keysym: Optional[str],
         what: str,
-        count: int = 1,
     ) -> None:
-        """Send one key of the launch sequence and record what it produced."""
-        self.press(button, count, mechanism=mechanism)
+        """Send one key of the launch sequence and record what it produced.
+
+        Records the focused window before and after each key: focus can move
+        between keys (Wine's splash window takes it), which is invisible in a log
+        that only says "the key was sent" and is indistinguishable from a
+        simulator that ignores it.
+        """
+        focus_before = self._window_focus()
+        self.press(button, 1, mechanism=mechanism)
+        focus_after = self._window_focus()
         self._record(
-            f"launch step {what}: view is now {self._current_view()}; "
+            f"launch step {what}: focus before={focus_before}; "
+            f"focus after={focus_after}; view={self._current_view()}; "
             f"{self._connection_state()}"
         )
+        simulator = str(self._window) if self._window else None
+        if simulator and focus_before and focus_before != simulator:
+            self._record(
+                f"warning: focus was on window {focus_before} before {what}, not "
+                f"the simulator window {simulator}"
+            )
+        if mechanism == "mouse":
+            path = self.artifact_dir / f"launch-step-{what.replace(' ', '-')}.png"
+            try:
+                self.screenshot(path)
+            except (DriverError, OSError) as error:
+                self._record(f"note: no screenshot after {what}: {error}")
+            else:
+                self._record(f"screenshot after {what}: {path}")
 
     def _current_view(self) -> str:
         parsed = parse_lines(self.events())
@@ -2189,6 +2231,7 @@ class WineSimulatorDriver(SimulatorDriver):
         transport = "XTEST key to the focused window"
         for _ in range(max(1, int(count))):
             self._focus_window(window)
+            time.sleep(FOCUS_SETTLE_S)
             try:
                 self._run(
                     xdotool_key_command(keysym, 1),

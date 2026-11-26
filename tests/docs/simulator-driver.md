@@ -750,15 +750,21 @@ from a log:
 1. **The window is focused before every key** (`windowfocus`, which needs no
    window manager; `windowactivate` is attempted once and is not relied on).
    Skipping the per-key focus was the one run that failed.
-1. **The glance is given time to become interactive, not just to draw**
-   (`LAUNCH_DWELL_S` = 10 s since app start, then two screen captures 1 s apart
-   that must match, bounded by `LAUNCH_SETTLE_MAX_S` = 60 s;
-   `E2E_WINE_LAUNCH_DWELL` and `E2E_WINE_LAUNCH_SETTLE` override). The guest
-   measured that waiting for the first `E2E:VIEW` is **not** the same as waiting
-   for the app to accept input: with ~50 s after `monkeydo` the sequence worked
-   3/3 times, while a 2 s wait failed all attempts with "no view other than the
-   glance". The dwell-plus-stable-screen rule is the explicit version of that,
-   and it is faster than a blanket 50 s when the screen settles earlier.
+1. **The glance is given time to become interactive, not just to draw.** The
+   app must have been running for `LAUNCH_DWELL_S` = **50 s** since app start
+   (`E2E_WINE_LAUNCH_DWELL`), and the screen must be stable (two captures 1 s
+   apart that match), bounded at `LAUNCH_SETTLE_MAX_S` = 90 s
+   (`E2E_WINE_LAUNCH_SETTLE`). The guest's verified manual command waits 50 s
+   after `monkeydo`; a launch at 41.7 s failed every attempt even though the
+   screen had been stable for a while, so the dwell is the load-bearing part and
+   the stability check only confirms it. The app-start budget (`wait_ready`) is
+   150 s to cover the settle plus three attempts.
+1. **Every key is sent like the verified command**: focus, a 0.3 s pause, the
+   key, then a 2 s gap before the next (`LAUNCH_KEY_GAP_S`). The log records
+   `xdotool getwindowfocus` before **and** after every key, because focus moving
+   between keys (Wine's splash window) is invisible in a log that only says the
+   key was sent. After every mouse click it also captures a screenshot
+   (`launch-step-<step>.png`) so the click's effect can be seen.
 1. **Both mechanisms are tried**: the declared hit areas (`nextPage` ×2 then
    `onSelect`, pointer-verified) and the keyboard (`Down` ×2 then `Return`), with
    a 1.5 s gap before the select. `E2E_WINE_LAUNCH_DOWNS` changes the page-down

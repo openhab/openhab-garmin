@@ -748,8 +748,10 @@ def test_launch_pages_down_then_selects_on_a_button_device(
     log = _driver_log(driver)
     assert "2 x page down, then select" in log
     assert "launch attempt 1/3: declared hit areas" in log
-    assert "launch step page down x2" in log
+    assert "launch step page down 1/2" in log
+    assert "launch step page down 2/2" in log
     assert "launch step select" in log
+    assert "focus before=" in log and "focus after=" in log
     assert "launch attempt 2/3: keyboard" in log
     assert "connection=" in log, "each step logs the connection state"
     # Attempt 1 clicks the declared areas, attempt 2 sends the keysyms.
