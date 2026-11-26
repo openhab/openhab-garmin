@@ -75,6 +75,9 @@ class SitemapWidgetFactory {
     // Creates a widget representing the Group item itself. The widget is
     // derived from the Group element and does not contain its `linkedPage`,
     // so selecting it sends a command instead of opening the Group submenu.
+    // The label defaults to the localized "All" string, because the entry
+    // represents all members of the group; the Garmin-specific
+    // `Group label|Control label` convention can override it.
     // Returns null for group types that have no actionable widget.
     public static function createGroupControl(
         groupElement as JsonAdapter,
@@ -89,6 +92,11 @@ class SitemapWidgetFactory {
         var controlJson = groupElement.copyWithout( "linkedPage" );
         if( controlLabel != null ) {
             controlJson.setString( "label", controlLabel );
+        } else {
+            controlJson.setString(
+                "label",
+                Application.loadResource( Rez.Strings.GroupControlAll ) as String
+            );
         }
         return createByType( controlJson, isSitemapFresh, taskQueue );
     }

@@ -56,13 +56,24 @@ annotActionMenu=exclForActionMenu
 annotFullMenu=exclForFullMenu
 
 # RESOURCE PATH
-# resources define drawables (icons), app settings and strings
-# The variable resBase should be included in ALL resource
-resBase=resources/base;resources/icons-interface;resources/icons-widgets
+# resources define drawables (icons), app settings, version info and strings.
+# The English strings are the base language and act as the fallback for
+# missing translations. Localized strings are added per language below.
+resBase=resources/strings/eng;resources/settings;resources/version;resources/icons-interface;resources/icons-widgets
 # The launcher-icons directory includes a directory for
 # each launcher-icon size, which shall be appended
 # e.g. $(resLauncherIcon)/40x40-light
 resLauncherIcons=resources/icons-launcher
+
+# Language-specific string resources. The SDK's default jungle maps
+# base.lang.<code> to resources-<code>; override those mappings to use
+# the project's custom directories. The base English strings in
+# resources/strings/eng remain the fallback for missing translations.
+base.lang.deu = $(base.lang.deu);resources/strings/deu
+base.lang.fre = $(base.lang.fre);resources/strings/fre
+base.lang.ita = $(base.lang.ita);resources/strings/ita
+base.lang.spa = $(base.lang.spa);resources/strings/spa
+base.lang.pol = $(base.lang.pol);resources/strings/pol
 
 # The resourcePath of all Edge devices includes additional
 # directories with resource definitions that override the icon sizes.

@@ -1,0 +1,43 @@
+<resources>
+    <properties>
+        <property id="url_0" type="string"></property>
+        <property id="sitemap_0" type="string"></property>
+        <property id="restapi_0" type="boolean">true</property>
+        <property id="webhook_0" type="string"></property>
+        <property id="user_0" type="string"></property>
+        <property id="password_0" type="string"></property>
+        <property id="suppressEmptyResponseExceptions_0" type="boolean">false</property>
+        <property id="pollingInterval_0" type="number">3000</property>
+        <property id="postCommandHoldTime_0" type="number">0</property>
+    </properties>
+
+    <settings>
+        <setting propertyKey="@Properties.url_0" title="@Strings.AppSettingUrl">
+            <settingConfig type="url" required="true"/>
+        </setting>
+        <setting propertyKey="@Properties.sitemap_0" title="@Strings.AppSettingSitemapName">
+            <settingConfig type="alphaNumeric" required="true"/>
+        </setting>
+        <setting propertyKey="@Properties.restapi_0" title="@Strings.AppSettingRestApi">
+            <settingConfig type="boolean" required="false"/>
+        </setting>
+        <setting propertyKey="@Properties.webhook_0" title="@Strings.AppSettingWebhook">
+            <settingConfig type="alphaNumeric" required="false"/>
+        </setting>
+        <setting propertyKey="@Properties.user_0" title="@Strings.AppSettingUserName">
+            <settingConfig type="alphaNumeric" required="false"/>
+        </setting>
+        <setting propertyKey="@Properties.password_0" title="@Strings.AppSettingPassword">
+            <settingConfig type="password" required="false"/>
+        </setting>
+        <setting propertyKey="@Properties.suppressEmptyResponseExceptions_0" title="@Strings.AppSettingSuppressEmptyResponses">
+            <settingConfig type="boolean" required="false"/>
+        </setting>
+        <setting propertyKey="@Properties.pollingInterval_0" title="@Strings.AppSettingPollingInterval">
+            <settingConfig type="numeric" required="false" min="0" max="10000"/>
+        </setting>
+        <setting propertyKey="@Properties.postCommandHoldTime_0" title="@Strings.AppSettingPostCommandHoldTime">
+            <settingConfig type="numeric" required="false" min="0" max="10000"/>
+        </setting>
+    </settings>
+</resources>

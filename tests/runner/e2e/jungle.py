@@ -76,7 +76,22 @@ _SETTINGS_PROPERTY = re.compile(
 )
 
 #: Where the checkout keeps the app's property defaults.
-SETTINGS_SOURCE = repo_root() / "resources" / "base" / "settings.xml"
+#: The app's property defaults, in the first location that exists. The
+#: localisation work moved the file from ``resources/base`` to ``resources``
+#: so both layouts must build; a single hard-coded path silently broke every
+#: E2E build once the tree moved.
+SETTINGS_SOURCE_CANDIDATES = (
+    repo_root() / "resources" / "settings" / "settings.xml",
+    repo_root() / "resources" / "base" / "settings.xml",
+)
+
+
+def settings_source() -> Path:
+    """Return the checkout's ``settings.xml``, whichever layout it uses."""
+    for candidate in SETTINGS_SOURCE_CANDIDATES:
+        if candidate.is_file():
+            return candidate
+    return SETTINGS_SOURCE_CANDIDATES[0]
 
 
 class JungleError(RuntimeError):
@@ -287,7 +302,7 @@ def write_resource_override(
     individual resources it defines and leaves the rest of ``resources/base``
     alone.
     """
-    source_path = Path(source) if source is not None else SETTINGS_SOURCE
+    source_path = Path(source) if source is not None else settings_source()
     try:
         text = source_path.read_text(encoding="utf-8")
     except OSError as error:
@@ -311,7 +326,7 @@ def _inject_resource_override(
 ) -> List[str]:
     """Insert ``override`` immediately after ``$(resBase)`` for ``device``.
 
-    ``resources/base`` carries the app's ``settings.xml``; the override has to
+    ``resources/base`` (or ``resources/settings`` after the localisation move) carries the app's ``settings.xml``; the override has to
     come after it in ``resourcePath`` so its ``<property>`` defaults win, and
     before the launcher-icon directories so their resources are unaffected.
     """

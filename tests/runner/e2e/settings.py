@@ -1,12 +1,12 @@
 """App settings fixtures.
 
 A settings fixture is the Connect IQ property set the app reads at startup
-(``resources/base/settings.xml``). Keeping the raw ``*_0`` property ids means a
+(``resources/settings/settings.xml``). Keeping the raw ``*_0`` property ids means a
 fixture can be handed to a simulator driver without a translation layer, and it
 keeps the fixture honest: the property names are the app's, not an invented
 schema.
 
-Only the properties that exist in ``resources/base/settings.xml`` are accepted,
+Only the properties that exist in ``resources/settings/settings.xml`` are accepted,
 so a typo fails when the scenario loads rather than when a run behaves oddly.
 
 ``url_0`` is written as ``${E2E_SHIM_URL}/``. That is the same variable the
@@ -32,7 +32,7 @@ from .config import APP_SETTINGS_DIR, ConfigError
 from .network import NetworkError, load_network
 
 #: Property id -> expected Python type, mirrored from
-#: ``resources/base/settings.xml``. Update both together.
+#: ``resources/settings/settings.xml``. Update both together.
 KNOWN_PROPERTIES: Mapping[str, type] = {
     "url_0": str,
     "sitemap_0": str,
@@ -142,7 +142,7 @@ def validate_properties(properties: Mapping[str, Any], where: str = "settings") 
     if unknown:
         raise SettingsError(
             f"{where}: unknown application property/properties: {', '.join(unknown)} "
-            "(see resources/base/settings.xml)"
+            "(see resources/settings/settings.xml)"
         )
 
     missing = [key for key in REQUIRED_PROPERTIES if key not in properties]
