@@ -998,13 +998,13 @@ the `monkeydo` event stream all have working primitives here, behind the same
 
 ### What does not work: the same `Invalid Font Specified`
 
-**The verdict is not "the simulator cannot render."** The SDK archive carries no
-device fonts, so `$HOME/.Garmin/ConnectIQ/Fonts` has to be populated from a
-working installation. Without it both the native and the Wine simulator raise
-`Invalid Font Specified` and the screen stays on the watch face, and Garmin's own
-`samples/TrueTypeFonts` fails identically. That one sentence replaces the earlier
-"the simulator cannot paint app text" and "Wine cannot paint app text" readings:
-the renderer is fine, the assets are missing.
+**The verdict is not "the simulator cannot render."** The native simulator opens
+`$HOME/.Garmin/ConnectIQ/Fonts/` and that directory is empty, so the device faces
+it needs cannot be resolved. Without it populated, both the native and the Wine
+simulator raise `Invalid Font Specified` and the screen stays on the watch face,
+and Garmin's own `samples/TrueTypeFonts` fails identically. That one sentence
+replaces the earlier "the simulator cannot paint app text" and "Wine cannot paint
+app text" readings: the renderer is fine, the assets are missing.
 
 The next draw after `HomepageMenu` is:
 
@@ -1022,17 +1022,24 @@ then segfaults the simulator, so this is not a property of our app's fonts.
 The chain, measured:
 
 - `Config.UI_ERROR_FONTS` uses `Graphics.FONT_MEDIUM/SMALL/TINY/GLANCE/XTINY`;
-  `Devices/fenix7/simulator.json` maps each to a *filename* such as
+  `Devices/fenix7/simulator.json` maps each to a _filename_ such as
   `FNT_FENIX6_CDPG_ROBOTO_18B`;
 - **no such file exists in the SDK**: `find <sdk> \( -iname '*.fnt' -o -iname
   '*.ttf' \)` returns 8 files, all of them assets of `samples/Analog`;
-- the simulator creates `$HOME/.Garmin/ConnectIQ/Fonts` on first start and it
-  stays empty. That is the Linux twin of `%APPDATA%\Garmin\ConnectIQ\Fonts` on
-  Windows, where the SDK Manager stores the device font packs for the
-  installation that does render.
+- the simulator **opens `$HOME/.Garmin/ConnectIQ/Fonts/` successfully and the
+  directory is empty**. Traced on the native build while the app ran
+  (`strace -e trace=openat,stat,access`):
+
+  ```text
+  openat(AT_FDCWD, "/root/.Garmin/ConnectIQ/Fonts/", O_RDONLY) = 7
+  ```
+
+  The open succeeds and the faces it needs are not there, which is the whole
+  cause. That directory is the Linux twin of `%APPDATA%\Garmin\ConnectIQ\Fonts`
+  on Windows, where the maintainer's installation renders.
 
 Installing `fonts-roboto` does not help: the runtime resolves device font
-*filenames* through its own FNT/FreeType path (`FNT_intf.cpp`,
+_filenames_ through its own FNT/FreeType path (`FNT_intf.cpp`,
 `FT_Get_WinFNT_Header` are in the binary), not fontconfig families.
 
 The host was therefore never the variable. Windows renders because that
@@ -1044,17 +1051,17 @@ mounted SDK archive does not.
 1. Obtain the fonts directory from the working Windows installation
    (`%APPDATA%\Garmin\ConnectIQ\Fonts`). It carries the `FNT_*` files that
    `Devices/<device>/simulator.json` names by filename.
-2. Put the same directory where each host reads it:
+1. Put the same directory where each host reads it:
    - native: `$HOME/.Garmin/ConnectIQ/Fonts`;
    - Wine: `<WINEPREFIX>/drive_c/users/<user>/AppData/Roaming/Garmin/ConnectIQ/Fonts`
      — the direct sibling of the device path `wine_devices_target()` resolves in
      `e2e/sdk.py`.
-3. Run the **same** debug PRG on both drivers and record four facts per host:
+1. Run the **same** debug PRG on both drivers and record four facts per host:
    whether the sitemap reaches `HomepageMenu`, whether text is painted (an OCR of
    the `display.location` crop is enough evidence), whether
    `Invalid Font Specified` is gone from the console, and whether `ErrorView`
    draws.
-4. Record the outcome here. If the native build renders, the visual tier becomes
+1. Record the outcome here. If the native build renders, the visual tier becomes
    possible on the existing VM and the runner-image question reopens with real
    evidence: the 22.04 package set and the cost below are already measured, and
    only the Wine stack would still have to be kept for the Wine driver.

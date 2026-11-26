@@ -35,10 +35,10 @@ Revision note (2026-11-26, native Linux simulator): the SDK's
 `linux/bin/simulator` was run end to end. Input works (DOWN, DOWN, SELECT opens
 the app and the sitemap request returns `code=200;bytes=29680`), but it crashes
 on the next draw with the **same** `Invalid Font Specified`, and so does Garmin's
-own `samples/TrueTypeFonts`. The failure is a missing device font pack in the
-mounted SDK, not Wine, so "goldens must come from Windows" stands for a
-different reason than the note below assumes. The renderer itself is fine: the
-next step is to copy `%APPDATA%\Garmin\ConnectIQ\Fonts` from the working Windows
+own `samples/TrueTypeFonts`. It is not Wine: the simulator opens
+`~/.Garmin/ConnectIQ/Fonts/` and the directory is empty, so "goldens must come
+from Windows" stands for a different reason than the note below assumes. The
+renderer itself is fine: the next step is to copy `%APPDATA%\Garmin\ConnectIQ\Fonts` from the working Windows
 installation into `~/.Garmin/ConnectIQ/Fonts` (native) and
 `<WINEPREFIX>/drive_c/users/<user>/AppData/Roaming/Garmin/ConnectIQ/Fonts`
 (Wine), rerun the same PRG on both, and record whether either paints the
