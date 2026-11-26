@@ -14,6 +14,14 @@ follow-on idea of dumping those pixels through the console was evaluated and is
 blocked, because this SDK line has no pixel readback; section 5.7 records the
 evidence and the numbers that would decide it if a future SDK adds the API.
 
+Revision note (2026-11-26): input works. From the glance, DOWN then SELECT opens
+the app; `getInitialView()` runs and the sitemap request reaches the shim (see
+[simulator-input.md](simulator-input.md)). The row below that treated navigation
+as "not without working input", and the phases that depend on the Xorg/uinput
+spike, are superseded by that measurement. The remaining visual blockers are the
+app's `-1001` response handling and the `Invalid Font Specified` failure in
+`ErrorView.drawTextArea()`, not input.
+
 The short answer:
 
 - **Structure is still the only dependable gate.** The `E2E:` trace, the shim
@@ -57,7 +65,7 @@ The short answer:
 | Which host? | The existing Ubuntu VM. No second VM, no Windows licence, no new vCPUs. |
 | Can we prove a translated string fits? | Yes, deterministically, using `Dc.getTextDimensions()` with the real font list and the view's rectangle. This is phase 1. |
 | Can we prove the rendered pixels are correct? | No. SDK 9.3.0 has no pixel readback. Goldens or AI can only judge a screen the simulator actually produced. |
-| Can we prove the app navigates and the pages render? | Not without working input. That is the Xorg/uinput question, owned by another session. |
+| Can we prove the app navigates and the pages render? | Yes for navigation: DOWN then SELECT opens the app and the sitemap request runs (see [simulator-input.md](simulator-input.md)). Rendering is still blocked by the `-1001` handling and the `ErrorView` font failure. |
 | Can AI be the gate? | Not by default. Notes only until a calibrated question set exists; even then it can only add a failure, never turn a structural failure into a pass. |
 | What does a run cost in model calls? | One call per captured screenshot, not per question. With the current capture ceiling that is 6 to 12 calls per run; the hard cap and cache are in section 8. |
 | What is unverified? | Section 11, per phase. In one line: navigation, most pages, glyph rendering, real pixels, hardware, and anything not captured. |
@@ -668,6 +676,12 @@ the simulator (or Wine's X11 driver) reads XInput2 raw events or device state
 rather than core XTEST events, the virtual device is the missing layer.
 
 ### 7.2 Why this is plausible, not proven
+
+**Superseded (2026-11-26):** the premise of this section — that the simulator
+ignores XTEST input — is wrong. The app opens from the glance on DOWN then
+SELECT, so XTEST input reaches it; see
+[simulator-input.md](simulator-input.md). The section is kept as the record of
+the hypothesis the spike tested.
 
 XTEST injects at the server's core event layer. It does not create a new input
 device and does not necessarily update the device state an XInput2 client reads.

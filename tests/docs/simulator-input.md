@@ -1,102 +1,108 @@
 # Simulator input on the Linux guest: verdict (#402)
 
-**Status: closed by measurement.** The decisive run was made by the operator on
-the guest on 2026-11-25, in a disposable container, with the shared stack
-untouched. The author wrote this document from those measurements and from the
-Wine and xorg-server source. No application source, scenario, image or compose
-file was changed to reach it.
+**Status: corrected on 2026-11-26.** The first version of this note concluded
+that UI-level assertions were impossible on this host. That conclusion was
+wrong. The app opens on a two-step input sequence that had not been tried —
+**DOWN, then SELECT** — and the trace shows `getInitialView()` and the sitemap
+request running under Wine. The earlier negative was a wrong key sequence, not
+an input failure.
 
-Scope: the Windows Connect IQ simulator (SDK 9.3.0) under Wine 9.0 on the Ubuntu
-24.04 guest, with Xorg or Xvfb as the display.
+Input reaches the simulator. This note now records what works, what the earlier
+attempts actually ruled out, and the two real defects the working run exposed.
 
 ## Verdict
 
-**UI-level assertions are not available on this host.** A device-backed
-pointer — a real uinput evdev device attached to Xorg, with the pointer confirmed
-moving to an exact declared coordinate — does not make the simulator act. Clicks
-on the declared `enter` hit area and on the screen centre leave the app on
-`E2E:VIEW;category=glance`, with no trace change and no request. The simulator
-ignores pointer input under Wine regardless of how that input is produced.
+From the glance page, pressing **DOWN** and then **SELECT** opens the app.
+Measured on the guest on 2026-11-26:
 
-The raw-input explanation that motivated the spike is refuted by source
-(M1–M4): XTEST is an ordinary XI2 slave and generates raw events, and Wine
-builds `WM_INPUT` from the same hardware message as the legacy mouse and key
-messages. The measured device run then closes the only remaining input-side
-difference: a non-XTEST device that demonstrably moves the pointer changes
-nothing.
+```text
+E2E:LANGUAGE;code=eng
+E2E:CONNECTION;mode=BLE
+E2E:VIEW;category=sitemap;view=LoadingView;depth=1
+E2E:SITEMAP;result=error;code=-1001;bytes=-
+E2E:ERRORVIEW;id=S:-1001;code=-1001
+E2E:VIEW;category=error;view=ErrorView;depth=1
+```
 
-What this means for the design:
+plus a real `GET /rest/sitemaps/garmin_e2e -> 200` in the shim. The sequence
+matters: select alone, and DOWN/UP/select, do not open the app. With DOWN first,
+the same select does.
 
-- A Windows host was rejected on licence and capacity, so it is not a fallback.
-- The remaining route to anything visual is the off-screen work in #403:
-  construct a view, draw it into a `BufferedBitmap` device context and use real
-  font metrics to assert that text fits. SDK 9.3.0 has no `getPixel` or drawing
-  readback (design note in [visual-truth.md](visual-truth.md), commit `353a313`), so
-  that tier can prove drawing and text fit, not colours or rendered pixels.
-- The harness stays host-independent. The driver interface (`null`, `wine`,
-  `windows`) and the scenario files do not encode the host. If Windows or a
-  working Wine input path ever exists, the same scenarios should run unchanged;
-  that is the only conditional case, and nothing in this change prepares for it
-  beyond leaving the interface and scenarios alone.
-- `press`, `tap`, `app-entry`, `input-delivery`, `press-effect` and
-  `press-sequence` stay as they are. Their failing state on the guest is the
-  accurate record, not a regression to chase.
+What this changes for the design:
 
-## The decisive measurement
+- **UI-level assertions are available on the existing host.** The simulator
+  driver and the scenario files are the right shape; the driver needs the
+  two-step readiness sequence below. No Windows host is needed for that, and
+  none is available (rejected earlier on licence and capacity).
+- Two open defects are app and response handling, not input:
+  - the app reports `SITEMAP result=error code=-1001` while the shim served
+    `200` for the same request;
+  - `ErrorView.drawTextArea()` raises `Invalid Font Specified`, so the font
+    problem is not limited to the glance.
+- The harness has one concrete follow-up: `_open_app_if_needed` presses SELECT
+  first, then an `onMenu` hold, then SELECT again, and never presses DOWN. The
+  measured sequence belongs there. Until it changes, `wait_ready` and
+  `app-entry` still fail even though the environment delivers input.
 
-Measured end to end on the guest, disposable container, every gate passed:
+## The measurement
 
-| Gate | Result |
+| Observation | Result |
 | --- | --- |
-| uinput device (`BTN_LEFT`, `REL_X`, `REL_Y`) | created; `evemu-describe` confirms |
-| Xorg evdev attach | `xinput list`: `↳ vmmouse id=6 [slave pointer]` |
-| motion by device injection | `960,540` → `382,209`, exact declared target, 18 capped steps |
-| focus | `xdotool getwindowfocus` = simulator window |
-| click on declared `enter` hit area | AE 0, trace unchanged, no requests |
-| click on screen centre | same |
-| second click + 15 s | same |
+| starting state | `E2E:VIEW;category=glance` |
+| the sequence | DOWN (`nextPage`), then SELECT (`onSelect`) |
+| first view after it | `E2E:VIEW;category=sitemap;view=LoadingView;depth=1` |
+| request | shim logged `GET /rest/sitemaps/garmin_e2e -> 200` |
+| app's own result | `E2E:SITEMAP;result=error;code=-1001` |
+| next view | `E2E:ERRORVIEW;id=S:-1001;code=-1001`, then `category=error;view=ErrorView` |
 
-Trace throughout: `E2E:LANGUAGE;code=eng`, `E2E:VIEW;category=glance`, nothing
-else; the shim recorded no request.
+That `getInitialView()` runs and `SitemapRequest.start()` is called is the
+important part: the widget is no longer stuck in glance mode, and the input path
+from the X server through Wine to the app is proven end to end.
 
-Each alternative explanation was verified independently before the verdict was
-drawn:
+## What the earlier attempts ruled out — and why the conclusion was wrong
 
-| Candidate | Status |
-| --- | --- |
-| Windows host needed because Wine ignores synthetic input | rejected: `winecfg` closes on `Tab, Tab, Return` under the same display; the failure is the simulator, not Wine |
-| XTEST versus a device event | rejected: a uinput evdev device moved the pointer to the exact target; clicks still had no effect |
-| Coordinates and hit areas | rejected: the declared `enter` area and the screen centre were both silent |
-| Focus | rejected: the simulator window held focus at the click |
-| Device capabilities | rejected: `BTN_LEFT`, `REL_X` and `REL_Y` were present and `evemu-describe` confirmed them |
-| X server | rejected: this ran on Xorg with a real device, not on Xvfb with XTEST |
-| Timing | rejected: a second click and a 15 s wait changed nothing |
+Every measurement below is accurate. The conclusion drawn from them was not:
+each tested sequence pressed SELECT first, and the glance carousel needs DOWN
+before SELECT opens the app. The section is kept as history so it is not
+re-derived as current evidence.
+
+| Candidate | What was measured | Why it did not settle input |
+| --- | --- | --- |
+| SELECT alone | no view change | the wrong sequence; DOWN comes first |
+| DOWN, UP, SELECT | no view change | the UP moves the carousel back to the starting item; only DOWN then SELECT is measured to open the app |
+| device event versus XTEST | a uinput pointer moved the pointer; a select-first click was silent | still the wrong sequence, so the event source was never the variable |
+| coordinates and hit areas | declared `enter` area and screen centre both silent | same sequence problem |
+| focus | the simulator window held focus at the click | focus was never the problem |
+| Wine | `winecfg` accepted input and closed on `Tab, Tab, Return` | Wine was never the problem |
+| X server | the device run used Xorg with a real device | the event source was never the problem |
+| timing | a second click and a 15 s wait changed nothing | same sequence problem |
+
+The earlier device run is still useful history: it proved that a real evdev
+device can be attached to a dummy-video Xorg, that the kernel receives the
+injected events and that the pointer moves with XI2 reporting it. It did not
+prove anything about the simulator's response, because the click was at the
+wrong step.
 
 ## Mechanism, from source
 
-Environment: Ubuntu 24.04, `wine 9.0~repack-4build3` (the image's
-`wine`/`wine32:i386`), xorg-server 21.1. Wine files are at tag `wine-9.0`; the
-X files are from the public xorg-server sources.
+These findings are unchanged and explain why the input path was never the
+problem. Wine 9.0 and xorg-server 21.1; Wine files at tag `wine-9.0`.
 
 ### M1 — XTEST is an ordinary XI2 slave and generates raw events
 
 `Xext/xtest.c` `ProcXTestFakeInput()` resolves the request to the virtual XTEST
-device (`dev = GetXTestDevice(dev)`) and queues it through `GetPointerEvents()`
-or `GetKeyboardEvents()` **without** `POINTER_NORAW`. `dix/getevents.c`
-`fill_pointer_events()` allocates a `RawDeviceEvent` whenever
-`(flags & POINTER_NORAW) == 0`, and the key path generates a raw event when the
-source is `EVENT_SOURCE_NORMAL`. XTEST therefore looks like any other device to
-the X server.
+device and queues it through `GetPointerEvents()` or `GetKeyboardEvents()`
+without `POINTER_NORAW`. `dix/getevents.c` `fill_pointer_events()` allocates a
+`RawDeviceEvent` whenever `(flags & POINTER_NORAW) == 0`, and the key path
+generates a raw event for `EVENT_SOURCE_NORMAL`.
 
 ### M2 — Wine turns every core X event into a Win32 hardware message
 
 `dlls/winex11.drv/mouse.c` `X11DRV_ButtonPress`, `X11DRV_ButtonRelease` and
 `X11DRV_MotionNotify` call `send_mouse_input()` → `__wine_send_input()`; the
-keyboard path is `X11DRV_send_keyboard_input()` in
-`dlls/winex11.drv/keyboard.c`. `dlls/win32u/input.c` `__wine_send_input()`
-calls `send_hardware_message(..., 0)`, not the `SEND_HWMSG_INJECTED` path that
-`NtUserSendInput()` uses. To the Windows side, an XTEST event is not marked as
-injected.
+keyboard path is `X11DRV_send_keyboard_input()`. `dlls/win32u/input.c`
+`__wine_send_input()` calls `send_hardware_message(..., 0)`, not the
+`SEND_HWMSG_INJECTED` path that `NtUserSendInput()` uses.
 
 ### M3 — `WM_INPUT` is synthesised from the same hardware message
 
@@ -113,106 +119,84 @@ slave tracking) on the root window and maps a raw motion event to
 `MOUSEEVENTF_MOVE` in `X11DRV_RawMotion()`. That is relative-motion support, not
 a button or key path.
 
-### M5 — raw input asks for a Win32 foreground window, and `RIDEV_NOLEGACY` removes the fallback
+### M5 — raw input asks for a Win32 foreground window (not reached here)
 
 `server/queue.c` `queue_rawinput_message()` drops `WM_INPUT` when the receiving
 process is not the foreground process unless it registered `RIDEV_INPUTSINK`,
 and `queue_mouse_message()`/`queue_keyboard_message()` return before the legacy
-message when the sending process registered `RIDEV_NOLEGACY`. This was the
-strongest Wine-internal explanation while input was unexplained. It is recorded
-because it is the correct reading of the code, not because it survived: the
-measured run rules out the whole input path, not just this branch of it.
+message for a process that registered `RIDEV_NOLEGACY`. Correct reading of the
+code, and not relevant to the verdict: the sequence reaches the app.
 
-### M6 — the harness moves the pointer by warping, and Wine filters only its own warps
+### M6 — Wine filters only its own pointer warps
 
 `mouse.c` `X11DRV_SetCursorPos()` and the cursor-clipping path set
 `warp_serial`, and `is_old_motion_event()` discards motion whose serial predates
 it. That applies to warps Wine itself performs, not to an external client's
-`XWarpPointer`; the earlier belief that this explained the silence was wrong.
-Recorded so the next reader does not revive it.
+`XWarpPointer`. Recorded because it was once proposed as an explanation; the
+sequence finding makes it moot.
 
 ### M7 — there is no Wine raw-input switch to configure
 
-`dlls/winex11.drv/x11drv_main.c` reads only these `HKCU\Software\Wine\X11 Driver`
-values: `Managed`, `Decorated`, `UseXVidMode`, `UseXRandR`, `UseTakeFocus`,
+`dlls/winex11.drv/x11drv_main.c` reads only the usual `X11 Driver` values
+(`Managed`, `Decorated`, `UseXVidMode`, `UseXRandR`, `UseTakeFocus`,
 `UsePrimarySelection`, `UseSystemCursors`, `GrabFullscreen`, `ScreenDepth`,
 `ClientSideGraphics`, `ClientSideWithRender`, `UseXIM`, `ShapeLayeredWindows`,
-`PrivateColorMap`, `PrimaryMonitor`, `CopyDefaultColors`, `AllocSystemColors`
-and `InputStyle`. None enables, disables or configures raw input or XInput2.
-`InputStyle` only changes pointer-grab semantics.
+`PrivateColorMap`, `PrimaryMonitor`, `CopyDefaultColors`, `AllocSystemColors`,
+`InputStyle`). None of them is a raw-input or XInput2 switch.
 
 ### M8 — a device event is not synthetic, but Wine adds no synthetic flag
 
 An XTEST event is a device event of the virtual XTEST slave; a uinput event is a
-device event of a real slave with its own name, capabilities and identity. Both
-become core X events and both are converted by `__wine_send_input(..., 0)`;
-`server/queue.c` sets `LLMHF_INJECTED` only for `IMO_INJECTED`, which is the
-`SendInput` path. A device therefore cannot help through a synthetic flag —
-there is none. The measured run shows it does not help through device identity
-either, which is what the last candidate required.
+device event of a real slave. Both become core X events and both are converted
+by `__wine_send_input(..., 0)`; `server/queue.c` sets `LLMHF_INJECTED` only for
+`IMO_INJECTED`, which is the `SendInput` path. A device cannot help through a
+synthetic flag because there is none. The device run's silence is now explained
+by the sequence, not by the event source.
 
 ```mermaid
 flowchart LR
-  XT["XTEST fake input<br/>(xdotool / xte)"] --> XS["X server:<br/>core event + XI2 raw event"]
-  UI["/dev/uinput device"] --> XS
-  XS --> W["Wine X11 driver:<br/>__wine_send_input (not 'injected')"]
-  W --> HM["server: hardware message"]
-  HM --> L["WM_KEYDOWN / WM_LBUTTONDOWN"]
-  HM --> R["WM_INPUT (same message)"]
-  L --> APP["simulator.exe"]
-  R --> APP
-  APP -.->|"no action: measured"| V["stays on category=glance"]
+  XT["XTEST input<br/>(xdotool, DOWN then SELECT)"] --> XS["X server:<br/>core event"]
+  XS --> W["Wine X11 driver:<br/>__wine_send_input"]
+  W --> MSG["window messages:<br/>WM_KEYDOWN / WM_LBUTTONDOWN"]
+  MSG --> APP["simulator.exe"]
+  APP --> VIEW["getInitialView() runs<br/>LoadingView, sitemap request"]
 ```
 
-## Reproducing the decisive run
+## The two genuine findings
 
-This is the method that produced the table, not a list of further experiments.
-Everything ran in a disposable container from the pinned runner image, with the
-live `runner`, `shim` and openHAB containers untouched:
+### The app returns `-1001` for a request the shim answered with 200
 
-- `docker run --rm --device /dev/uinput --device-cgroup-rule 'c 13:* rmw'
-  -v /dev/input:/dev/input ...` — the host's udev creates the `/dev/input`
-  nodes; the container needs no udev of its own.
-- One owner process (`evdev.UInput`) created a keyboard and a mouse with
-  `BTN_LEFT`, `REL_X` and `REL_Y` **before** Xorg started, kept the device alive
-  for the whole run and injected through the same uinput file descriptors. No
-  second creator and no path-based injection; that is what made the run
-  repeatable.
-- `Xorg :98` with the dummy video driver and the `evdev` input driver, the
-  explicit `/dev/input/eventN`, `SendCoreEvents`, `AlwaysCore`,
-  `GrabDevice false`, and `Option "AutoAddDevices" "off"` in `ServerLayout`.
-  Pass criteria: `Using input driver 'evdev'`, `Configuring as mouse`,
-  `xinput list` showing a slave pointer, and two `EV_REL` injections changing
-  `xdotool getmouselocation`.
-- The simulator and `monkeydo` ran unchanged. The pointer was placed by warp,
-  moved onto the target by the device in capped steps, clicked on the declared
-  `enter` hit area and on the screen centre, and checked against an idle
-  baseline and the trace.
+The shim logged `GET /rest/sitemaps/garmin_e2e -> 200`, and the app reported
+`E2E:SITEMAP;result=error;code=-1001` for that request. That contradiction is
+not explained here and is not an input problem. It is the next thing to
+investigate in the request path: either the response the app received differs
+from what the shim logged, or the app maps a successful response to `-1001`.
 
-Bounds: 18 motion steps, three click attempts, a 15 s wait, and no unbounded
-`read` or `sleep`. That is why this run finished where an earlier attempt hung.
+### `Invalid Font Specified` is not glance-only
 
-## Limits of this record
+`ErrorView.drawTextArea()` raises `Invalid Font Specified` under Wine. The
+glance earlier showed the same failure (`GlanceSitemapView.mc:99`), and the
+working run shows it is not limited to the glance. That makes the font problem
+an app or device-definition defect to track in #396, not a consequence of the
+glance mode.
 
-- The Win32 message trace (`WINEDEBUG=+message`) was not taken. It could say
-  where inside Wine the event stops, but no remaining candidate is a deployable
-  change on this host, so it would not change the design conclusion.
-- The XTEST raw-event case was verified from source, not measured; the device
-  case was measured (`RawMotion` and `Motion` from the uinput pointer).
-- The simulator's internal reason for ignoring pointer input is not known and
-  this document does not guess at it.
-- The result is for the SDK 9.3.0 simulator under Wine 9.0 on this X server. A
-  different simulator build or a fixed Wine input path could behave differently;
-  the harness would then be exercised by the existing scenarios, unchanged.
+## Residual limits
 
-## Cleanup
+- Input works for the measured button path (DOWN then SELECT). The equivalent
+  sequence for a touch-only device was not measured in this correction.
+- The driver's readiness path does not use the sequence yet:
+  `_open_app_if_needed` tries SELECT, an `onMenu` hold, SELECT again and a
+  relaunch. Until that changes, `wait_ready` still leaves the app on the glance.
+- Error-view rendering fails on the font error, so a run that reaches the error
+  view cannot be asserted visually yet.
+- The `-1001` handling is open (above).
+- The measurement's device and exact command are not recorded in the trace; the
+  sequence is the measured fact.
 
-- The disposable containers are `--rm`; `docker ps -a | grep ciq-input-spike`
-  must be empty.
-- An interrupted run must not leave an Xorg on `:98` or a `spike-kbd`/
-  `spike-mouse` device behind: check `pgrep -a Xorg` and
-  `grep -H . /sys/class/input/*/name`; both disappear when their owning process
-  exits.
+## Hygiene
+
+- Disposable containers are `--rm`; `docker ps -a | grep ciq-input-spike` must
+  be empty.
 - `wineserver -k` inside a disposable container before it exits if a simulator
   was started by hand; a stray simulator makes the next run look like a launch
   failure (see
