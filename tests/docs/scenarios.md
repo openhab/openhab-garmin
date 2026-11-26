@@ -214,6 +214,11 @@ and the capture would freeze that crash as the expected state. The pack is
 licensed Garmin content: mount or copy it, never commit it. See
 [sdk.md](sdk.md#device-fonts).
 
+A golden is therefore only valid if it was captured where the pack was present.
+Without it the app crashes on its first draw, so a capture taken in a broken
+environment locks a **blank screen** in as the reference every future run is
+measured against — exactly the failure the capture-time guard exists to prevent.
+
 `no_error_view` is a statement about the view the app is showing _now_, not
 about the whole run:
 

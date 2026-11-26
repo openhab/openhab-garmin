@@ -1267,6 +1267,9 @@ and/or the glance), per device and language.
   assertion can fail.
 - `--update-goldens` requires a human review, the device font pack (the harness
   refuses without it and names the directory) and an explicit opt-in outside CI.
+- A golden is only valid when it was captured with the font pack present: without
+  it the app crashes on its first draw, so the capture would freeze a blank
+  screen as the reference every later run is compared against.
 - A golden from one simulator version is never compared with another.
 
 **Command:** `python -m e2e run <capture-scenario> --driver wine
