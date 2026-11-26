@@ -988,7 +988,23 @@ native driver would have to sweep the lock, not just the process.
   through a local shim: `E2E:SITEMAP;result=success;code=200;bytes=29680`,
   followed by `E2E:VIEW;category=sitemap;view=HomepageMenu;depth=1`.
 
+Native input deserves to be stated on its own: the older story — "input is
+impossible on Linux" — was really "input is impossible **through Wine** with a
+select-first sequence". XTEST against a native GTK window is ordinary X input and
+is now measured working. Wine stays the driver, but if it regresses further the
+native build is a viable fallback for the input path: `press`, `screenshot` and
+the `monkeydo` event stream all have working primitives here, behind the same
+`SimulatorDriver` interface.
+
 ### What does not work: the same `Invalid Font Specified`
+
+**The verdict is not "the simulator cannot render."** The SDK archive carries no
+device fonts, so `$HOME/.Garmin/ConnectIQ/Fonts` has to be populated from a
+working installation. Without it both the native and the Wine simulator raise
+`Invalid Font Specified` and the screen stays on the watch face, and Garmin's own
+`samples/TrueTypeFonts` fails identically. That one sentence replaces the earlier
+"the simulator cannot paint app text" and "Wine cannot paint app text" readings:
+the renderer is fine, the assets are missing.
 
 The next draw after `HomepageMenu` is:
 
@@ -1021,9 +1037,27 @@ Installing `fonts-roboto` does not help: the runtime resolves device font
 
 The host was therefore never the variable. Windows renders because that
 installation has the font assets; Wine and native Linux both fail because the
-mounted SDK archive does not. The next experiment is to copy
-`%APPDATA%\Garmin\ConnectIQ\Fonts` from the working Windows installation into a
-read-only mount and rerun the native build — not to write a driver.
+mounted SDK archive does not.
+
+### When the font pack arrives: the verification to run
+
+1. Obtain the fonts directory from the working Windows installation
+   (`%APPDATA%\Garmin\ConnectIQ\Fonts`). It carries the `FNT_*` files that
+   `Devices/<device>/simulator.json` names by filename.
+2. Put the same directory where each host reads it:
+   - native: `$HOME/.Garmin/ConnectIQ/Fonts`;
+   - Wine: `<WINEPREFIX>/drive_c/users/<user>/AppData/Roaming/Garmin/ConnectIQ/Fonts`
+     — the direct sibling of the device path `wine_devices_target()` resolves in
+     `e2e/sdk.py`.
+3. Run the **same** debug PRG on both drivers and record four facts per host:
+   whether the sitemap reaches `HomepageMenu`, whether text is painted (an OCR of
+   the `display.location` crop is enough evidence), whether
+   `Invalid Font Specified` is gone from the console, and whether `ErrorView`
+   draws.
+4. Record the outcome here. If the native build renders, the visual tier becomes
+   possible on the existing VM and the runner-image question reopens with real
+   evidence: the 22.04 package set and the cost below are already measured, and
+   only the Wine stack would still have to be kept for the Wine driver.
 
 ### Verdict and cost
 
