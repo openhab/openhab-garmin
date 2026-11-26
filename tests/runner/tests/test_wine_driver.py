@@ -49,12 +49,15 @@ from e2e.sim.wine import (
     classify_ciq_message,
     compare_command,
     coordinate_mapper,
+    dark_region_bbox,
+    detect_screen_rect,
     import_command,
     ini_updates,
     key_bindings,
     monkeydo_command,
     parse_ciq_log,
     parse_mouselocation,
+    parse_pgm,
     parse_properties,
     parse_root_window_id,
     parse_screen_rect,
@@ -2733,3 +2736,124 @@ def test_contract_fails_a_press_that_has_no_effect(
     assert by_name["press-effect"].status == FAIL
     assert "no different VIEW" in by_name["press-effect"].detail
     assert exit_code(cases) == 1
+
+
+# ---------------------------------------------------------------------------
+# device-screen isolation for goldens
+# ---------------------------------------------------------------------------
+
+def _pgm(width: int, height: int, dark: tuple) -> bytes:
+    pixels = bytearray([255] * (width * height))
+    x0, y0, w, h = dark
+    for y in range(y0, y0 + h):
+        for x in range(x0, x0 + w):
+            pixels[y * width + x] = 0
+    return b"P5\n%d %d\n255\n" % (width, height) + bytes(pixels)
+
+
+def test_parse_pgm_reads_a_binary_image() -> None:
+    data = b"P5\n3 2\n255\n" + bytes(range(6))
+    assert parse_pgm(data) == (3, 2, bytes(range(6)))
+    assert parse_pgm(b"P2\n3 2\n255\n0 0 0") is None
+    assert parse_pgm(b"P5\n0 2\n255\n") is None
+
+
+def test_dark_region_bbox_finds_the_dark_block() -> None:
+    width = height = 20
+    image = _pgm(width, height, (5, 5, 10, 10))
+    pixels = image.split(b"\n", 3)[3]
+    assert dark_region_bbox(width, height, pixels) == (5, 5, 10, 10)
+
+
+def test_dark_region_bbox_ignores_a_light_centre() -> None:
+    """The window centre can land on a glyph; the nearest dark pixel is used."""
+    width = height = 20
+    image = _pgm(width, height, (5, 5, 10, 10))
+    pixels = bytearray(image.split(b"\n", 3)[3])
+    pixels[10 * width + 10] = 255
+    assert dark_region_bbox(width, height, bytes(pixels)) == (5, 5, 10, 10)
+
+
+def test_detect_screen_rect_returns_the_square_region(tmp_path) -> None:
+    image = tmp_path / "window.png"
+    image.write_bytes(b"\x89PNG\r\n\x1a\n")
+    screen = detect_screen_rect(
+        image, convert="/usr/bin/convert", runner=lambda command: _pgm(200, 220, (53, 141, 60, 60))
+    )
+    assert screen == ScreenRect(x=53, y=141, width=60, height=60)
+
+
+def test_detect_screen_rect_rejects_a_non_square_region(tmp_path) -> None:
+    """A screen is round; a long dark band is chrome, not the display."""
+    image = tmp_path / "window.png"
+    image.write_bytes(b"\x89PNG\r\n\x1a\n")
+    assert (
+        detect_screen_rect(
+            image, convert="/usr/bin/convert", runner=lambda command: _pgm(120, 200, (10, 10, 80, 10))
+        )
+        is None
+    )
+
+
+def test_detect_screen_rect_without_imagemagick_is_none(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr("e2e.sim.wine.shutil.which", lambda name: None)
+    assert detect_screen_rect(tmp_path / "window.png") is None
+
+
+def test_screen_screenshot_crops_the_detected_screen(tmp_path, monkeypatch) -> None:
+    driver = _driver(tmp_path)
+    window = tmp_path / "window.png"
+    window.write_bytes(b"\x89PNG\r\n\x1a\n")
+    target = tmp_path / "screen.png"
+    commands: List[List[str]] = []
+
+    def fake_run(command, *, check=False, timeout=30.0, action=""):
+        commands.append(list(command))
+        if "-crop" in command:
+            target.write_bytes(window.read_bytes())
+        return subprocess.CompletedProcess(list(command), 0, "", "")
+
+    monkeypatch.setattr(driver, "_run", fake_run)
+    monkeypatch.setattr(
+        "e2e.sim.wine.detect_screen_rect",
+        lambda image: ScreenRect(x=53, y=141, width=309, height=309),
+    )
+
+    assert driver.screen_screenshot(window, target) == target
+    assert commands == [
+        ["convert", str(window), "-crop", "309x309+53+141", "+repage", str(target)]
+    ]
+
+
+def test_screen_screenshot_prefers_the_pinned_rect(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv(ENV_SCREEN_RECT, "10,20,30,40")
+    driver = _driver(tmp_path)
+    window = tmp_path / "window.png"
+    window.write_bytes(b"\x89PNG\r\n\x1a\n")
+    target = tmp_path / "screen.png"
+    commands: List[List[str]] = []
+
+    def fake_run(command, *, check=False, timeout=30.0, action=""):
+        commands.append(list(command))
+        target.write_bytes(window.read_bytes())
+        return subprocess.CompletedProcess(list(command), 0, "", "")
+
+    monkeypatch.setattr(driver, "_run", fake_run)
+    monkeypatch.setattr(
+        "e2e.sim.wine.detect_screen_rect",
+        lambda image: pytest.fail("detection must not run when the rect is pinned"),
+    )
+
+    driver.screen_screenshot(window, target)
+    assert commands[0][3] == "30x40+10+20"
+
+
+def test_screen_screenshot_without_a_screen_returns_none(tmp_path, monkeypatch) -> None:
+    monkeypatch.delenv(ENV_SCREEN_RECT, raising=False)
+    driver = _driver(tmp_path)
+    window = tmp_path / "window.png"
+    window.write_bytes(b"\x89PNG\r\n\x1a\n")
+    monkeypatch.setattr("e2e.sim.wine.detect_screen_rect", lambda image: None)
+
+    assert driver.screen_screenshot(window, tmp_path / "screen.png") is None
+    assert "E2E_WINE_SCREEN_RECT" in _driver_log(driver)

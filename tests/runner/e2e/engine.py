@@ -443,22 +443,37 @@ class ScenarioRunner:
                 notes.append(f"golden {name}: skipped (driver has no real screenshots)")
             else:
                 golden_path = context.goldens_dir / context.device.id / f"{name}.png"
-                if context.update_goldens:
-                    # Defence in depth for the write path: --update-goldens is
-                    # already refused without a font pack, and a capture written
-                    # from a crashed render must never become the baseline.
-                    if not context.dry_run:
-                        try:
-                            require_fonts()
-                        except SdkError as error:
-                            raise AssertionFailure(str(error)) from error
-                    assertions.update_golden(actual, golden_path)
-                    notes.append(f"golden {name}: updated {golden_path}")
-                else:
-                    assertions.assert_golden(actual, golden_path, golden["max_diff_ratio"])
-                    notes.append(f"golden {name}: matches {golden_path}")
-                evaluated = True
+                # Compare the device screen, never the window: the chrome is
+                # simulator-version and driver specific, so a window-sized golden
+                # encodes the simulator's bezel and window size rather than what
+                # the app drew. The window capture stays as a diagnostic artifact.
+                screen = context.driver.screen_screenshot(
+                    actual, context.workdir / f"{step.index:02d}-{name}-screen.png"
+                )
                 artifacts.append(str(actual))
+                if screen is None:
+                    notes.append(
+                        f"golden {name}: skipped (the driver cannot isolate the "
+                        "device screen, so only the window with simulator chrome "
+                        "is available)"
+                    )
+                else:
+                    if context.update_goldens:
+                        # Defence in depth for the write path: --update-goldens is
+                        # already refused without a font pack, and a capture written
+                        # from a crashed render must never become the baseline.
+                        if not context.dry_run:
+                            try:
+                                require_fonts()
+                            except SdkError as error:
+                                raise AssertionFailure(str(error)) from error
+                        assertions.update_golden(screen, golden_path)
+                        notes.append(f"golden {name}: updated {golden_path}")
+                    else:
+                        assertions.assert_golden(screen, golden_path, golden["max_diff_ratio"])
+                        notes.append(f"golden {name}: matches {golden_path}")
+                    evaluated = True
+                    artifacts.append(str(screen))
 
         no_error_view = step.get("no_error_view")
         if no_error_view is not None:

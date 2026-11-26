@@ -704,6 +704,141 @@ def parse_screen_rect(text: str) -> Optional[ScreenRect]:
     return ScreenRect(x=x, y=y, width=width, height=height)
 
 
+#: A pixel this dark (0-255) belongs to the device screen rather than the
+#: simulator's window chrome. The simulator paints the watch screen as a dark
+#: disc inside a brighter bezel.
+SCREEN_DARK_THRESHOLD = 24
+
+#: How far the detected region may be from square, in pixels. The screens this
+#: harness drives are round, so a wildly non-square region is not the screen.
+SCREEN_SQUARE_TOLERANCE = 8
+
+
+def parse_pgm(data: bytes) -> Optional[Tuple[int, int, bytes]]:
+    """Decode a binary (P5) PGM image into ``(width, height, pixels)``."""
+    if not data.startswith(b"P5"):
+        return None
+    fields = data.split(b"\n", 3)
+    if len(fields) != 4:
+        return None
+    try:
+        width, height = (int(part) for part in fields[1].split())
+        maxval = int(fields[2])
+    except ValueError:
+        return None
+    pixels = fields[3]
+    if width <= 0 or height <= 0 or maxval != 255 or len(pixels) < width * height:
+        return None
+    return width, height, pixels
+
+
+def dark_region_bbox(
+    width: int,
+    height: int,
+    pixels: bytes,
+    *,
+    threshold: int = SCREEN_DARK_THRESHOLD,
+    start: Optional[Tuple[int, int]] = None,
+) -> Optional[Tuple[int, int, int, int]]:
+    """Bounding box of the dark region containing ``start`` (default: centre).
+
+    The device screen is the dark disc inside the simulator window, so a flood
+    fill from the window centre finds it without knowing the device resolution
+    or the window scale. Returns ``(x, y, width, height)`` in image pixels.
+    """
+    if start is None:
+        start = (width // 2, height // 2)
+    sx, sy = start
+    if not (0 <= sx < width and 0 <= sy < height):
+        return None
+    if pixels[sy * width + sx] > threshold:
+        # The exact centre can land on a glyph; look for the nearest dark pixel.
+        found: Optional[Tuple[int, int]] = None
+        for radius in range(1, min(width, height) // 2):
+            for dx, dy in ((radius, 0), (-radius, 0), (0, radius), (0, -radius)):
+                x, y = sx + dx, sy + dy
+                if 0 <= x < width and 0 <= y < height and pixels[y * width + x] <= threshold:
+                    found = (x, y)
+                    break
+            if found is not None:
+                break
+        if found is None:
+            return None
+        sx, sy = found
+    seen = bytearray(width * height)
+    seen[sy * width + sx] = 1
+    stack = [(sx, sy)]
+    min_x = max_x = sx
+    min_y = max_y = sy
+    while stack:
+        x, y = stack.pop()
+        if x < min_x:
+            min_x = x
+        if x > max_x:
+            max_x = x
+        if y < min_y:
+            min_y = y
+        if y > max_y:
+            max_y = y
+        for nx, ny in ((x + 1, y), (x - 1, y), (x, y + 1), (x, y - 1)):
+            if (
+                0 <= nx < width
+                and 0 <= ny < height
+                and not seen[ny * width + nx]
+                and pixels[ny * width + nx] <= threshold
+            ):
+                seen[ny * width + nx] = 1
+                stack.append((nx, ny))
+    return min_x, min_y, max_x - min_x + 1, max_y - min_y + 1
+
+
+def _convert_stdout(command: Sequence[str]) -> Optional[bytes]:
+    """Run ImageMagick and return stdout, or ``None`` when it cannot run."""
+    try:
+        completed = subprocess.run(  # noqa: S603 - fixed argument list
+            list(command), capture_output=True, timeout=120
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if completed.returncode != 0:
+        return None
+    return completed.stdout or b""
+
+
+def detect_screen_rect(
+    image: Path,
+    *,
+    convert: Optional[str] = None,
+    runner: Optional[Callable[[Sequence[str]], Optional[bytes]]] = None,
+) -> Optional[ScreenRect]:
+    """The device-screen rectangle inside a window capture, or ``None``.
+
+    Detection is per run and does not assume the declared ``display.location``
+    is 1:1 with the window: the simulator scales the device graphic, and the
+    observed window sizes differ between the Wine and native builds while the
+    screen stays the same. ``E2E_WINE_SCREEN_RECT`` remains the pin for a
+    capture the flood fill cannot resolve (for example a light-themed screen).
+    """
+    binary = convert or shutil.which("convert")
+    if binary is None:
+        return None
+    command = [binary, str(image), "-colorspace", "gray", "-depth", "8", "pgm:-"]
+    data = (runner or _convert_stdout)(command)
+    if data is None:
+        return None
+    parsed = parse_pgm(data)
+    if parsed is None:
+        return None
+    width, height, pixels = parsed
+    bbox = dark_region_bbox(width, height, pixels)
+    if bbox is None:
+        return None
+    x, y, region_width, region_height = bbox
+    if abs(region_width - region_height) > SCREEN_SQUARE_TOLERANCE:
+        return None
+    return ScreenRect(x=x, y=y, width=region_width, height=region_height)
+
+
 def screen_rect(
     geometry: Mapping[str, int],
     screen: Tuple[int, int],
@@ -2700,6 +2835,41 @@ class WineSimulatorDriver(SimulatorDriver):
         if reason:
             raise DriverError(f"{target}: {reason}")
         self._record(f"screenshot -> {target}")
+        return target
+
+    def screen_screenshot(self, window_capture: Path, path: Path) -> Optional[Path]:
+        """Crop a window capture to the device screen for golden comparison.
+
+        The screen rectangle is detected per run (the simulator scales the
+        device graphic, and the window size differs between driver builds while
+        the screen does not), or taken from ``E2E_WINE_SCREEN_RECT`` when that
+        is pinned. ``None`` means neither worked, and the caller must skip the
+        golden rather than compare the window chrome.
+        """
+        source = Path(window_capture)
+        rect = parse_screen_rect(os.environ.get(ENV_SCREEN_RECT, "")) or detect_screen_rect(source)
+        if rect is None:
+            self._record(
+                "could not isolate the device screen in "
+                f"{source}; pin {ENV_SCREEN_RECT}=x,y,width,height to compare goldens"
+            )
+            return None
+        target = Path(path)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        completed = self._run(
+            crop_command(source, rect, target),
+            check=False,
+            action="crop the device screen",
+        )
+        if completed.returncode != 0 or not target.is_file():
+            raise DriverError(
+                f"ImageMagick could not crop {source} to {rect.width}x{rect.height}"
+                f"+{rect.x}+{rect.y}: exit {completed.returncode}\n"
+                f"{tail((completed.stderr or '').splitlines())}"
+            )
+        self._record(
+            f"device screen -> {target} ({rect.width}x{rect.height}+{rect.x}+{rect.y})"
+        )
         return target
 
     def pixel_difference(self, before: Path, after: Path) -> Optional[int]:
