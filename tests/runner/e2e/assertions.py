@@ -37,6 +37,12 @@ INK_THRESHOLD = 40
 #: Ink components smaller than this are noise, not glyphs.
 INK_MIN_COMPONENT_PX = 3
 
+#: How much two consecutive captures of a settled screen may differ, as a
+#: fraction of the image, before the screen is considered still painting. The
+#: simulator's status strip drifts by ~0.06%, so this must stay above that and
+#: well below the difference between two different views.
+DEFAULT_STABLE_DIFF_RATIO = 0.001
+
 
 class AssertionFailure(AssertionError):
     """A scenario assertion did not hold."""

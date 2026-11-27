@@ -50,6 +50,9 @@ steps:
 
   - action: screenshot
     name: homepage
+    # E2E:VIEW reports a *constructed* view, so capture until two frames agree:
+    # the instant HomepageMenu is reported, the screen still shows the glance.
+    stable: true
 
   - action: assert
     description: The sitemap poll is proxied to openHAB and answered with 200.

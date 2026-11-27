@@ -31,7 +31,7 @@ from typing import Callable, Dict, List, Mapping, Optional, Tuple
 
 from . import assertions
 from . import fixtures as fixtures_module
-from .assertions import AssertionFailure
+from .assertions import AssertionFailure, DEFAULT_STABLE_DIFF_RATIO
 from .config import ConfigError, Device
 from .openhab import OpenHabClient, OpenHabError
 from .reporting import ERRORED, FAILED, PASSED, SKIPPED, ScenarioResult, StepResult
@@ -374,9 +374,58 @@ class ScenarioRunner:
     def _do_screenshot(self, step: Step, context: _Context) -> Tuple[str, str, List[str]]:
         name = step.get("name")
         path = context.workdir / f"{step.index:02d}-{name}.png"
+        if step.get("stable") and not context.dry_run and context.driver.supports_screenshots:
+            written = self._stable_screenshot(step, context, path)
+            context.screenshots[name] = Path(written)
+            return PASSED, f"{name} -> {written} (stable frame)", [str(written)]
         written = context.driver.screenshot(path)
         context.screenshots[name] = Path(written)
         return PASSED, f"{name} -> {written}", [str(written)]
+
+    def _stable_screenshot(self, step: Step, context: _Context, path: Path) -> Path:
+        """Capture until two consecutive frames agree.
+
+        ``E2E:VIEW`` is emitted when a view is *constructed*, not when it has
+        been painted: a capture taken the instant ``HomepageMenu`` is reported
+        still holds the previous screen, which is how the glance became a
+        baseline. Waiting for two identical frames proves the paint finished,
+        and is deterministic where a fixed sleep is a guess.
+        """
+        interval = step.get("interval_ms", 1000) / 1000.0
+        timeout_s = min(step.get("timeout_ms", 30_000) / 1000.0, context.remaining())
+        threshold = step.get("stable_diff_ratio", DEFAULT_STABLE_DIFF_RATIO)
+        deadline = time.monotonic() + timeout_s
+        # Each capture goes to its own file: writing both to `path` would compare
+        # the second capture with itself and call any screen stable.
+        previous = context.driver.screenshot(path)
+        attempts = 0
+        while time.monotonic() < deadline:
+            attempts += 1
+            probe = path.with_name(f"{path.stem}-probe{attempts}{path.suffix}")
+            time.sleep(interval)
+            current = context.driver.screenshot(probe)
+            differing = assertions.diff_pixels(previous, current)
+            if differing is not None:
+                try:
+                    width, height = assertions.image_size(current)
+                except AssertionFailure:
+                    width = height = 0
+                if width and differing <= threshold * width * height:
+                    path.write_bytes(Path(current).read_bytes())
+                    try:
+                        Path(probe).unlink()
+                    except OSError:
+                        pass
+                    self.log(
+                        f"screenshot {path.name}: stable after {attempts} attempt(s) "
+                        f"({differing} differing pixels)"
+                    )
+                    return path
+            previous = current
+        raise AssertionFailure(
+            f"the screen never settled within {timeout_s:.0f}s, so the capture "
+            "would be of a repainting screen; the last comparison still differed"
+        )
 
     def _do_command(self, step: Step, context: _Context) -> Tuple[str, str, List[str]]:
         item = step.get("item")

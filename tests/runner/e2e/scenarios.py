@@ -342,7 +342,8 @@ def _step_tap(raw: Mapping[str, Any], where: str) -> Dict[str, Any]:
 
 
 def _step_screenshot(raw: Mapping[str, Any], where: str) -> Dict[str, Any]:
-    _reject_unknown(raw, {"action", "name"}, where)
+    _reject_unknown(raw, {"action", "name", "stable", "interval_ms", "timeout_ms",
+                          "stable_diff_ratio"}, where)
     if "name" not in raw:
         raise ScenarioError(f"{where}: 'name' is required")
     name = _string(raw["name"], f"{where}.name")
@@ -350,7 +351,18 @@ def _step_screenshot(raw: Mapping[str, Any], where: str) -> Dict[str, Any]:
         raise ScenarioError(
             f"{where}.name: use lower-case letters, digits, '-' or '_'; got {name!r}"
         )
-    return {"name": name}
+    params: Dict[str, Any] = {"name": name}
+    if "stable" in raw:
+        params["stable"] = _bool(raw["stable"], f"{where}.stable")
+    if "interval_ms" in raw:
+        params["interval_ms"] = _int(raw["interval_ms"], f"{where}.interval_ms", 50, 10_000)
+    if "timeout_ms" in raw:
+        params["timeout_ms"] = _int(raw["timeout_ms"], f"{where}.timeout_ms", 1, 600_000)
+    if "stable_diff_ratio" in raw:
+        params["stable_diff_ratio"] = _ratio(
+            raw["stable_diff_ratio"], f"{where}.stable_diff_ratio"
+        )
+    return params
 
 
 def _step_command(raw: Mapping[str, Any], where: str) -> Dict[str, Any]:

@@ -422,6 +422,7 @@ def _runner_with_view(tmp_path: Path, *lines: str):
     from e2e.trace import TraceLog
 
     runner = engine.ScenarioRunner.__new__(engine.ScenarioRunner)
+    runner.log = lambda message: None
     trace = TraceLog(lambda: list(lines))
     trace.poll()
 
@@ -589,3 +590,72 @@ def test_wait_for_view_is_skipped_without_an_event_stream(tmp_path: Path) -> Non
     status, message, _artifacts = runner._do_wait_for_view(step, _Ctx())
     assert status == "skipped"
     assert "no console event stream" in message
+
+# ---------------------------------------------------------------------------
+# stable capture: VIEW is constructed, not painted
+# ---------------------------------------------------------------------------
+
+def test_stable_screenshot_waits_until_two_frames_agree(tmp_path, monkeypatch) -> None:
+    from e2e.scenarios import Step
+
+    runner, context = _runner_with_view(tmp_path, MENU)
+    context.skip_events = False
+    context.dry_run = False
+    context.workdir = tmp_path
+    context.remaining = lambda: 30.0
+
+    frames = [b"frame-1", b"frame-2", b"frame-2"]
+    seen: List[int] = []
+
+    class _Driver(_NullWithEvents):
+        supports_screenshots = True
+
+        def screenshot(self, path):
+            index = len(seen)
+            seen.append(index)
+            Path(path).write_bytes(frames[min(index, len(frames) - 1)])
+            return Path(path)
+
+    context.driver = _Driver()
+    context.screenshots = {}
+    monkeypatch.setattr("e2e.sim.wine.time.sleep", lambda seconds: None)
+    monkeypatch.setattr(engine.time, "sleep", lambda seconds: None)
+
+    diffs = {(b"frame-1", b"frame-2"): 5000, (b"frame-2", b"frame-2"): 0}
+    monkeypatch.setattr(
+        "e2e.assertions.diff_pixels",
+        lambda a, b: diffs[(Path(a).read_bytes(), Path(b).read_bytes())],
+    )
+    monkeypatch.setattr("e2e.assertions.image_size", lambda path: (409, 600))
+
+    step = Step(index=2, action="screenshot", params={"name": "homepage", "stable": True})
+    status, message, artifacts = runner._do_screenshot(step, context)
+    assert status == "passed"
+    assert "stable frame" in message
+    assert seen == [0, 1, 2], "two consecutive equal frames are required"
+    assert Path(artifacts[0]).read_bytes() == b"frame-2"
+
+
+def test_stable_screenshot_fails_when_the_screen_never_settles(tmp_path, monkeypatch) -> None:
+    from e2e.scenarios import Step
+
+    runner, context = _runner_with_view(tmp_path, MENU)
+    context.dry_run = False
+    context.workdir = tmp_path
+    context.remaining = lambda: 0.0
+
+    class _Driver(_NullWithEvents):
+        supports_screenshots = True
+
+        def screenshot(self, path):
+            Path(path).write_bytes(b"jitter")
+            return Path(path)
+
+    context.driver = _Driver()
+    monkeypatch.setattr(engine.time, "sleep", lambda seconds: None)
+    monkeypatch.setattr("e2e.assertions.diff_pixels", lambda a, b: 999)
+
+    step = Step(index=2, action="screenshot", params={"name": "homepage", "stable": True})
+    with pytest.raises(engine.AssertionFailure) as error:
+        runner._do_screenshot(step, context)
+    assert "never settled" in str(error.value)
