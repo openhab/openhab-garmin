@@ -187,6 +187,8 @@ def _result(scenario: str, status: str, profile: str):
 class _QuietClient:
     """An openHAB/shim client that answers readiness without a network."""
 
+    base_url = "http://shim.invalid:8080"
+
     def wait_ready(self, *args, **kwargs) -> None:
         return None
 

@@ -169,6 +169,34 @@ def validate_properties(properties: Mapping[str, Any], where: str = "settings") 
         raise SettingsError(f"{where}: postCommandHoldTime_0 must be 0..10000, got {hold}")
 
 
+def scenario_settings(
+    scenario: "Scenario",
+    *,
+    shim_url: str,
+    directory: Path = APP_SETTINGS_DIR,
+) -> AppSettings:
+    """The properties a scenario actually runs with, composed in one place.
+
+    The fixture supplies the behavioural defaults (polling interval, suppress
+    empty responses, webhook, …) and the scenario overrides them. Two values are
+    **not** the fixture's to decide:
+
+    - ``sitemap_0`` comes from ``scenario.openhab.sitemap``, the page the
+      scenario asserts against. A fixture default left in place compiles a
+      different sitemap into the PRG than the scenario waits for, and the run
+      fails looking for a request the app will never make.
+    - ``url_0`` comes from the harness's shim URL, so a scenario cannot compile
+      an endpoint the runner is not inspecting.
+
+    Composing here means the build cache key, the compiled PRG and the driver
+    all see the same values.
+    """
+    overrides: Dict[str, Any] = dict(scenario.settings or {})
+    overrides["sitemap_0"] = scenario.openhab.sitemap
+    overrides["url_0"] = shim_url if shim_url.endswith("/") else f"{shim_url}/"
+    return load_settings(scenario.fixture, directory).with_overrides(overrides)
+
+
 def load_settings(name: str, directory: Path = APP_SETTINGS_DIR) -> AppSettings:
     """Load ``fixtures/app/settings/<name>.yaml``."""
     path = directory / f"{name}.yaml"
