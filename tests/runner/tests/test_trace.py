@@ -361,5 +361,35 @@ def test_describe_is_bounded() -> None:
     assert "view=0" not in text
 
 
+def test_failure_report_keeps_an_error_the_poll_tail_would_hide() -> None:
+    """The one ERROR event must not scroll out of an 11-line tail of polls."""
+    buffer = _Buffer()
+    log = TraceLog(buffer)
+    buffer.lines = [
+        "E2E:VIEW;category=sitemap;view=HomepageMenu;depth=1",
+        "E2E:ERROR;kind=critical;id=communication.sitemap;code=503;source=sitemap",
+    ] + ["E2E:SITEMAP;result=unchanged;code=200;bytes=27168"] * 11
+    log.poll()
+
+    report = log.failure_report(EventMatch(event="ERROR", fields={"kind": "temporary"}))
+
+    assert "ERROR x1" in report
+    assert "kind=critical" in report
+    assert "ERROR.kind seen: critical" in report
+    assert "'temporary'" in report
+
+
+def test_failure_report_says_when_the_event_was_never_emitted() -> None:
+    buffer = _Buffer()
+    log = TraceLog(buffer)
+    buffer.lines = ["E2E:SITEMAP;result=unchanged;code=200;bytes=4096"]
+    log.poll()
+
+    report = log.failure_report(EventMatch(event="ERROR"))
+
+    assert "no ERROR event was ever emitted" in report
+    assert "SITEMAP x1" in report
+
+
 def test_prefix_constant_matches_the_app_contract() -> None:
     assert TRACE_PREFIX == "E2E:"

@@ -878,6 +878,9 @@ The app distinguishes between **temporary**, **critical**, and **fatal** errors:
 - Issues that occur while processing user input.
 
 > Note: Temporary errors during sitemap polling become critical if they persist for more than 10 seconds.
+> The threshold is the age of the last successful sitemap response, so an app that has never
+> received one — the first start, or the first start after the app's data was cleared — has no
+> fresh data to fall back on and shows the full-screen error view immediately.
 
 #### Critical errors (full-screen error, recoverable)
 

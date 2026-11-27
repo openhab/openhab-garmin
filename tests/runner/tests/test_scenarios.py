@@ -572,6 +572,57 @@ def test_shim_must_only_contain_rules(tmp_path: Path) -> None:
     assert "shim" in str(error.value)
 
 
+def test_install_faults_is_validated_by_the_shared_grammar(tmp_path: Path) -> None:
+    document = _with(steps=[
+        {"action": "launch"},
+        {"action": "install_faults",
+         "rules": [{"name": "broken", "match": {}, "response": {"status": 9999}}]},
+    ])
+    with pytest.raises(ScenarioError) as error:
+        load_scenario(_write(tmp_path, document))
+    assert "status" in str(error.value)
+
+
+def test_install_faults_needs_rules(tmp_path: Path) -> None:
+    document = _with(steps=[{"action": "launch"}, {"action": "install_faults"}])
+    with pytest.raises(ScenarioError) as error:
+        load_scenario(_write(tmp_path, document))
+    assert "rules" in str(error.value)
+
+
+def test_install_faults_keeps_the_document_the_shim_accepts(tmp_path: Path) -> None:
+    document = _with(steps=[
+        {"action": "launch"},
+        {"action": "install_faults", "rules": [
+            {"name": "unavailable",
+             "match": {"method": "GET", "path_prefix": "/rest/sitemaps/"},
+             "times": 3,
+             "response": {"status": 503}},
+        ]},
+    ])
+
+    step = load_scenario(_write(tmp_path, document)).steps[1]
+    rules = step.get("rules")
+
+    assert rules[0]["name"] == "unavailable"
+    assert rules[0]["times"] == 3
+    assert rules[0]["response"]["status"] == 503
+
+
+def test_request_match_accepts_the_fault_selector(tmp_path: Path) -> None:
+    document = _with(steps=[
+        {"action": "launch"},
+        {"action": "assert",
+         "shim_requests": {"path_prefix": "/rest/sitemaps/", "matched_rule": "truncated",
+                           "faulted": True, "min_count": 2}},
+    ])
+
+    spec = load_scenario(_write(tmp_path, document)).steps[1].get("shim_requests")
+
+    assert spec["matched_rule"] == "truncated"
+    assert spec["faulted"] is True
+
+
 # ---------------------------------------------------------------------------
 # discovery
 # ---------------------------------------------------------------------------

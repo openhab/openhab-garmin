@@ -363,6 +363,16 @@ class ScenarioRunner:
         context.shim.reset_requests()
         return PASSED, "request trace cleared", []
 
+    def _do_install_faults(self, step: Step, context: _Context) -> Tuple[str, str, List[str]]:
+        rules = list(step.get("rules") or ())
+        names = [str(rule.get("name", "?")) for rule in rules]
+        if context.dry_run:
+            return SKIPPED, "would install fault(s): " + ", ".join(names), []
+        # Replaces any previously installed script, like the pre-launch install.
+        installed = context.shim.install_script({"version": 1, "rules": rules})
+        self.log(f"installed {installed} shim fault rule(s) mid-run: {', '.join(names)}")
+        return PASSED, f"installed {installed} fault rule(s): {', '.join(names)}", []
+
     def _do_wait_for_request(self, step: Step, context: _Context) -> Tuple[str, str, List[str]]:
         if context.dry_run:
             return SKIPPED, "shim trace not available in a dry run", []
@@ -376,6 +386,8 @@ class ScenarioRunner:
                 method=step.get("method"),
                 path=step.get("path"),
                 path_prefix=step.get("path_prefix"),
+                matched_rule=step.get("matched_rule"),
+                faulted=step.get("faulted"),
             )
             if len(matched) >= minimum:
                 return PASSED, f"{len(matched)} matching request(s)", []
@@ -394,7 +406,9 @@ class ScenarioRunner:
         "No requests recorded" is compatible with a healthy app that is merely
         slow and with an app that crashed before its first poll; without this,
         the second one sends the reader to the fixtures and the network. The
-        last view, any error view and the console tail separate them.
+        event counts, the last protocol event (``SITEMAP``/``COMMAND``/``ERROR``)
+        and the last view separate them: an app that is polling has ``SITEMAP``
+        events even when it sends no command.
         """
         try:
             events = parse_lines(list(context.driver.events()))
@@ -406,14 +420,23 @@ class ScenarioRunner:
             (event for event in reversed(events) if event.event == "VIEW"), None
         )
         errors = [event for event in events if event.event == "ERRORVIEW"]
+        counts: Dict[str, int] = {}
+        for event in events:
+            counts[event.event] = counts.get(event.event, 0) + 1
         lines = [
             "  app state: last view="
             + (
                 f"{last_view.get('category')}/{last_view.get('view')}"
                 if last_view is not None
                 else "none"
-            )
+            ),
+            "  app state: events: "
+            + ", ".join(f"{name} x{count}" for name, count in counts.items()),
         ]
+        for name in ("SITEMAP", "COMMAND", "ERROR"):
+            matching = [event for event in events if event.event == name]
+            if matching:
+                lines.append(f"  app state: last {name} " + matching[-1].describe())
         if errors:
             lines.append(
                 "  app state: ERRORVIEW id="
@@ -532,8 +555,8 @@ class ScenarioRunner:
         found = context.trace.wait_for(match, timeout_s)
         if found is None:
             raise AssertionFailure(
-                f"no trace event matching {match.describe()} within {timeout_s:.1f}s; "
-                f"seen: {context.trace.describe()}"
+                f"no trace event matching {match.describe()} within {timeout_s:.1f}s\n"
+                + context.trace.failure_report(match)
             )
         return PASSED, f"{found.describe()} at {found.received_at:.3f}", []
 
@@ -591,7 +614,7 @@ class ScenarioRunner:
         if found is None:
             raise AssertionFailure(
                 f"the app did not show a view matching {match.describe()} within "
-                f"{timeout_s:.1f}s; seen: {context.trace.describe()}"
+                f"{timeout_s:.1f}s\n" + context.trace.failure_report(match)
             )
         return PASSED, found.describe(), []
 
@@ -661,13 +684,14 @@ class ScenarioRunner:
                     raise AssertionFailure(
                         "expected the current view not to be the error view, but the "
                         f"app is showing category={category or 'unknown'}; a dismissed "
-                        f"error view does not fail this check. seen: {context.trace.describe()}"
+                        "error view does not fail this check.\n"
+                        + context.trace.failure_report()
                     )
                 if not no_error_view and not showing:
                     raise AssertionFailure(
                         "expected the current view to be the error view, but the app "
-                        f"is showing category={category or 'unknown'}; "
-                        f"seen: {context.trace.describe()}"
+                        f"is showing category={category or 'unknown'}\n"
+                        + context.trace.failure_report()
                     )
                 notes.append(f"no_error_view: ok (current view: {category or 'unknown'})")
                 evaluated = True
@@ -683,7 +707,8 @@ class ScenarioRunner:
                 if context.trace.has_error_view():
                     raise AssertionFailure(
                         "expected no error view during the whole run, but an "
-                        f"ERRORVIEW event was observed; seen: {context.trace.describe()}"
+                        "ERRORVIEW event was observed\n"
+                        + context.trace.failure_report()
                     )
                 notes.append("never_error_view: ok")
                 evaluated = True

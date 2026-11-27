@@ -4,6 +4,11 @@
 # error). The default fixture keeps "suppress errors for empty sitemap
 # responses" off; `suppress-empty.yaml` covers the suppressed variant, which is
 # a separate scenario rather than a variant here so the toasts stay assertable.
+#
+# The faults are installed *after* one successful poll on purpose: with no
+# stored sitemap the app treats the first failure as stale and shows the
+# full-screen error view immediately, so a pre-launch script would only ever
+# exercise the critical path (see `malformed-json`, which asserts exactly that).
 
 name: empty-response
 description: Empty 200 responses surface as S:EMRES toasts.
@@ -29,20 +34,31 @@ manual_checks:
     The suppressed-empty variant (the `suppress-empty` fixture) and the
     cached-versus-uncached escalation distinction are not exercised here.
 
-shim:
-  rules:
-    - name: empty-body
-      match:
-        method: GET
-        path_prefix: /rest/sitemaps/garmin_e2e
-      times: 2
-      response:
-        status: 200
-        body: ""
-        content_type: application/json
-
 steps:
   - action: launch
+
+  # Warm-up: poll openHAB once so the app holds a fresh sitemap.
+  - action: wait_for_event
+    description: The fault-free first poll cached the sitemap.
+    event: SITEMAP
+    fields:
+      result: success
+    timeout_ms: 60000
+
+  - action: reset_shim
+
+  - action: install_faults
+    description: The next two polls are answered by the shim with an empty 200.
+    rules:
+      - name: empty-body
+        match:
+          method: GET
+          path_prefix: /rest/sitemaps/garmin_e2e
+        times: 2
+        response:
+          status: 200
+          body: ""
+          content_type: application/json
 
   - action: wait_for_request
     method: GET
@@ -51,13 +67,16 @@ steps:
     timeout_ms: 30000
 
   - action: assert
-    description: Both scripted empty responses were served.
+    description: >-
+      Both scripted empty responses were served by the shim: status 200, zero
+      bytes, the 'empty-body' rule applied. The recorder keeps the request, not
+      the response body, so the rule name is the proof.
     shim_requests:
       method: GET
       path_prefix: /rest/sitemaps/garmin_e2e
       min_count: 2
       status: 200
-      body_equals: ""
+      matched_rule: empty-body
 
   - action: wait_for_event
     description: An empty response is a temporary error, not a critical one.

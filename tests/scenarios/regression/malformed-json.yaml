@@ -4,6 +4,12 @@
 # response, which is a critical (recoverable) error and shows the full-screen
 # error view while polling continues. The recovery half of this scenario
 # asserts that a valid response restores the sitemap without a restart.
+#
+# This scenario keeps its faults installed before launch, unlike
+# `empty-response` and `http-503-recovery`. The critical classification is what
+# the app does on a cold start: with no stored sitemap every sitemap error is
+# "stale" and escalates immediately (SitemapStore.isSitemapFresh), so the error
+# view is expected here and a warm-up would turn this into a toast instead.
 
 name: malformed-json
 description: Truncated JSON shows the critical error view and recovers on a valid response.
@@ -50,14 +56,21 @@ steps:
     min_count: 2
     timeout_ms: 30000
 
+  # A request recorded by the shim carries the body the app *sent* (empty for a
+  # GET) and the status and fault it was answered with; the served body is
+  # never recorded. `body_equals` therefore cannot prove which body reached the
+  # app -- the applied rule name can, and the served status distinguishes the
+  # fault from an upstream answer.
   - action: assert
-    description: The malformed bodies were served from the shim, not openHAB.
+    description: >-
+      The shim served the truncated body instead of openHAB: status 200 with the
+      'truncated' rule applied to at least two polls.
     shim_requests:
       method: GET
       path_prefix: /rest/sitemaps/garmin_e2e
       min_count: 2
       status: 200
-      body_equals: '{"homepage": ['
+      matched_rule: truncated
 
   - action: wait_for_event
     description: Parsing the sitemap fails as a critical (recoverable) error.

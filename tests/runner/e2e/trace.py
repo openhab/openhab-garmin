@@ -313,3 +313,56 @@ class TraceLog:
         if not self._events:
             return "<no trace events>"
         return "; ".join(event.describe() for event in self._events[-limit:])
+
+    def counts(self) -> Dict[str, int]:
+        """How many events of each name were seen, most frequent first."""
+        counts: Dict[str, int] = {}
+        for event in self._events:
+            counts[event.event] = counts.get(event.event, 0) + 1
+        return dict(sorted(counts.items(), key=lambda item: (-item[1], item[0])))
+
+    def of_event(self, name: str) -> List[TraceEvent]:
+        """Every event with this name, oldest first."""
+        return [event for event in self._events if event.event == name]
+
+    def failure_report(self, match: Optional[EventMatch] = None, samples: int = 3) -> str:
+        """Why a wait failed, without losing the event that explains it.
+
+        :meth:`describe` shows the last few lines, which for a polling app is a
+        wall of ``SITEMAP;result=unchanged``: the single ``ERROR`` or
+        ``SITEMAP;result=error`` that explains the failure has scrolled out of
+        the window. This keeps the per-event counts, the last events of the
+        class the wait wanted, and the values the near-miss fields actually
+        carried, so "the app never emitted it" and "it emitted a different
+        kind" produce different messages.
+        """
+        if not self._events:
+            return "  trace: the app emitted no trace events at all"
+        lines = [
+            "  trace: "
+            + ", ".join(f"{name} x{count}" for name, count in self.counts().items())
+        ]
+        awaited = match.event if match is not None else None
+        if awaited is not None:
+            events = self.of_event(awaited)
+            if not events:
+                lines.append(f"  no {awaited} event was ever emitted")
+            else:
+                lines.append(f"  last {awaited} event(s):")
+                lines.extend(f"    {event.describe()}" for event in events[-samples:])
+                if match is not None and match.fields:
+                    for name, expected in match.fields.items():
+                        seen: List[str] = []
+                        for event in events:
+                            value = event.get(name)
+                            if value is not None and value not in seen:
+                                seen.append(value)
+                        if expected not in seen:
+                            lines.append(
+                                f"  {awaited}.{name} seen: "
+                                + (", ".join(seen) if seen else "<never set>")
+                                + f" (expected {expected!r})"
+                            )
+        lines.append("  last events:")
+        lines.extend(f"    {event.describe()}" for event in self._events[-samples:])
+        return "\n".join(lines)

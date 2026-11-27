@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import shutil
 import subprocess
+from collections import Counter
 from pathlib import Path
 from typing import Callable, Iterable, List, Mapping, Optional, Sequence, Tuple
 
@@ -48,6 +49,22 @@ class AssertionFailure(AssertionError):
     """A scenario assertion did not hold."""
 
 
+#: Request-match keys, in the order a failure message lists them. ``faulted``
+#: and ``matched_rule`` describe the *response* the shim served; the rest
+#: describe the request the app sent.
+MATCH_KEYS = (
+    "method",
+    "path",
+    "path_prefix",
+    "body_contains",
+    "body_equals",
+    "status",
+    "reset",
+    "matched_rule",
+    "faulted",
+)
+
+
 def filter_requests(
     requests: Iterable[ShimRequest],
     method: Optional[str] = None,
@@ -57,8 +74,15 @@ def filter_requests(
     body_equals: Optional[str] = None,
     status: Optional[int] = None,
     reset: Optional[bool] = None,
+    matched_rule: Optional[str] = None,
+    faulted: Optional[bool] = None,
 ) -> List[ShimRequest]:
-    """Return the recorded requests that satisfy every given condition."""
+    """Return the recorded requests that satisfy every given condition.
+
+    ``body_contains``/``body_equals`` apply to the body the app *sent*;
+    ``status``, ``reset``, ``matched_rule`` and ``faulted`` describe what the
+    shim *served*.
+    """
     matched: List[ShimRequest] = []
     for request in requests:
         if method is not None and request.method.upper() != method.upper():
@@ -67,13 +91,17 @@ def filter_requests(
             continue
         if path_prefix is not None and not request.path.startswith(path_prefix):
             continue
-        if body_contains is not None and body_contains not in request.body:
+        if body_contains is not None and body_contains not in request.request_body:
             continue
-        if body_equals is not None and request.body != body_equals:
+        if body_equals is not None and request.request_body != body_equals:
             continue
         if status is not None and request.status != status:
             continue
         if reset is not None and request.reset != reset:
+            continue
+        if matched_rule is not None and request.matched_rule != matched_rule:
+            continue
+        if faulted is not None and request.faulted != faulted:
             continue
         matched.append(request)
     return matched
@@ -87,6 +115,43 @@ def format_requests(requests: Sequence[ShimRequest], limit: int = 12) -> str:
     return "\n".join("  " + request.describe() for request in shown)
 
 
+def describe_match(spec: Mapping[str, object]) -> str:
+    """Render a request match as the expectation it states."""
+    parts = [f"{key}={spec[key]!r}" for key in MATCH_KEYS if key in spec]
+    if "min_count" in spec:
+        parts.append(f"min_count>={spec['min_count']}")
+    if "max_count" in spec:
+        parts.append(f"max_count<={spec['max_count']}")
+    return ", ".join(parts) or "<any request>"
+
+
+def describe_observed(requests: Sequence[ShimRequest]) -> str:
+    """Summarise what the shim actually recorded, for a failure message.
+
+    The counts by status and by applied fault answer the question a reader has
+    first -- "did the shim serve the fault at all?" -- without making them read
+    the whole trace.
+    """
+    if not requests:
+        return "no requests were recorded"
+    statuses: Counter = Counter()
+    faults: Counter = Counter()
+    resets = 0
+    for request in requests:
+        if request.reset:
+            resets += 1
+        statuses[request.status] += 1
+        faults[request.matched_rule or "<none>"] += 1
+    status_text = ", ".join(
+        f"{status} x{count}" for status, count in sorted(statuses.items())
+    )
+    fault_text = ", ".join(f"{rule} x{count}" for rule, count in faults.items())
+    summary = f"{len(requests)} request(s): served status {status_text}; faults {fault_text}"
+    if resets:
+        summary += f" ({resets} connection reset(s))"
+    return summary
+
+
 def assert_requests(
     requests: Sequence[ShimRequest],
     spec: Mapping[str, object],
@@ -94,14 +159,15 @@ def assert_requests(
 ) -> int:
     """Assert a count over the requests that match ``spec``.
 
-    Returns the matched count. Raises :class:`AssertionFailure` with both the
-    expectation and the full trace, because "expected 2, found 0" on its own is
-    not enough to debug a failing harness.
+    Returns the matched count. Raises :class:`AssertionFailure` with the
+    expectation, what the shim observed, and the full trace: "expected 2, found
+    0" on its own is not enough to debug a failing harness, and neither is a
+    conclusion such as "the fault was not served" without the numbers behind it.
     """
-    matched = filter_requests(requests, **{key: spec[key] for key in spec
-                                           if key in {"method", "path", "path_prefix",
-                                                      "body_contains", "body_equals",
-                                                      "status", "reset"}})
+    matched = filter_requests(
+        requests,
+        **{key: spec[key] for key in MATCH_KEYS if key in spec},
+    )
     count = len(matched)
     minimum = spec.get("min_count")
     maximum = spec.get("max_count")
@@ -109,8 +175,10 @@ def assert_requests(
     def failure(reason: str) -> AssertionFailure:
         head = description or "shim request assertion"
         return AssertionFailure(
-            f"{head}\n  {reason}\n  matched {count} request(s)\n"
-            f"  full trace:\n{format_requests(requests)}"
+            f"{head}\n  expected: {describe_match(spec)}\n"
+            f"  observed: {describe_observed(requests)}\n"
+            f"  {reason}; matched {count} request(s)\n"
+            f"  request trace:\n{format_requests(requests)}"
         )
 
     if isinstance(minimum, int) and count < minimum:

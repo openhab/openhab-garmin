@@ -6,8 +6,10 @@ Sits between the Garmin app and openHAB:
 
 Responsibilities:
 
-1. Record every request the app makes: method, target, body, headers of
-   interest, how long openHAB took, and whether a fault replaced the response.
+1. Record every request the app makes: method, target, request body, headers
+   of interest, the status and byte count the shim answered with, how long
+   openHAB took, and whether a fault replaced the response. The response body
+   is not recorded; see ``RequestRecord``.
 2. Replace the response with a scripted fault (status code, empty body,
    malformed body, oversized body, delay, connection reset).
 3. Expose a small control API so the runner can install a script and read the
@@ -62,16 +64,25 @@ RETURNED_HEADERS = ("content-type", "cache-control")
 
 @dataclass
 class RequestRecord:
-    """One request observed by the shim, after the fault decision."""
+    """One request observed by the shim, after the fault decision.
+
+    Only the **request** is recorded. ``status`` and ``response_bytes``
+    describe what the shim answered with -- the scripted fault's status and
+    length when ``matched_rule`` is set, the upstream response otherwise. The
+    response body itself is never stored, so "did the app receive the scripted
+    body?" is answered by ``matched_rule`` (plus ``response_bytes``), never by
+    ``request_body``, which is the body the app sent.
+    """
 
     seq: int
     timestamp: float
     method: str
     path: str
-    body: str
+    request_body: str
     headers: Dict[str, str]
     matched_rule: Optional[str] = None
     status: int = 0
+    response_bytes: int = 0
     delay_ms: int = 0
     duration_ms: float = 0.0
     reset: bool = False
@@ -83,10 +94,11 @@ class RequestRecord:
             "timestamp": round(self.timestamp, 3),
             "method": self.method,
             "path": self.path,
-            "body": self.body,
+            "request_body": self.request_body,
             "headers": dict(self.headers),
             "matched_rule": self.matched_rule,
             "status": self.status,
+            "response_bytes": self.response_bytes,
             "delay_ms": self.delay_ms,
             "duration_ms": round(self.duration_ms, 1),
             "reset": self.reset,
@@ -178,7 +190,7 @@ class ShimHandler(BaseHTTPRequestHandler):
             timestamp=time.time(),
             method=self.command,
             path=self.path,
-            body=body[:MAX_RECORDED_BODY].decode("utf-8", errors="replace"),
+            request_body=body[:MAX_RECORDED_BODY].decode("utf-8", errors="replace"),
             headers=self._recorded_headers(),
             matched_rule=rule.name if rule else None,
             delay_ms=rule.delay_ms if rule else 0,
@@ -234,19 +246,23 @@ class ShimHandler(BaseHTTPRequestHandler):
             with urllib.request.urlopen(request, timeout=30) as response:  # noqa: S310
                 response_body = response.read()
                 record.status = response.status
+                record.response_bytes = len(response_body)
                 self._send(
                     response.status, response_body, self._response_headers(response.headers)
                 )
         except urllib.error.HTTPError as error:
             response_body = error.read()
             record.status = error.code
+            record.response_bytes = len(response_body)
             self._send(error.code, response_body, self._response_headers(error.headers))
         except (urllib.error.URLError, socket.timeout, ConnectionError) as error:
             # openHAB not reachable (yet). 502 keeps the app's error handling in
             # play instead of hanging the simulator.
+            payload = b"shim: upstream unavailable\n"
             record.status = 502
+            record.response_bytes = len(payload)
             record.error = f"{type(error).__name__}: {error}"
-            self._send(502, b"shim: upstream unavailable\n", {"Content-Type": "text/plain"})
+            self._send(502, payload, {"Content-Type": "text/plain"})
 
     def _response_headers(self, upstream_headers: Any) -> Dict[str, str]:
         headers: Dict[str, str] = {}
@@ -262,6 +278,7 @@ class ShimHandler(BaseHTTPRequestHandler):
             time.sleep(rule.delay_ms / 1000.0)
         status, payload, headers = rule.response.render()
         record.status = status
+        record.response_bytes = len(payload)
         self._send(status, payload, headers)
 
     def _reset_connection(self, record: RequestRecord, started: float) -> None:
