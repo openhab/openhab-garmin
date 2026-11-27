@@ -635,7 +635,9 @@ the mode restarts in one go, in **your own container** (a restart disturbs a
 running suite):
 
 ```bash
-python -m e2e simulator-probe --prg artifacts/build/openhab-garmin-fenix7.prg \
+# The run prints `built <path>` for every PRG it compiles; the path is
+# artifacts/build/<device>/<digest>/openhab-garmin-<device>.prg.
+python -m e2e simulator-probe --prg artifacts/build/fenix7/<digest>/openhab-garmin-fenix7.prg \
     --modes wifi,offline --night
 ```
 
@@ -655,6 +657,19 @@ It does three things and prints the evidence for each:
 `restart_in_mode` is honest about what it proves, in the log line
 `restarting in mode 'wifi' (was 'ble') … this proves start-up mode, not a
 mid-run transition`.
+
+### The compiled PRG lives under a per-build directory
+
+Every run compiles the checkout it was mounted with (see `e2e/build.py`), and the
+output now goes to `artifacts/build/<device>/<digest>/openhab-garmin-<device>.prg`,
+where `<digest>` covers the source tree, the build profile and the compiled
+property defaults. Two scenarios that differ only in their sitemap therefore get
+their own binary instead of overwriting each other, and a source change lands in
+a new directory rather than under a name an earlier run could reuse.
+
+`artifacts/build` is a **cache**: deleting it costs a rebuild and nothing else.
+The run prints `built <path>` for every PRG it compiles, so the exact path to
+pass to `--prg` is in the log rather than assumed.
 
 ### The experiments and what each would settle
 

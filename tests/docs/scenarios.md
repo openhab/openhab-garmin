@@ -247,7 +247,7 @@ a run.
 | `reset_shim` | – | clears the request trace only |
 | `install_faults` | `rules` | installs (replaces) fault rules mid-run, same grammar as the top-level `shim.rules`; see [Asserting on an injected fault](#asserting-on-an-injected-fault) |
 | `wait_for_request` | `method`, `path`/`path_prefix`, `matched_rule`, `faulted`, `min_count`, `timeout_ms` | polls the shim trace |
-| `press` | `button` (`START`/`UP`/`DOWN`/`ENTER`/`BACK`/`MENU`), `count`, `expect` (`effect`/`none`), `timeout_ms` | requires a button-capable device; `expect` measures the press, see [Measured presses](#measured-presses) |
+| `press` | `button` (`START`/`UP`/`DOWN`/`ENTER`/`BACK`/`MENU`), `count`, `expect` (`input`/`effect`/`none`), `timeout_ms` | requires a button-capable device; `expect` measures the press, see [Measured presses](#measured-presses) |
 | `tap` | `x`, `y`, `count` | requires a touch-capable device |
 | `screenshot` | `name`, `stable`, `interval_ms`, `timeout_ms`, `stable_diff_ratio` | lower-case slug; stored as `NN-name.png`. `stable: true` recaptures until two frames agree, because a `VIEW` line is emitted before the view is painted |
 | `command` | `item`, `value`, `via` (`rest`/`shim`) | `rest` talks to openHAB directly |
@@ -569,20 +569,52 @@ opened nothing.
 ```yaml
 - action: press
   button: ENTER
-  expect: effect   # or: none
+  expect: input    # or: effect | none
 ```
 
 ### Measured presses
 
-`expect: effect` captures the screen before and after the press and requires a
-new view, an `ERRORVIEW`, or a screen change above the simulator's idle noise
-floor — the `PIXEL_CHANGE_THRESHOLD` machinery the driver contract also uses.
-The measurement is independent of any app-side trace event. `expect: none`
-requires the opposite, for a press that must not do anything; without `expect`
-the press is not measured, which is fine when the next step asserts the effect
-anyway. A press that fails `expect: effect` reports the mechanism the driver
-used and the app's current state, so a dead input path fails where the press
-happens instead of in a later timeout.
+```yaml
+- action: press
+  button: ENTER
+  expect: input    # or: effect | none
+```
+
+`expect: input` requires the app's own evidence that it handled the press: an
+`INPUT`, `SELECT` or `COMMAND` trace event. `expect: effect` accepts that **or**
+a screen change measured from a _settled_ baseline (`SETTLE_DIFF_RATIO`); an
+unsettled screen is not a baseline, so a press that lands while the app is still
+painting proves nothing. A view change alone is not delivery either — the app
+arriving on a page changes the view — which is why `input` exists and why the
+scenarios that must reach the menu delegate use it. `expect: none` requires that
+the press do nothing; without `expect` the press is not measured, which is fine
+when the next step asserts the effect anyway.
+
+A press that fails its expectation reports the mechanism the driver used, each
+attempt's evidence, and the app's current state, so a dead input path fails where
+the press happens instead of in a later timeout.
+
+#### A press that was not acknowledged is re-issued once
+
+The guest loses the first click after a view appears, so `press_measured`
+re-issues a press that did not satisfy `expect` — once, and never one that did.
+Every attempt is kept in the step message:
+
+```text
+attempt 1: mouse (… (378,180)); effect=none; settled=True; no app event
+attempt 2: mouse (… (378,180)); effect=view sitemap/PageMenu and app INPUT 1, SELECT 1; settled=True; INPUT x1, SELECT x1
+```
+
+Those two lines are the verdict. No app event on an attempt means the press never
+reached the app; `INPUT x1` without `SELECT x1` means it did and the item did not
+open anything. Without the counts, a lost click and a select that opened nothing
+would need the same fix.
+
+A repaint used to be enough for `expect: effect`, and that masked exactly this: an
+`ENTER` sent while the homepage was still being built changed 4337 px — the app
+finishing its own render — and was reported as a delivered press with
+`INPUT x0, SELECT x0`. It no longer counts, and the scenarios wait for
+`HomepageMenu` before pressing.
 
 Two trace events separate "no input" from "input with no effect":
 
@@ -599,9 +631,17 @@ Two trace events separate "no input" from "input with no effect":
   names a container that had no page to open; `result=empty-page` precedes the
   "empty page" toast.
 
-`smoke/input-delivery` exercises both on a healthy homepage and fails loudly, so
-an input-path regression names itself. It is a harness probe, not app behaviour:
-run it with `python -m e2e run smoke/input-delivery`.
+Two probes exercise this on a healthy homepage and fail loudly, so an input-path
+regression names itself:
+
+- `smoke/input-delivery` — DOWN first (proves delivery on pixels), then ENTER,
+  then `INPUT`/`SELECT`/`PageMenu`;
+- `smoke/input-delivery-first-press` — ENTER as the very first in-app input, the
+  order the command scenarios use, with the attempt record naming whether the
+  first click was lost.
+
+They are harness probes, not app behaviour:
+`python -m e2e run smoke/input-delivery`.
 
 ## Navigation rules
 

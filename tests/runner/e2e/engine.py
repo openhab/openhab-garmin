@@ -479,14 +479,33 @@ class ScenarioRunner:
                 "scenario on the wine driver, or drop the expectation."
             )
         timeout_s = step.get("timeout_ms", 4000) / 1000.0
-        result = measured(button, count, timeout_s=timeout_s)
+        # A press that must not do anything is not re-issued: a repeat could only
+        # add evidence the scenario does not want.
+        result = measured(
+            button,
+            count,
+            timeout_s=timeout_s,
+            require="input" if expect == "input" else "effect",
+            retries=0 if expect == "none" else 1,
+        )
+        state = self._describe_app_state(context)
+        if expect == "input" and not result.strong:
+            raise AssertionFailure(
+                f"press {button.value} x{count}: the app reported no input derived "
+                f"from the press: {result.describe()}\n"
+                "  A changed screen is not delivery: the app's own painting changes "
+                "it too, which is how an ENTER sent while the homepage was still "
+                "being built looked like a successful press. Only an "
+                "INPUT/SELECT/COMMAND event proves the app handled it.\n"
+                + state
+            )
         if expect == "effect" and not result.effect:
             raise AssertionFailure(
                 f"press {button.value} x{count} had no observable effect: "
                 f"{result.describe()}\n"
-                "  Nothing on screen changed and no new view or error view was "
-                "reported, so the press cannot be shown to have reached the app.\n"
-                + self._describe_app_state(context)
+                "  Nothing on screen changed from a settled baseline and the app "
+                "reported no event, so the press cannot be shown to have reached "
+                "the app.\n" + state
             )
         if expect == "none" and result.effect:
             raise AssertionFailure(

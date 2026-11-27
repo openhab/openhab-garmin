@@ -161,6 +161,22 @@ INPUT_PROBE_KEYS: Tuple[str, ...] = ("alt+s", "alt+c")
 #: changes thousands.
 PIXEL_CHANGE_THRESHOLD = 2000
 
+#: A screen counts as settled when two consecutive captures of it differ by at
+#: most this fraction of its area. The simulator's status strip drifts by ~0.06%
+#: (see ``DEFAULT_STABLE_DIFF_RATIO`` in ``e2e/assertions.py``) while a repaint
+#: differs by tens of percent. A baseline taken before the screen settles is not
+#: a baseline: the app finishing its own first render changed the screen by
+#: 4337 px once and that was accepted as a press having an effect.
+SETTLE_DIFF_RATIO = 0.001
+
+#: How long a measured press waits for a settled baseline.
+SETTLE_TIMEOUT_S = 8.0
+
+#: Event names that prove the *app* handled the press. A view change is
+#: deliberately absent: the app arriving on a page changes the view too, which
+#: is exactly the false positive this list exists to exclude.
+PRESS_EVIDENCE_EVENTS: Tuple[str, ...] = ("INPUT", "SELECT", "COMMAND")
+
 #: Keyboard keysyms the guest has proven this simulator honours. The select
 #: path (declared hit areas) works as well; the keyboard is preferred for
 #: navigation because it needs no coordinates.
@@ -330,6 +346,14 @@ class PressResult:
     ``detail`` names the keysym or the window point. ``effect`` is filled in by
     :meth:`WineSimulatorDriver.press_measured` and is empty when the press
     produced no observable change, so a no-op can never be reported as success.
+    ``attempts`` keeps one line per press attempt -- mechanism, effect, the
+    app-side evidence and whether the baseline had settled -- because a lost
+    first click and a select that opened nothing need different fixes.
+
+    ``weak`` is true when the only evidence was the screen changing, which the
+    app's own painting can also cause; ``strong`` is true when the app emitted
+    an ``INPUT``/``SELECT``/``COMMAND`` that can only come from handling the
+    press.
     """
 
     button: str
@@ -339,6 +363,10 @@ class PressResult:
     screen_delta: Optional[int] = None
     views: Tuple[str, ...] = ()
     requests: Optional[int] = None
+    attempts: Tuple[str, ...] = ()
+    strong: bool = False
+    weak: bool = False
+    settled: bool = False
 
     def describe(self) -> str:
         parts = [f"mechanism={self.mechanism} ({self.detail})"]
@@ -349,6 +377,10 @@ class PressResult:
             parts.append("views=" + ",".join(self.views))
         if self.requests is not None:
             parts.append(f"requests +{self.requests}")
+        if self.effect and self.weak:
+            parts.append("pixels only: no app event proves the press was handled")
+        if len(self.attempts) > 1:
+            parts.append("attempts: " + " | ".join(self.attempts))
         return "; ".join(parts)
 
 
@@ -2452,21 +2484,37 @@ class WineSimulatorDriver(SimulatorDriver):
         *,
         timeout_s: float = 3.0,
         requests: Optional[Callable[[], Optional[int]]] = None,
+        retries: int = 1,
+        require: str = "effect",
     ) -> PressResult:
-        """Press a button and measure whether anything changed.
+        """Press a button and measure whether the app reacted.
 
-        A no-op is reported as an empty ``effect``, never as success. The
-        measurement is a new, different view/ERRORVIEW or a change inside the
-        screen rectangle; ``requests``, when given, is a callable returning the
-        shim's request count for the report.
+        A no-op is reported as an empty ``effect``, never as success.
+
+        ``require`` decides what counts:
+
+        - ``"effect"`` -- the app emitted an ``INPUT``/``SELECT``/``COMMAND``,
+          a view changed, or the screen changed *from a settled baseline*
+          (:attr:`SETTLE_DIFF_RATIO`). A screen that is still painting is not a
+          baseline: the app finishing its own first render was once read as a
+          press having an effect.
+        - ``"input"`` -- only the app-side events count. A view change alone is
+          not enough, because the app arriving on a page changes the view too;
+          this is what a press that must reach the delegate should require.
+
+        A press that did not satisfy ``require`` is re-issued up to ``retries``
+        times, because the guest loses the first click after a view appears. It
+        is only safe because *nothing was accepted* -- an accepted press is
+        never repeated. Every attempt keeps its mechanism, its evidence and
+        whether the baseline had settled, so "the click was lost" and "the app
+        received the select and did nothing" are different lines.
         """
+        if require not in ("effect", "input"):
+            raise DriverError(f"unknown press requirement {require!r}")
         window = self._require_window()
         region = self.screen_region(window)
         shots = self.artifact_dir / "logs"
         shots.mkdir(parents=True, exist_ok=True)
-        before = shots / f"press-{button.value.lower()}-before.png"
-        if region is not None:
-            self.screenshot(before)
         parsed = parse_lines(list(self.events()))
         known = {
             (event.get("category"), event.get("view"))
@@ -2474,37 +2522,45 @@ class WineSimulatorDriver(SimulatorDriver):
             if event.event == "VIEW"
         }
         requests_before = requests() if requests is not None else None
-        mark = len(self.events())
-        self.press(button, count)
-        base = self._last_press or PressResult(button.value, "unknown", "")
 
-        deadline = time.monotonic() + timeout_s
+        attempts: List[str] = []
         difference: Optional[int] = None
         views: List[str] = []
         effect = ""
-        while time.monotonic() < deadline:
-            for event in parse_lines(list(self.events())[mark:]):
-                if event.event == "ERRORVIEW":
-                    views.append("ERRORVIEW")
-                    effect = f"ERRORVIEW {event.get('id')}"
-                    break
-                if event.event != "VIEW":
-                    continue
-                signature = (event.get("category"), event.get("view"))
-                if signature not in known and event.get("category") != "glance":
-                    views.append(f"{signature[0]}/{signature[1]}")
-                    effect = f"view {signature[0]}/{signature[1]}"
-                    break
-            if effect:
-                break
+        delivered: Dict[str, int] = {}
+        strong = False
+        settled = False
+        base = PressResult(button.value, "unknown", "")
+        for attempt in range(1, max(0, int(retries)) + 2):
+            settled = self._settle_screen(region)
+            before = shots / f"press-{button.value.lower()}-{attempt}-before.png"
             if region is not None:
-                after = shots / f"press-{button.value.lower()}-after.png"
-                self.screenshot(after)
-                difference = self.region_pixel_difference(before, after, region)
-                if difference is not None and difference >= PIXEL_CHANGE_THRESHOLD:
-                    effect = f"screen change {difference}px"
-                    break
-            time.sleep(0.25)
+                self.screenshot(before)
+            mark = len(self.events())
+            self.press(button, count)
+            base = self._last_press or PressResult(button.value, "unknown", "")
+            difference, views, effect, delivered, strong = self._measure_press_attempt(
+                before, region, mark, known, timeout_s, settled
+            )
+            accepted = strong if require == "input" else bool(effect)
+            attempts.append(
+                f"attempt {attempt}: {base.mechanism} ({base.detail}); "
+                f"effect={effect or 'none'}; settled={settled}; "
+                + (
+                    ", ".join(f"{name} x{cnt}" for name, cnt in delivered.items())
+                    if delivered
+                    else "no app event"
+                )
+                + ("" if strong or not effect else "; pixels only")
+            )
+            self._record(f"press measurement {attempts[-1]}")
+            if accepted:
+                break
+            if attempt <= int(retries):
+                self._record(
+                    f"press {button.value}: {require} not proven, re-issuing "
+                    f"(retry {attempt} of {int(retries)})"
+                )
 
         requests_after = requests() if requests is not None else None
         self._last_press = PressResult(
@@ -2519,9 +2575,118 @@ class WineSimulatorDriver(SimulatorDriver):
                 if requests_before is None or requests_after is None
                 else max(0, requests_after - requests_before)
             ),
+            attempts=tuple(attempts),
+            strong=strong,
+            weak=bool(effect) and not strong,
+            settled=settled,
         )
         self._record(f"press measurement: {self._last_press.describe()}")
         return self._last_press
+
+    def _settle_screen(
+        self, region: Optional[ScreenRect], timeout_s: float = SETTLE_TIMEOUT_S
+    ) -> bool:
+        """Wait until two captures of the screen rectangle agree.
+
+        Returns ``False`` when the screen never settles or cannot be measured,
+        so the caller can report an unsettled baseline instead of trusting it.
+        """
+        if region is None:
+            return False
+        shots = self.artifact_dir / "logs"
+        shots.mkdir(parents=True, exist_ok=True)
+        limit = max(1, int(region.width * region.height * SETTLE_DIFF_RATIO))
+        first = shots / "settle-a.png"
+        self.screenshot(first)
+        deadline = time.monotonic() + timeout_s
+        while time.monotonic() < deadline:
+            time.sleep(0.25)
+            second = shots / "settle-b.png"
+            self.screenshot(second)
+            difference = self.region_pixel_difference(first, second, region)
+            if difference is not None and difference <= limit:
+                return True
+            first = second
+        return False
+
+    def _measure_press_attempt(
+        self,
+        before: Path,
+        region: Optional[ScreenRect],
+        mark: int,
+        known: Any,
+        timeout_s: float,
+        settled: bool,
+    ) -> Tuple[Optional[int], List[str], str, Dict[str, int], bool]:
+        """Watch the screen and the trace after one press attempt.
+
+        Returns ``(pixel difference, views, effect, app-event counts, strong)``.
+        ``strong`` is true only for the app-side events in
+        :data:`PRESS_EVIDENCE_EVENTS`; a pixel change is reported separately so
+        a repaint cannot be mistaken for delivery.
+        """
+        deadline = time.monotonic() + timeout_s
+        difference: Optional[int] = None
+        views: List[str] = []
+        delivered: Dict[str, int] = {}
+        while time.monotonic() < deadline:
+            for event in parse_lines(list(self.events())[mark:]):
+                if event.event in PRESS_EVIDENCE_EVENTS:
+                    delivered[event.event] = delivered.get(event.event, 0) + 1
+                if event.event == "ERRORVIEW":
+                    views.append("ERRORVIEW")
+                    break
+                if event.event != "VIEW":
+                    continue
+                signature = (event.get("category"), event.get("view"))
+                if signature not in known and event.get("category") != "glance":
+                    views.append(f"{signature[0]}/{signature[1]}")
+                    break
+            if any(delivered.values()):
+                break
+            if region is not None:
+                after = before.with_name(
+                    before.name.replace("-before.png", "-after.png")
+                )
+                self.screenshot(after)
+                difference = self.region_pixel_difference(before, after, region)
+                if (
+                    settled
+                    and difference is not None
+                    and difference >= PIXEL_CHANGE_THRESHOLD
+                ):
+                    break
+            time.sleep(0.25)
+
+        strong = any(delivered.values())
+        effect = self._describe_attempt_effect(
+            strong, delivered, views, difference, settled
+        )
+        return difference, views, effect, delivered, strong
+
+    @staticmethod
+    def _describe_attempt_effect(
+        strong: bool,
+        delivered: Mapping[str, int],
+        views: List[str],
+        difference: Optional[int],
+        settled: bool,
+    ) -> str:
+        """One short phrase naming the best evidence this attempt produced."""
+        app = ", ".join(f"{name} {count}" for name, count in delivered.items())
+        if strong and views:
+            return f"view {views[0]} and app {app}"
+        if strong:
+            return f"app {app}"
+        if views:
+            return f"view {views[0]} only (no app event)"
+        if (
+            settled
+            and difference is not None
+            and difference >= PIXEL_CHANGE_THRESHOLD
+        ):
+            return f"screen change {difference}px"
+        return ""
 
     @property
     def ciq_header(self) -> Mapping[str, str]:

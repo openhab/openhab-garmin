@@ -16,6 +16,7 @@ import pytest
 from e2e import build as build_module
 from e2e.build import BuildError, build_prg, ephemeral_developer_key
 from e2e.sdk import SdkLayout
+from e2e.settings import load_settings
 
 requires_openssl = pytest.mark.skipif(
     shutil.which("openssl") is None, reason="openssl is required to generate the key"
@@ -114,3 +115,76 @@ def test_build_without_a_key_leaves_the_flag_out(
         jungle=tmp_path / "monkey.jungle",
     )
     assert "-y" not in captured["command"]
+
+# ---------------------------------------------------------------------------
+# one directory per build input
+# ---------------------------------------------------------------------------
+
+
+def _checkout(tmp_path: Path) -> Path:
+    root = tmp_path / "checkout"
+    (root / "source").mkdir(parents=True)
+    (root / "source" / "App.mc").write_text("class App {}", encoding="utf-8")
+    return root
+
+
+def test_two_property_sets_for_one_device_do_not_share_a_prg_path(tmp_path: Path) -> None:
+    """The live bug: the second settings key ran the first build's binary."""
+    checkout = _checkout(tmp_path)
+    default = load_settings("default")
+    other = default.with_overrides({"sitemap_0": "garmin_commands"})
+
+    first = build_module.build_directory(
+        tmp_path / "build", "fenix7", settings=default, source_root=checkout
+    )
+    second = build_module.build_directory(
+        tmp_path / "build", "fenix7", settings=other, source_root=checkout
+    )
+
+    assert first != second
+    assert build_module.prg_name("fenix7") == build_module.prg_name("fenix7")
+
+
+def test_a_source_change_gets_its_own_build_directory(tmp_path: Path) -> None:
+    checkout = _checkout(tmp_path)
+    settings = load_settings("default")
+    before = build_module.build_directory(
+        tmp_path / "build", "fenix7", settings=settings, source_root=checkout
+    )
+
+    (checkout / "source" / "App.mc").write_text("class App { }", encoding="utf-8")
+    after = build_module.build_directory(
+        tmp_path / "build", "fenix7", settings=settings, source_root=checkout
+    )
+
+    assert before != after, "a source change must not reuse the previous PRG path"
+
+
+def test_the_build_directory_is_stable_for_the_same_inputs(tmp_path: Path) -> None:
+    checkout = _checkout(tmp_path)
+    settings = load_settings("default")
+
+    first = build_module.build_directory(
+        tmp_path / "build", "fenix7", settings=settings, source_root=checkout
+    )
+    second = build_module.build_directory(
+        tmp_path / "build", "fenix7", settings=settings, source_root=checkout
+    )
+
+    assert first == second, "an unchanged checkout must reuse its own directory"
+
+
+def test_the_build_profile_is_part_of_the_path(tmp_path: Path) -> None:
+    checkout = _checkout(tmp_path)
+    settings = load_settings("default")
+
+    glance = build_module.build_directory(
+        tmp_path / "build", "fenix7", settings=settings,
+        profile=build_module.PROFILE_WITH_GLANCE, source_root=checkout,
+    )
+    app = build_module.build_directory(
+        tmp_path / "build", "fenix7", settings=settings,
+        profile=build_module.PROFILE_WATCH_APP, source_root=checkout,
+    )
+
+    assert glance != app

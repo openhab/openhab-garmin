@@ -513,8 +513,12 @@ def test_press_measured_reports_the_effect_and_requests(
     monkeypatch.setattr(
         driver, "screenshot", lambda path: (Path(path).write_bytes(png_bytes()), Path(path))[1]
     )
+    # 0 for the settle comparison (the screen is at rest), then the change the
+    # press produced. A constant non-zero value would model a screen that never
+    # settles, where a pixel change proves nothing.
+    differences = iter([0, 4321])
     monkeypatch.setattr(
-        driver, "region_pixel_difference", lambda before, after, region: 4321
+        driver, "region_pixel_difference", lambda before, after, region: next(differences)
     )
     driver._run = FakeRun()  # type: ignore[method-assign]
 
@@ -524,6 +528,7 @@ def test_press_measured_reports_the_effect_and_requests(
     assert result.mechanism == "keyboard"
     assert result.effect == "screen change 4321px"
     assert result.screen_delta == 4321
+    assert result.settled, "the baseline was taken on a settled screen"
     assert result.requests == 2
     assert "screen=4321px" in result.describe()
     assert "requests +2" in result.describe()
@@ -2989,3 +2994,43 @@ def test_screenshot_parks_the_pointer_before_capturing(tmp_path, monkeypatch) ->
     assert park[0] < capture[0], "the pointer must be parked before the capture"
     assert commands[park[0]][:2] == ["xdotool", "mousemove"]
     assert "--window" in commands[park[0]]
+
+# ---------------------------------------------------------------------------
+# what counts as evidence that a press reached the app
+# ---------------------------------------------------------------------------
+
+
+def test_a_view_change_alone_is_not_press_evidence() -> None:
+    """The app arriving on a page changes the view; only app events prove input."""
+    effect = WineSimulatorDriver._describe_attempt_effect(
+        False, {}, ["sitemap/HomepageMenu"], None, True
+    )
+
+    assert "only" in effect
+    assert "no app event" in effect
+
+
+def test_a_screen_change_counts_only_from_a_settled_baseline() -> None:
+    settled = WineSimulatorDriver._describe_attempt_effect(False, {}, [], 4337, True)
+    unsettled = WineSimulatorDriver._describe_attempt_effect(False, {}, [], 4337, False)
+
+    assert settled == "screen change 4337px"
+    assert unsettled == "", (
+        "an unsettled screen is the app still painting, not the press"
+    )
+
+
+def test_an_app_event_is_named_with_the_view_it_produced() -> None:
+    effect = WineSimulatorDriver._describe_attempt_effect(
+        True, {"INPUT": 1, "SELECT": 1}, ["sitemap/PageMenu"], 900, True
+    )
+
+    assert effect == "view sitemap/PageMenu and app INPUT 1, SELECT 1"
+
+
+def test_an_app_event_without_a_view_is_still_evidence() -> None:
+    effect = WineSimulatorDriver._describe_attempt_effect(
+        True, {"COMMAND": 1}, [], None, True
+    )
+
+    assert effect == "app COMMAND 1"
