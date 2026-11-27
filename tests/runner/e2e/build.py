@@ -39,6 +39,7 @@ the annotation itself is left untouched.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -378,6 +379,54 @@ def ephemeral_developer_key(
                 pass
 
 
+def source_tree_digest(source_root: Path) -> str:
+    """SHA-256 over the app's ``source/`` tree: every path and every byte.
+
+    Only used to name a build directory, so an unstable digest costs a rebuild
+    and can never hand back a stale binary.
+    """
+    digest = hashlib.sha256()
+    root = Path(source_root) / "source"
+    for path in sorted(root.rglob("*")):
+        if not path.is_file():
+            continue
+        digest.update(path.relative_to(root).as_posix().encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(path.read_bytes())
+        digest.update(b"\0")
+    return digest.hexdigest()
+
+
+def build_directory(
+    output_dir: Path,
+    device: str,
+    *,
+    settings: Optional[AppSettings] = None,
+    profile: str = PROFILE_WITH_GLANCE,
+    source_root: Optional[Path] = None,
+) -> Path:
+    """The directory holding one compiled PRG, unique to everything that builds it.
+
+    Every build wrote ``<output_dir>/<device>.prg`` regardless of the properties
+    it compiled in, and the run's in-process cache then handed the same path back
+    for a different property set: the second scenario for a device ran the binary
+    built for the first (see #421). The digest covers the source tree, the build
+    profile and the compiled properties, so two builds cannot share a path and a
+    source change gets a directory of its own instead of overwriting one that a
+    later run might trust.
+
+    The directory is a cache: deleting ``<output_dir>`` loses nothing but time.
+    """
+    if source_root is None:
+        source_root = jungle_path().resolve().parent
+    digest = hashlib.sha256()
+    digest.update(f"profile={profile}\n".encode("utf-8"))
+    for name, value in sorted(settings.properties.items() if settings else ()):
+        digest.update(f"property:{name}={value}\n".encode("utf-8"))
+    digest.update(source_tree_digest(source_root).encode("ascii"))
+    return Path(output_dir) / device / digest.hexdigest()[:12]
+
+
 def write_glance_excluded_source(source_root: Path, output_dir: Path) -> Path:
     """Copy ``source/`` below ``output_dir`` with the glance view stubbed.
 
@@ -425,6 +474,7 @@ def build_prg(
     extra_args: Sequence[str] = (),
     env: Optional[dict] = None,
     profile: str = PROFILE_WITH_GLANCE,
+    overlay_dir: Optional[Path] = None,
 ) -> BuildResult:
     """Compile the app for one device.
 
@@ -456,6 +506,12 @@ def build_prg(
     device's ``resourcePath`` right after ``$(resBase)``. The defaults the
     compiler emitted are read back and asserted, so a run cannot silently end up
     with an empty server URL.
+
+    ``output_dir`` holds the compiled artifacts of *this* build, so a caller that
+    compiles several property sets for one device gives each its own directory
+    (see :func:`build_directory`). ``overlay_dir`` keeps the generated source
+    mirror shared across those builds: it is refreshed on every use, so one copy
+    of ``source/`` is enough no matter how many property sets are built.
     """
     if not layout.monkeyc.is_file():
         raise BuildError(f"monkeyc not found at {layout.monkeyc}")
@@ -471,7 +527,9 @@ def build_prg(
         source = jungle_path()
         source_root = source.resolve().parent
         if not include_glance:
-            overlay = write_glance_excluded_source(source_root, output_dir)
+            overlay = write_glance_excluded_source(
+                source_root, overlay_dir if overlay_dir is not None else output_dir
+            )
             rebase = {source_root / "source": overlay / "source"}
             profile_note += f"; stub in {overlay / GLANCE_VIEW}"
         if profile == PROFILE_WATCH_APP:

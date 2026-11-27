@@ -584,6 +584,24 @@ anyway. A press that fails `expect: effect` reports the mechanism the driver
 used and the app's current state, so a dead input path fails where the press
 happens instead of in a later timeout.
 
+#### A press with no effect is re-issued once
+
+The guest loses the first click after a view appears: the same declared hit area
+does nothing as the first in-app input and works immediately after a keyboard
+press, so `smoke/input-delivery-first-press` sends ENTER first and records what
+happens. `press_measured` therefore re-issues a press **that had no effect**,
+once, and never repeats one that did. Every attempt is kept in the step message:
+
+```text
+attempt 1: mouse (simulator window ... at (378,180)); effect=none; INPUT 0, SELECT 0
+attempt 2: mouse (simulator window ... at (378,180)); effect=view sitemap/PageMenu; INPUT 1, SELECT 1
+```
+
+Those two lines are the verdict. `INPUT 0, SELECT 0` on a no-effect attempt means
+the press never reached the app. `INPUT 1, SELECT 0` means it did and the item
+did not open anything. Without the counts, a lost click and a select that opened
+nothing would need the same fix.
+
 Two trace events separate "no input" from "input with no effect":
 
 - `E2E:INPUT;button=<select|back|next-page|previous-page>;view=...;depth=...`
@@ -599,9 +617,17 @@ Two trace events separate "no input" from "input with no effect":
   names a container that had no page to open; `result=empty-page` precedes the
   "empty page" toast.
 
-`smoke/input-delivery` exercises both on a healthy homepage and fails loudly, so
-an input-path regression names itself. It is a harness probe, not app behaviour:
-run it with `python -m e2e run smoke/input-delivery`.
+Two probes exercise this on a healthy homepage and fail loudly, so an input-path
+regression names itself:
+
+- `smoke/input-delivery` — DOWN first (proves delivery on pixels), then ENTER,
+  then `INPUT`/`SELECT`/`PageMenu`;
+- `smoke/input-delivery-first-press` — ENTER as the very first in-app input, the
+  order the command scenarios use, with the attempt record naming whether the
+  first click was lost.
+
+They are harness probes, not app behaviour:
+`python -m e2e run smoke/input-delivery`.
 
 ## Navigation rules
 

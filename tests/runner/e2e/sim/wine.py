@@ -330,6 +330,9 @@ class PressResult:
     ``detail`` names the keysym or the window point. ``effect`` is filled in by
     :meth:`WineSimulatorDriver.press_measured` and is empty when the press
     produced no observable change, so a no-op can never be reported as success.
+    ``attempts`` keeps one line per press attempt -- mechanism, effect and the
+    ``INPUT``/``SELECT`` events it produced -- because a lost first click and a
+    select that opened nothing need different fixes.
     """
 
     button: str
@@ -339,6 +342,7 @@ class PressResult:
     screen_delta: Optional[int] = None
     views: Tuple[str, ...] = ()
     requests: Optional[int] = None
+    attempts: Tuple[str, ...] = ()
 
     def describe(self) -> str:
         parts = [f"mechanism={self.mechanism} ({self.detail})"]
@@ -349,6 +353,8 @@ class PressResult:
             parts.append("views=" + ",".join(self.views))
         if self.requests is not None:
             parts.append(f"requests +{self.requests}")
+        if len(self.attempts) > 1:
+            parts.append("attempts: " + " | ".join(self.attempts))
         return "; ".join(parts)
 
 
@@ -2452,6 +2458,7 @@ class WineSimulatorDriver(SimulatorDriver):
         *,
         timeout_s: float = 3.0,
         requests: Optional[Callable[[], Optional[int]]] = None,
+        retries: int = 1,
     ) -> PressResult:
         """Press a button and measure whether anything changed.
 
@@ -2459,14 +2466,23 @@ class WineSimulatorDriver(SimulatorDriver):
         measurement is a new, different view/ERRORVIEW or a change inside the
         screen rectangle; ``requests``, when given, is a callable returning the
         shim's request count for the report.
+
+        A press that produced no effect is re-issued up to ``retries`` times,
+        because the guest loses the first click after a view appears: the same
+        declared hit area does nothing as the first in-app input and works
+        immediately after a keyboard press. Re-issuing is only safe because
+        *nothing happened* -- an observed effect is never repeated.
+
+        Every attempt is kept in :attr:`PressResult.attempts` with its
+        mechanism, its effect and which E2E events arrived, so "the click was
+        lost before the app" (no ``INPUT``) and "the app received the select and
+        did nothing" (``INPUT`` without ``SELECT``) are different lines rather
+        than different guesses.
         """
         window = self._require_window()
         region = self.screen_region(window)
         shots = self.artifact_dir / "logs"
         shots.mkdir(parents=True, exist_ok=True)
-        before = shots / f"press-{button.value.lower()}-before.png"
-        if region is not None:
-            self.screenshot(before)
         parsed = parse_lines(list(self.events()))
         known = {
             (event.get("category"), event.get("view"))
@@ -2474,37 +2490,35 @@ class WineSimulatorDriver(SimulatorDriver):
             if event.event == "VIEW"
         }
         requests_before = requests() if requests is not None else None
-        mark = len(self.events())
-        self.press(button, count)
-        base = self._last_press or PressResult(button.value, "unknown", "")
 
-        deadline = time.monotonic() + timeout_s
+        attempts: List[str] = []
         difference: Optional[int] = None
         views: List[str] = []
         effect = ""
-        while time.monotonic() < deadline:
-            for event in parse_lines(list(self.events())[mark:]):
-                if event.event == "ERRORVIEW":
-                    views.append("ERRORVIEW")
-                    effect = f"ERRORVIEW {event.get('id')}"
-                    break
-                if event.event != "VIEW":
-                    continue
-                signature = (event.get("category"), event.get("view"))
-                if signature not in known and event.get("category") != "glance":
-                    views.append(f"{signature[0]}/{signature[1]}")
-                    effect = f"view {signature[0]}/{signature[1]}"
-                    break
+        base = PressResult(button.value, "unknown", "")
+        for attempt in range(1, max(0, int(retries)) + 2):
+            before = shots / f"press-{button.value.lower()}-{attempt}-before.png"
+            if region is not None:
+                self.screenshot(before)
+            mark = len(self.events())
+            self.press(button, count)
+            base = self._last_press or PressResult(button.value, "unknown", "")
+            difference, views, effect, delivered = self._measure_press_attempt(
+                before, region, mark, known, timeout_s
+            )
+            attempts.append(
+                f"attempt {attempt}: {base.mechanism} ({base.detail}); "
+                f"effect={effect or 'none'}; "
+                f"INPUT {delivered.get('INPUT', 0)}, SELECT {delivered.get('SELECT', 0)}"
+            )
+            self._record(f"press measurement {attempts[-1]}")
             if effect:
                 break
-            if region is not None:
-                after = shots / f"press-{button.value.lower()}-after.png"
-                self.screenshot(after)
-                difference = self.region_pixel_difference(before, after, region)
-                if difference is not None and difference >= PIXEL_CHANGE_THRESHOLD:
-                    effect = f"screen change {difference}px"
-                    break
-            time.sleep(0.25)
+            if attempt <= int(retries):
+                self._record(
+                    f"press {button.value}: no effect, re-issuing "
+                    f"(retry {attempt} of {int(retries)})"
+                )
 
         requests_after = requests() if requests is not None else None
         self._last_press = PressResult(
@@ -2519,9 +2533,58 @@ class WineSimulatorDriver(SimulatorDriver):
                 if requests_before is None or requests_after is None
                 else max(0, requests_after - requests_before)
             ),
+            attempts=tuple(attempts),
         )
         self._record(f"press measurement: {self._last_press.describe()}")
         return self._last_press
+
+    def _measure_press_attempt(
+        self,
+        before: Path,
+        region: Optional[Any],
+        mark: int,
+        known: Any,
+        timeout_s: float,
+    ) -> Tuple[Optional[int], List[str], str, Dict[str, int]]:
+        """Watch the screen and the trace after one press attempt.
+
+        Returns ``(pixel difference, views, effect, event counts)``. The event
+        counts are the app-side half of the verdict: they say whether the press
+        reached the app even when the screen looks the same.
+        """
+        deadline = time.monotonic() + timeout_s
+        difference: Optional[int] = None
+        views: List[str] = []
+        effect = ""
+        delivered: Dict[str, int] = {}
+        while time.monotonic() < deadline:
+            for event in parse_lines(list(self.events())[mark:]):
+                if event.event in ("INPUT", "SELECT"):
+                    delivered[event.event] = delivered.get(event.event, 0) + 1
+                if event.event == "ERRORVIEW":
+                    views.append("ERRORVIEW")
+                    effect = f"ERRORVIEW {event.get('id')}"
+                    break
+                if event.event != "VIEW":
+                    continue
+                signature = (event.get("category"), event.get("view"))
+                if signature not in known and event.get("category") != "glance":
+                    views.append(f"{signature[0]}/{signature[1]}")
+                    effect = f"view {signature[0]}/{signature[1]}"
+                    break
+            if effect:
+                break
+            if region is not None:
+                after = before.with_name(
+                    before.name.replace("-before.png", "-after.png")
+                )
+                self.screenshot(after)
+                difference = self.region_pixel_difference(before, after, region)
+                if difference is not None and difference >= PIXEL_CHANGE_THRESHOLD:
+                    effect = f"screen change {difference}px"
+                    break
+            time.sleep(0.25)
+        return difference, views, effect, delivered
 
     @property
     def ciq_header(self) -> Mapping[str, str]:

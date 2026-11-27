@@ -46,6 +46,7 @@ from .build import (
     PROFILE_WATCH_APP,
     PROFILE_WITH_GLANCE,
     PROFILE_WITHOUT_GLANCE,
+    build_directory,
     build_prg,
     describe_profile,
     ephemeral_developer_key,
@@ -431,7 +432,7 @@ def _cmd_run(args: argparse.Namespace) -> int:
     artifacts = _artifacts_dir(args)
     goldens = _goldens_dir(args)
     report = Report()
-    built: Dict[Tuple[str, Any], Path] = {}
+    built: Dict[Path, Path] = {}
 
     environment_before, environment_after = _environment_window(dry_run)
 
@@ -457,14 +458,23 @@ def _cmd_run(args: argparse.Namespace) -> int:
                 if args.prg:
                     prg = Path(args.prg)
                 else:
-                    # Properties are compiled in, so the cache key is the
-                    # device *and* the effective settings, not just the device.
-                    cache_key = (device.id, _settings_key(settings))
-                    if cache_key not in built:
+                    # Properties are compiled in, so a PRG is only valid for the
+                    # device, the build profile and the effective settings it was
+                    # built with. The directory names exactly those inputs (and
+                    # the source tree), so a cached path can never hold another
+                    # build's binary.
+                    key_dir = build_directory(
+                        artifacts / "build",
+                        device.id,
+                        settings=settings,
+                        profile=args.build_profile,
+                    )
+                    if key_dir not in built:
                         built_prg = build_prg(
                             layout,
                             device.product,
-                            artifacts / "build",
+                            key_dir,
+                            overlay_dir=artifacts / "build",
                             jungle=_jungle_override(args),
                             developer_key=developer_key,
                             settings=settings,
@@ -478,8 +488,8 @@ def _cmd_run(args: argparse.Namespace) -> int:
                         )
                         if built_prg.settings_json is not None:
                             print(_describe_compiled_settings(built_prg))
-                        built[cache_key] = built_prg.prg
-                    prg = built[cache_key]
+                        built[key_dir] = built_prg.prg
+                    prg = built[key_dir]
 
             print(f"--- {scenario.scenario_id} ({scenario.tier}) device={device.id}")
             outcome = run_scenario(
@@ -1309,13 +1319,6 @@ def _describe_compiled_settings(result: Any) -> str:
         f"{name}={values[name]!r}" for name in ("url_0", "sitemap_0") if name in values
     )
     return f"compiled properties: {shown} ({result.settings_json})"
-
-
-def _settings_key(settings: Any) -> Tuple[Tuple[str, str], ...]:
-    """Stable cache key for the property values a build compiles in."""
-    return tuple(
-        sorted((str(name), str(value)) for name, value in settings.properties.items())
-    )
 
 
 # ---------------------------------------------------------------------------

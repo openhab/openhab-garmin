@@ -1,0 +1,90 @@
+# Smoke: is ENTER lost when it is the very first in-app input?
+#
+# `smoke/input-delivery` proves the transport, the delegate and the
+# ContainerMenuItem push all work -- but there UP is the first in-app input and
+# ENTER follows it. The command scenarios press ENTER first and see nothing at
+# all, so the difference may be "the first click after the view appears is
+# lost", not the navigation app-side.
+#
+# This scenario reproduces that order exactly: launch, wait for the homepage,
+# then ENTER as the first press. The driver re-issues a press that had no
+# effect (at most once), and records each attempt with its mechanism, its
+# effect and the `INPUT`/`SELECT` events it produced. The step's own message
+# therefore names the answer:
+#
+#   attempt 1: mouse (simulator window ... at (378,180)); effect=none;
+#              INPUT 0, SELECT 0        -> the click never reached the app
+#   attempt 2: ...; effect=view sitemap/PageMenu; INPUT 1, SELECT 1
+#                                       -> the first click was lost, not the app
+#
+# If both attempts report no effect, the press does not reach this view at all.
+# If an attempt reports `INPUT 1, SELECT 0`, the app received the select and the
+# item did not handle it -- a different fix entirely.
+#
+# Run it alone: `python -m e2e run smoke/input-delivery-first-press`.
+
+name: input-delivery-first-press
+description: ENTER as the first in-app input opens the frame, or the attempt record says why not.
+tier: protocol
+suite: smoke
+device: fenix7
+mode: ble
+fixture: fast-polling
+openhab:
+  profile: stable
+  sitemap: garmin_commands
+  items:
+    E2E_Toggle: "OFF"
+    E2E_Dimmer: "50"
+language: eng
+timeout_s: 300
+
+covers:
+  - sitemap.nesting
+manual_checks:
+  - >-
+    The attempt record in the step message is the result to read: it says
+    whether the first press reached the app, and whether the app acted on it.
+
+steps:
+  - action: launch
+
+  - action: wait_for_view
+    description: The homepage menu is on screen before the first press.
+    category: sitemap
+    view: HomepageMenu
+    timeout_ms: 60000
+
+  # The first in-app input, exactly as the command scenarios send it. A press
+  # that has no effect is re-issued once by the driver and each attempt is
+  # recorded, so a lost first click is reported instead of blamed on the app.
+  - action: press
+    button: ENTER
+    expect: effect
+    timeout_ms: 6000
+
+  - action: wait_for_event
+    description: The app's input delegate received the select.
+    event: INPUT
+    fields:
+      button: select
+    timeout_ms: 15000
+
+  - action: wait_for_event
+    description: The selected Widgets frame pushed its page.
+    event: SELECT
+    fields:
+      result: pushed
+    timeout_ms: 15000
+
+  - action: wait_for_event
+    description: The frame page is on screen.
+    event: VIEW
+    fields:
+      category: sitemap
+      view: PageMenu
+    timeout_ms: 30000
+
+  - action: assert
+    description: No error view on this path.
+    never_error_view: true
