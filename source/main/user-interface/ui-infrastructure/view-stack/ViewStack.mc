@@ -177,6 +177,22 @@ import Toybox.WatchUi;
         traceCurrentView();
     }
 
+    // Stable name of the view on top of the tracked stack, for the E2E input
+    // events. Debug-only: the release implementation returns an empty string,
+    // so no view classification is present in release builds.
+    (:debug)
+    public static function currentViewName() as String {
+        var view = getCurrentView()[0];
+        if( view == null ) {
+            return "none";
+        }
+        return viewName( view as WatchUi.Views );
+    }
+    (:release)
+    public static function currentViewName() as String {
+        return "";
+    }
+
     /*
     * Emits an E2E view event for the view on top of the tracked stack.
     *

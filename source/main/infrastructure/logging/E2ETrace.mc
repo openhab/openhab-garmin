@@ -37,6 +37,27 @@ import Toybox.System;
  *       item:   item name, percent-encoded (spaces, "|" and "%")
  *       value:  command value, percent-encoded (spaces, "|" and "%")
  *
+ *   E2E:INPUT;button=<button>;view=<view>;depth=<n>
+ *       button: select | back | next-page | previous-page | wrap | footer
+ *       view:   stable name of the view that received the input
+ *       depth:  app view-stack depth
+ *       Emitted by the menu input delegate when a press reaches the app. A
+ *       press the simulator never delivered emits nothing, which is the
+ *       difference a screenshot cannot make. Scrolling between entries is
+ *       handled inside Menu2 and never reaches the delegate, so there is no
+ *       per-entry event: a Down that moves the highlight is observable only as
+ *       a repaint (the runner measures it). The page/wrap buttons fire when the
+ *       highlight runs past the first or last entry.
+ *
+ *   E2E:SELECT;kind=<kind>;result=<result>;depth=<n>
+ *       kind:   sitemap element type, e.g. Frame, Group, Switch, Text
+ *       result: pushed | empty-page | page-not-ready | no-action | offline |
+ *               command
+ *       depth:  app view-stack depth
+ *       Emitted when a menu item handled a select, and says what it decided.
+ *       Without it, "the item opened nothing" is indistinguishable from "the
+ *       press never arrived".
+ *
  *   E2E:ERROR;kind=<kind>;id=<id>;code=<code>;source=<source>
  *       kind:   temporary | critical | fatal
  *       id:     stable exception identifier, e.g. communication.sitemap
@@ -151,6 +172,24 @@ class E2ETrace {
     }
     (:release)
     public static function commandFailed( code as String, item as String, value as String ) as Void {}
+
+    /******* INPUT *******/
+
+    (:debug)
+    public static function inputDelivered( button as String, viewName as String, depth as Number ) as Void {
+        emit( "INPUT;button=" + button + ";view=" + viewName + ";depth=" + depth.toString() );
+    }
+    (:release)
+    public static function inputDelivered( button as String, viewName as String, depth as Number ) as Void {}
+
+    (:debug)
+    public static function selectionHandled( kind as String, result as String, depth as Number ) as Void {
+        // The element type comes from the server, so it is encoded like
+        // COMMAND.item: a ";" or "=" in it must not break the line format.
+        emit( "SELECT;kind=" + encode( kind ) + ";result=" + result + ";depth=" + depth.toString() );
+    }
+    (:release)
+    public static function selectionHandled( kind as String, result as String, depth as Number ) as Void {}
 
     /******* ERROR HANDLING *******/
 

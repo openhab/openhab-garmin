@@ -13,6 +13,8 @@ the documented order::
     E2E:CONNECTION;mode=<BLE|WIFI_CHECK_PENDING|WIFI|OFFLINE>
     E2E:SITEMAP;result=<success|unchanged|error>;code=<code|->;bytes=<n|->
     E2E:COMMAND;result=<success|error>;code=<code|->;item=<item>;value=<command>
+    E2E:INPUT;button=<select|back|next-page|previous-page>;view=<name>;depth=<n>
+    E2E:SELECT;kind=<element type>;result=<pushed|empty-page|page-not-ready|no-action|offline|command|settings>;depth=<n>
     E2E:ERROR;kind=<temporary|critical|fatal>;id=<id>;code=<code|->;source=<sitemap|command|ui>
     E2E:TOAST;id=<id>
     E2E:ERRORVIEW;id=<id>;code=<code|->
@@ -63,6 +65,8 @@ EVENT_FIELDS: Mapping[str, tuple] = MappingProxyType(
         "CONNECTION": ("mode",),
         "SITEMAP": ("result", "code", "bytes"),
         "COMMAND": ("result", "code", "item", "value"),
+        "INPUT": ("button", "view", "depth"),
+        "SELECT": ("kind", "result", "depth"),
         "ERROR": ("kind", "id", "code", "source"),
         "TOAST": ("id",),
         "ERRORVIEW": ("id", "code"),

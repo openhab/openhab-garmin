@@ -50,6 +50,7 @@ class HomepageMenuDelegate extends PageMenuDelegate {
     (:exclForSettingsMenuItem)
     public function onNextPage() as Boolean {
         // Logger.debug( "HomepageMenuDelegate.onNextPage" );
+        traceInput( "next-page" );
         try {
             SettingsMenuManager.showSettings( WatchUi.SLIDE_UP );
         } catch( ex ) {
@@ -60,6 +61,7 @@ class HomepageMenuDelegate extends PageMenuDelegate {
     (:exclForSettingsMenuItem)
     public function onPreviousPage() as Boolean {
         // Logger.debug( "HomepageMenuDelegate.onPreviousPage" );
+        traceInput( "previous-page" );
         try {
             SettingsMenuManager.showSettings( WatchUi.SLIDE_DOWN );
         } catch( ex ) {

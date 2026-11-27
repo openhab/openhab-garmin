@@ -1,0 +1,98 @@
+# Smoke: does a press reach the app at all?
+#
+# This is the probe behind the navigation failures in #421. When selecting an
+# element inside a sitemap frame produces no request and no new view, three
+# different faults look identical in a screenshot:
+#
+#   1. the simulator never delivered the press to the app;
+#   2. the app received it and the menu's delegate was never called;
+#   3. the delegate ran and the selected item opened nothing.
+#
+# The scenario separates them, in that order:
+#
+# - `expect: effect` measures the press on the pixels alone, so it needs no
+#   app-side seam: DOWN moves the highlight and ENTER opens a page, and a press
+#   that changes nothing fails here instead of timing out in a later step.
+# - `E2E:INPUT` is emitted by the menu input delegate, so it proves the press
+#   reached the app and not just the simulator.
+# - `E2E:SELECT` says what the selected item decided (pushed a page, found an
+#   empty page, had no page ready, ...), so "the item did nothing" is named.
+#
+# Run it alone with `python -m e2e run smoke/input-delivery`; it is not part of
+# the regression suite because it probes the harness and the environment, not
+# app behaviour.
+#
+# `garmin_commands` is the fixture the command scenarios use: the first entry is
+# the `Widgets` frame, and one DOWN moves to the `Generic Switch` frame, which is
+# also a container. Either way ENTER must open a page.
+
+name: input-delivery
+description: A press reaches the shown menu, the delegate runs, and the item opens a page.
+tier: protocol
+suite: smoke
+device: fenix7
+mode: ble
+fixture: fast-polling
+openhab:
+  profile: stable
+  sitemap: garmin_commands
+  items:
+    E2E_Toggle: "OFF"
+    E2E_Dimmer: "50"
+language: eng
+timeout_s: 300
+
+covers:
+  - sitemap.nesting
+manual_checks:
+  - >-
+    This proves input delivery on the simulator build the guest runs, not on a
+    physical device; a device's own buttons are covered only by hand.
+
+steps:
+  - action: launch
+
+  - action: wait_for_view
+    description: The homepage menu is on screen before any press.
+    category: sitemap
+    view: HomepageMenu
+    timeout_ms: 60000
+
+  # Measured on pixels only: the highlight moves, so this proves delivery
+  # without depending on any app-side trace event.
+  - action: press
+    button: DOWN
+    expect: effect
+    timeout_ms: 6000
+
+  # The second entry is another Frame, so ENTER must open a page either way.
+  - action: press
+    button: ENTER
+    expect: effect
+    timeout_ms: 6000
+
+  - action: wait_for_event
+    description: The app's input delegate received the select.
+    event: INPUT
+    fields:
+      button: select
+    timeout_ms: 15000
+
+  - action: wait_for_event
+    description: The selected item pushed its page.
+    event: SELECT
+    fields:
+      result: pushed
+    timeout_ms: 15000
+
+  - action: wait_for_event
+    description: The frame page is on screen.
+    event: VIEW
+    fields:
+      category: sitemap
+      view: PageMenu
+    timeout_ms: 30000
+
+  - action: assert
+    description: A healthy navigation path raises no error view.
+    never_error_view: true
