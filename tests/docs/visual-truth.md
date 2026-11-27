@@ -67,6 +67,14 @@ licensed assets and are mounted, never committed. Details, the measured package
 set and the two driving traps in
 [simulator-driver.md](simulator-driver.md#the-native-linux-simulator-input-and-text-402).
 
+Revision note (2026-11-27, #396 statements): wherever the tables below still put
+the glance draw crash on the app or say `AppLifecycle.setGlance()` latches the
+app on the glance page, those statements are superseded — the crash was the
+empty device font pack and the app opens from the glance with DOWN then SELECT.
+Issue #396 is closed. Read "the glance crashes" as history, not as a current
+state; whether the real glance renders under `--with-glance` has not been
+re-captured since the pack landed, so it is unverified rather than broken.
+
 The short answer:
 
 - **Structure is still the only dependable gate.** The `E2E:` trace, the shim

@@ -416,7 +416,7 @@ def _cmd_run(args: argparse.Namespace) -> int:
     if args.prg:
         print(
             "profile: supplied PRG; the build profile is not applied, so its "
-            "app type and glance state are unknown (#396). Build with "
+            "app type and glance state are unknown. Build with "
             f"--{PROFILE_WATCH_APP} (default), --{PROFILE_WITHOUT_GLANCE} or "
             "--with-glance instead to record it."
         )
@@ -1158,9 +1158,10 @@ def build_parser() -> argparse.ArgumentParser:
 
         The ``watch-app`` default writes a harness-owned manifest declaring
         ``type="watch-app"`` and stubs the glance view in a generated copy of
-        ``source/``. That is what stops the simulator from starting the widget
-        in glance mode, where ``getInitialView()`` never runs (#396). The widget
-        and glance modes stay explicitly unverified either way.
+        ``source/``. That keeps a run independent of the glance page. The
+        widget and glance modes stay unverified: no scenario visits them, and
+        whether the real glance renders under ``--with-glance`` has not been
+        measured.
         """
         group = sub.add_mutually_exclusive_group()
         group.add_argument(
@@ -1170,9 +1171,8 @@ def build_parser() -> argparse.ArgumentParser:
             const=PROFILE_WATCH_APP,
             help=(
                 "declare the app as a plain watch app in a generated manifest "
-                "and stub the glance view (default); the simulator launches "
-                "getInitialView() directly, widget and glance modes are not "
-                "covered (#396)"
+                "and stub the glance view (default); a run launches the initial "
+                "view directly, widget and glance modes are not covered"
             ),
         )
         group.add_argument(
@@ -1182,7 +1182,7 @@ def build_parser() -> argparse.ArgumentParser:
             const=PROFILE_WITHOUT_GLANCE,
             help=(
                 "keep the widget manifest and replace the glance view by an "
-                "empty stub; the app may still start in glance mode (#396)"
+                "empty stub; the app may still start in glance mode"
             ),
         )
         group.add_argument(
@@ -1191,8 +1191,8 @@ def build_parser() -> argparse.ArgumentParser:
             action="store_const",
             const=PROFILE_WITH_GLANCE,
             help=(
-                "compile the app's real glance view instead; the simulator "
-                "crashes on its first glance draw until #396 is resolved"
+                "compile the app's real glance view instead; the glance is not "
+                "yet verified on this host, so review what it draws"
             ),
         )
         sub.set_defaults(build_profile=PROFILE_WATCH_APP)

@@ -400,9 +400,13 @@ def test_build_watch_app_profile_points_the_jungle_at_the_manifest(
 def test_profiles_describe_what_they_do_not_cover() -> None:
     for profile in (PROFILE_WATCH_APP, PROFILE_WITHOUT_GLANCE, PROFILE_WITH_GLANCE):
         assert profile in describe_profile(profile)
-    assert "#396" in describe_profile(PROFILE_WATCH_APP)
+    assert "not yet verified" in describe_profile(PROFILE_WATCH_APP)
     assert "NOT covered" in describe_profile(PROFILE_WATCH_APP)
     assert "own glance view" in describe_profile(PROFILE_WITH_GLANCE)
+    # The disproven cause must not reappear in the first text a newcomer reads.
+    for profile in (PROFILE_WATCH_APP, PROFILE_WITHOUT_GLANCE, PROFILE_WITH_GLANCE):
+        assert "#396" not in describe_profile(profile)
+        assert "may crash" not in describe_profile(profile)
 
 
 def test_unknown_profile_is_rejected(tmp_path: Path) -> None:
