@@ -44,14 +44,22 @@ steps:
 
   - action: reset_shim
 
+  # The press must land on the homepage: a click sent while the menu is still
+  # being built is consumed by the view change and never reaches the delegate.
+  - action: wait_for_view
+    description: The homepage menu is on screen before the opening press.
+    category: sitemap
+    view: HomepageMenu
+    timeout_ms: 30000
+
   # Widgets is the first frame of garmin_commands: open it, then select its
   # first element (the toggle). A Frame is a submenu in the app, so one ENTER
-  # only opens the page; the second activates the element. The opening press is
-  # measured, because a click lost right after the view appears used to surface
-  # as "no POST" three steps later.
+  # only opens the page; the second activates the element. `expect: input`
+  # requires the app's own event, so a repaint cannot pass for a delivered
+  # press; the driver re-issues an unacknowledged press once.
   - action: press
     button: ENTER
-    expect: effect
+    expect: input
     timeout_ms: 6000
 
   - action: wait_for_event

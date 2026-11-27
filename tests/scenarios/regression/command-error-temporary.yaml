@@ -52,14 +52,23 @@ steps:
 
   - action: reset_shim
 
+  # The press must land on the homepage, not on the loading view: a click sent
+  # while the menu is still being built is consumed by the view change and never
+  # reaches the delegate. The app-side evidence cannot tell those apart on its
+  # own, so wait for the view first.
+  - action: wait_for_view
+    description: The homepage menu is on screen before the opening press.
+    category: sitemap
+    view: HomepageMenu
+    timeout_ms: 30000
+
   # Widgets is the first frame -> its first element is the Toggle Switch.
   # A Frame opens as a submenu, so the element needs a second select.
-  # The opening press is measured: the guest loses the first click after a view
-  # appears, so a silent press is re-issued by the driver and named if it stays
-  # silent, instead of surfacing as a timeout two steps later.
+  # `expect: input` requires the app's own event, so a repaint cannot pass for a
+  # delivered press; the driver re-issues an unacknowledged press once.
   - action: press
     button: ENTER
-    expect: effect
+    expect: input
     timeout_ms: 6000
 
   - action: wait_for_event

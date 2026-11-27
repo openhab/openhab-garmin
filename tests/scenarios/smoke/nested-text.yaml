@@ -36,14 +36,21 @@ steps:
 
   - action: reset_shim
 
+  # The press must land on the homepage: a click sent while the menu is still
+  # being built is consumed by the view change and never reaches the delegate.
+  - action: wait_for_view
+    description: The homepage menu is on screen before the opening press.
+    category: sitemap
+    view: HomepageMenu
+    timeout_ms: 30000
+
   # `Text` is the first frame on the homepage. A Frame opens as a submenu, so
   # wait for its page before paging: the app builds frame children
-  # asynchronously after the page is shown. The press is measured because a
-  # click lost right after the view appears would otherwise surface as a missing
-  # page two steps later.
+  # asynchronously after the page is shown. `expect: input` requires the app's
+  # own event, so a repaint cannot pass for a delivered press.
   - action: press
     button: ENTER
-    expect: effect
+    expect: input
     timeout_ms: 6000
 
   - action: wait_for_event
@@ -61,15 +68,18 @@ steps:
   # "This text has no item" text, then "Nested page" — so five page-downs from
   # the first entry. The static text occupies an index even though it cannot be
   # activated; counting it is what keeps this navigation unambiguous.
+  # Paging is handled inside Menu2 and never reaches the delegate, so this is
+  # measured on the pixels from a settled baseline: the highlight moves.
   - action: press
     button: DOWN
     count: 5
     expect: effect
     timeout_ms: 6000
 
+  # Opening the nested page must reach the delegate.
   - action: press
     button: ENTER
-    expect: effect
+    expect: input
     timeout_ms: 6000
 
   - action: wait_for_event
