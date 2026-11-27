@@ -166,3 +166,21 @@ def test_entrypoint_fails_when_the_display_never_comes_up() -> None:
     failure = text[text.index(marker) :]
     assert "exit 78" in failure
     assert "Xvfb did not start" in failure
+
+
+def test_entrypoint_records_its_hash_before_anything_expensive() -> None:
+    """The script is baked, the harness is mounted, so the two can diverge.
+
+    #412 records the hash the running image executed, and `e2e.entrypoint`
+    compares it with the mounted copy (surfaced by `preflight docker.entrypoint`
+    and `sdk-check`). The marker has to be written before the checks that
+    produced the misleading failure, so a stale image is named as such.
+    """
+    text = _entrypoint()
+    assert "record_entrypoint_hash()" in text
+    assert "record_entrypoint_hash\n" in text
+    assert "ciq-entrypoint.sha256" in text
+    marker = text.index("\nrecord_entrypoint_hash\n")
+    assert marker < text.index("python -m e2e link-fonts")
+    assert marker < text.index("python -m e2e sdk-check")
+

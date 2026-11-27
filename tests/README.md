@@ -32,10 +32,10 @@ This directory is the foundation tracked by
 | Device matrix covering all 17 build variants from `monkey.jungle` and `manifest.xml` | approved in [#366](https://github.com/openhab/openhab-garmin/issues/366); enforced by `runner/tests/test_variants.py` |
 | Protocol-tier scenarios (shim trace + `E2E:` trace events) | ready; need the debug trace build from [#364](https://github.com/openhab/openhab-garmin/issues/364) |
 | Connect IQ unit-test tier (`source/test`, run by `tests/unit/run`) | pilot: 18 tests over sitemap parsing, error classification and element parameters. Compiled by the existing device matrix (it already passes `--unit-test`); verified on the guest (18/18 PASS on fenix7, about two minutes). See [docs/unit-tests.md](docs/unit-tests.md). |
-| Wine simulator driver | implemented against the contract, with the compiled-properties model and the guest-measured start order; the proof is a driver run on the guest with `--prg` (see [docs/simulator-driver.md](docs/simulator-driver.md)). Input is delivered: from the glance, DOWN then SELECT opens the app and the sitemap request runs (see [docs/simulator-input.md](docs/simulator-input.md)); the open blockers are the app's `-1001` response handling and the `ErrorView` font failure |
-| Visual-truth design (drive-and-look) | design note: a Windows host is rejected on licence and capacity; the feasible no-input route is off-screen rendered assertions (draw smoke plus real font metrics), because SDK 9.3.0 has no pixel readback; Xorg/uinput is a bounded spike. See [docs/visual-truth.md](docs/visual-truth.md). |
+| Wine simulator driver | implemented against the contract, with the compiled-properties model and the guest-measured start order; the proof is a driver run on the guest with `--prg` (see [docs/simulator-driver.md](docs/simulator-driver.md)). The app runs end to end there: from the glance, DOWN then SELECT opens it, the sitemap request is answered, the response parses and the homepage paints once the device font pack is present (see [docs/simulator-input.md](docs/simulator-input.md)) |
+| Golden capture (drive-and-look) | `smoke/launch-and-poll` captures and compares a reviewed golden on the guest (`golden homepage: matches`), with the device font pack required at capture time and the expected view checked against the live trace. A golden detects drift on one simulator build; it does not prove the render is correct on a device. See [docs/scenarios.md](docs/scenarios.md) and [docs/visual-truth.md](docs/visual-truth.md). |
 | Wine feasibility spike | ready to run on an approved Linux host with Docker and the SDK (see [spike/README.md](spike/README.md), issue [#370](https://github.com/openhab/openhab-garmin/issues/370)) |
-| #140 scope coverage map | checked in as `config/scope.yaml` and `docs/coverage.md`; enforced by `python -m e2e coverage --check`. The glance entries are **blocked** by [#396](https://github.com/openhab/openhab-garmin/issues/396) and E2E builds exclude the glance by default (`--with-glance` re-enables it). |
+| #140 scope coverage map | checked in as `config/scope.yaml` and `docs/coverage.md`; enforced by `python -m e2e coverage --check`. The glance entries are **not yet verified** (waived with a reason, not blocked by a defect) and E2E builds exclude the glance by default (`--with-glance` re-enables it). |
 | Stack health in every run | complete: restart counts, working set and OOM evidence are classified as `valid`/`invalid`/`unknown`; see [docs/diagnostics.md](docs/diagnostics.md) |
 | Host preflight (`python -m e2e preflight`) | complete: Docker, Compose, SDK, ports, pins, layout and resources; the static groups run in CI |
 
@@ -47,6 +47,36 @@ Nothing here provisions a VM, changes infrastructure, or ships the Connect IQ SD
 > variant table, the waiver rules and the re-evaluation rule are documented in
 > [docs/devices.md](docs/devices.md); `python -m e2e variants` prints the current
 > mapping and exits non-zero when a combination has no device.
+
+## The verification split
+
+Two kinds of check run here, and what each one proves decides what a green run
+means. The wording is deliberate: "verified" means the check actually ran on
+that host; everything else is **not verified**, not "probably fine".
+
+| Verified automatically on the Linux guest | Verified only by eye, on Windows or on hardware |
+| --- | --- |
+| Build for every device, launch under Wine, navigation to the intended view | **Does it look right**: layout, spacing, colours, icon and font choice |
+| openHAB requests, statuses and bodies (the shim trace) | Truncation, clipping and meaning-hiding ellipsis at a real font size |
+| Response parsing, view identity (`E2E:VIEW`) and error classes | Glyphs as a panel draws them: accents, Polish characters, the physical panel |
+| Payload limits, every provisioned language, the Connect IQ unit tests | Translations read by a human |
+| Golden comparison: the render has not changed on this simulator build | That the render is correct on a device |
+
+**A golden is a drift detector, not a correctness proof.** A match says the app
+still draws what a reviewer once approved, on that simulator build; it says
+nothing about a physical watch, and a window golden is tied to one simulator
+build's window geometry. When the simulator or its window size changes, the
+golden is re-captured deliberately, not compared; see
+[docs/scenarios.md](docs/scenarios.md).
+
+CI stays structure-only. The `harness` job runs `pytest`, the static Compose and
+pin checks, the dry run and the coverage check; it launches no simulator and
+**does not claim pixel parity**. Anything that needs eyes stays _not verified_
+until a human looks at a capture from that host.
+
+Golden capture needs the Connect IQ device font pack. Without it the app cannot
+resolve a device face, so `--update-goldens` refuses instead of freezing a
+crashed render as the baseline; see [docs/sdk.md](docs/sdk.md#device-fonts).
 
 ## Prerequisites
 
@@ -249,6 +279,22 @@ python -m e2e verify-fixtures         # the fixture guard on its own
 reach an openHAB whose models were rejected; `setup` and `verify-fixtures` expose
 it for a manual check and for CI.
 
+**Rebuild the runner image after changing `runner/entrypoint.sh` or
+`runner/Dockerfile`.** The entrypoint is baked into the image while the harness
+is bind-mounted from the checkout, so editing either file without a rebuild
+runs old start-up logic against new code:
+
+```bash
+docker compose -f tests/compose/compose.yaml build runner
+docker compose -f tests/compose/compose.yaml up -d --force-recreate runner
+```
+
+The running entrypoint records the hash of the script it executed, so `preflight`
+(`docker.entrypoint`) and `sdk-check` report a mismatched image instead of naming
+a misleading cause. The comparison normalises line endings, so a Windows
+checkout does not report its own image as stale. A changed `Dockerfile` (the font
+stack, the SDK defaults) needs the same rebuild.
+
 `docker compose up -d` starts a one-shot `openhab-stable-init` (or
 `openhab-dev-init`) first: it copies `tests/fixtures/openhab/conf/` into the
 conf volume and seeds it with the image's own `dist/conf` skeleton, and openHAB
@@ -291,19 +337,17 @@ those steps as **skipped**. It never reports them as passed.
 ### Build profiles: the app is a plain watch app for tests
 
 The app is a widget, and a widget shown on the glance page starts in **glance
-mode** (32 KB budget) until it is selected; this simulator does not select it,
-so `getInitialView()` never runs. On top of that, the real glance crashes the
-simulator on its first draw (`Invalid Font Specified`, tracked as
-[#396](https://github.com/openhab/openhab-garmin/issues/396)).
-
-Every `run` and `build` therefore uses the **`watch-app`** profile unless told
-otherwise: the generated jungle is rebased onto a copy of `source/` in which
-`GlanceSitemapView` is replaced by an empty stub, and `project.manifest` points
-at a generated copy of `manifest.xml` declaring `type="watch-app"`. That is the
-right app type for a direct launch. It does not yet produce one: the app's own
-glance latch (`AppLifecycle.setGlance()` set by `getGlanceView()`) keeps the
-process on the glance page under the simulator, which is the app-side cause
-tracked in #396. The checkout is never modified.
+mode** (32 KB budget) until it is selected; the driver selects it with DOWN then
+SELECT, which opens the app. E2E builds still compile the **`watch-app`**
+profile by default, because a direct launch is the measured path: the generated
+jungle is rebased onto a copy of `source/` in which `GlanceSitemapView` is
+replaced by an empty stub, and `project.manifest` points at a generated copy of
+`manifest.xml` declaring `type="watch-app"`. The real glance view is therefore
+not exercised by default. The `Invalid Font Specified` crash that once justified
+excluding it was the empty device font pack, which `entrypoint.sh` now stages,
+and the earlier latch hypothesis is retired: the app opens from the glance with
+DOWN then SELECT. Whether the real glance renders with `--with-glance` has not
+been measured. The checkout is never modified.
 
 ```text
 profile: watch-app: the app is declared as a plain watch app in a generated manifest and its glance view is stubbed, so the simulator launches getInitialView() directly; widget and glance modes are NOT covered (issue #396)
@@ -311,7 +355,7 @@ profile: watch-app: the app is declared as a plain watch app in a generated mani
 
 `--without-glance` keeps the widget manifest (the app may still start in glance
 mode), and `--with-glance` compiles the real glance view. Re-include the real
-glance on hardware, or once the issue is resolved:
+glance on hardware, or once a `--with-glance` capture has been reviewed:
 
 ```bash
 python -m e2e run smoke/launch-and-poll --with-glance
@@ -850,7 +894,7 @@ manual counterpart to `tests/runner/tests/test_compose.py` and
 | `error: no Connect IQ device fonts are usable at ...` | the pack is missing, empty or has no `.cft`/`.ttf` faces; set `CIQ_FONTS_HOST_PATH` to a working installation's `ConnectIQ/Fonts`; the SDK archive does not ship it |
 | `warning: the running entrypoint is … but the harness ships …` | the image predates the checkout: `docker compose build runner`. A stale entrypoint skips new startup steps and makes the failing check name the wrong cause |
 | `Invalid Font Specified` in the console with a watch face on screen | the same missing font pack, on a run started outside the container; run `python -m e2e link-fonts` |
-| `UnsatisfiedLinkError: libharfbuzz.so.0` | the runner image is missing the font stack; rebuild it (`docker compose build runner`) |
+| `UnsatisfiedLinkError: libharfbuzz.so.0` | the runner image is missing the font stack; rebuild it (`docker compose -f tests/compose/compose.yaml build runner`) |
 | `Read-only file system` while writing into the SDK | the SDK copy in `entrypoint.sh` was bypassed; the mount is read-only on purpose |
 | openHAB `Exited (1)` with `chown: ... Read-only file system` | something is mounted read-only under `/openhab`; the fixtures must be staged by `openhab-<profile>-init` |
 | `The private key was not specified` | `e2e build`/`run` could not generate the throwaway key; install `openssl` or pass `--developer-key` |

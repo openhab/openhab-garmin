@@ -70,25 +70,26 @@ named, instead of failing later on a missing page.
 
 Scenarios are compiled with the `watch-app` profile by default. The app is a
 widget, and a widget shown on the glance page starts in glance mode (32 KB
-budget) until it is selected; this simulator never selects it, so
-`getInitialView()` does not run. The profile writes a generated manifest
-declaring `type="watch-app"` and rebases the generated jungle onto a copy of
-`source/` whose `GlanceSitemapView.mc` is an empty stub. That is the right app
-type for a direct launch, but it does not yet produce one: `getGlanceView()`
-sets `AppLifecycle.setGlance()`, and in the simulator's single process that
-latch keeps every lifecycle guard bailing out, which is the app-side cause on
-[#396](https://github.com/openhab/openhab-garmin/issues/396). The glance also
-crashes the app before any request when compiled for real (`Invalid Font
-Specified` in `GlanceSitemapView.onUpdate`). The checkout is not modified and
-the `(:glance)` annotations stay as they are.
+budget) until it is selected; the driver selects it with DOWN then SELECT, which
+opens the app. E2E builds still use `watch-app` because a direct launch is the
+measured path: the profile writes a generated manifest declaring
+`type="watch-app"` and rebases the generated jungle onto a copy of `source/`
+whose `GlanceSitemapView.mc` is an empty stub, so the real glance is not
+exercised. The `Invalid Font Specified` crash that once justified the exclusion
+was the empty device font pack, which the runner now stages; the earlier latch
+hypothesis is retired, because the app opens from the glance on DOWN then
+SELECT. Whether the real glance renders under `--with-glance` has not been
+measured. The checkout is not modified and the `(:glance)` annotations stay as
+they are.
 
 `run` prints the profile at the top and for every build, followed by the full
 `monkeyc` command. A green run therefore asserts nothing about the widget or
-glance modes; those scope entries are **blocked** in
-[coverage.md](coverage.md#summary). `--without-glance` keeps the widget manifest
-(the app may still start in glance mode); `--with-glance` compiles the real
-glance view when validating on hardware or after issue #396 is resolved. The
-reasoning, including why `monkeyc -x glance` cannot be used, is in
+glance modes; those scope entries are **not yet verified** (waived with that
+reason, not blocked by a defect) in [coverage.md](coverage.md#summary).
+`--without-glance` keeps the widget manifest (the app may still start in glance
+mode); `--with-glance` compiles the real glance view when validating on hardware
+or when capturing the glance for the first time. The reasoning, including why
+`monkeyc -x glance` cannot be used, is in
 [simulator-driver.md](simulator-driver.md#glance-the-build-profiles).
 
 ## Language matrix
@@ -226,6 +227,13 @@ Goldens live in `tests/goldens/<device>/<name>.png`, one set per device: a
 fenix and an Edge are not comparable images. Capture them with
 `--update-goldens`, review the image, then commit it. A golden assertion is
 compared against the screenshot captured earlier in the same scenario.
+
+A golden is a **drift detector, not a correctness proof**: a match says the app
+still draws what a reviewer once approved on that simulator build. It does not
+say the layout, truncation or glyphs are right on a device, and that question
+is answered only by a human looking at a capture from Windows or from hardware.
+Because the window geometry is simulator-specific, a golden is valid for one
+simulator build and is re-captured, not compared, after an upgrade.
 
 **The golden is the whole simulator window, and the app's screen is never
 assumed to be centred, square or even inside a known rectangle.** Devices differ

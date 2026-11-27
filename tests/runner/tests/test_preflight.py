@@ -681,10 +681,28 @@ def test_entrypoint_is_fresh_when_the_hashes_match(tmp_path):
     from e2e.entrypoint import FRESH, entrypoint_status, file_sha256
 
     script, marker = _entrypoint_pair(tmp_path, running=None)
-    marker.write_text(file_sha256(script) + "\n", encoding="utf-8")
+    marker.write_text(file_sha256(script, normalise_newlines=True) + "\n", encoding="utf-8")
     status = entrypoint_status({}, script=script, marker=marker)
     assert status.status == FRESH
     assert not status.stale
+
+
+def test_entrypoint_ignores_checkout_line_endings(tmp_path):
+    """A CRLF checkout must not report its own image as stale.
+
+    The Dockerfile runs ``sed -i 's/\\r$//'`` on the baked script, so the marker
+    hashes LF bytes. A Windows checkout mounts CRLF; normalising the comparison
+    is what keeps the check from crying wolf on every Windows host.
+    """
+    from e2e.entrypoint import FRESH, entrypoint_status, file_sha256
+
+    script, marker = _entrypoint_pair(tmp_path, running=None)
+    baked = b"#!/usr/bin/env bash\necho baked\n"
+    script.write_bytes(baked)
+    marker.write_text(file_sha256(script) + "\n", encoding="utf-8")
+    script.write_bytes(baked.replace(b"\n", b"\r\n"))
+    status = entrypoint_status({}, script=script, marker=marker)
+    assert status.status == FRESH, status.detail
 
 
 def test_entrypoint_is_stale_when_the_image_predates_the_checkout(tmp_path):
@@ -730,7 +748,7 @@ def test_preflight_passes_a_fresh_entrypoint(tmp_path):
     from e2e.entrypoint import file_sha256
 
     script, marker = _entrypoint_pair(tmp_path, running=None)
-    marker.write_text(file_sha256(script) + "\n", encoding="utf-8")
+    marker.write_text(file_sha256(script, normalise_newlines=True) + "\n", encoding="utf-8")
     result = preflight.check_entrypoint(
         {"CIQ_ENTRYPOINT_SCRIPT": str(script), "CIQ_ENTRYPOINT_MARKER": str(marker)}
     )

@@ -10,8 +10,8 @@ Source: [#140](https://github.com/openhab/openhab-garmin/issues/140).
 | --- | --- |
 | Scope entries | 65 |
 | Covered by at least one scenario | 36 |
-| Waived with a reason | 27 |
-| Blocked by a tracked issue | 2 |
+| Waived with a reason | 29 |
+| Blocked by a tracked issue | 0 |
 | Empty (must be 0) | 0 |
 | Scenario files | 33 |
 | Expanded scenario runs | 83 |
@@ -20,18 +20,29 @@ Source: [#140](https://github.com/openhab/openhab-garmin/issues/140).
 > **Host-only execution.** Every scenario listed below needs a Linux host
 > with Docker, the Connect IQ SDK and the simulator. The `harness` CI job
 > validates the scenario schema, the dry run and this mapping; it never
-> executes a scenario. Nothing in this table has been run against the stack
-> yet, and a waiver is a deliberate gap rather than a passing test.
+> launches the simulator, so this document never executes anything. A
+> waiver is a deliberate gap rather than a passing test.
 >
-> **The glance is excluded from E2E builds.** The app crashes the simulator
-> on its first glance draw (`Invalid Font Specified` in
-> `GlanceSitemapView.onUpdate`), so every scenario builds with the
-> `without-glance` profile: the glance view is replaced by an empty stub and
-> draws nothing. Glance-related entries are **blocked**, not waived, and no
-> green run is glance coverage. Re-enable it with
-> `python -m e2e run --with-glance` (or `e2e build --with-glance`) once
-> [#396](https://github.com/openhab/openhab-garmin/issues/396) is resolved;
-> see [simulator-driver.md](simulator-driver.md#glance-the-profile-that-keeps-runs-alive).
+> **What a green run proves.** CI and the guest verify structure: build,
+> launch, navigation, openHAB requests, response parsing, view identity,
+> error classes, payload limits, languages, the Connect IQ unit tests and
+> golden comparison. A golden proves the render has **not changed on this
+> simulator build**; it does not prove the app looks right on a device.
+> Layout, truncation and real glyph rendering on a physical panel are
+> verified only by eye, on Windows or on hardware, and CI does **not claim
+> pixel parity**. See [visual-truth.md](visual-truth.md) and
+> [../README.md](../README.md#the-verification-split).
+>
+> **The glance is not exercised by default.** E2E builds use the
+> `watch-app` profile, which replaces the glance view with an empty stub,
+> and no scenario visits or captures the glance, so its entries are
+> **not yet verified**. The `Invalid Font Specified` crash that once
+> justified excluding it was the empty device font pack, and the app opens
+> from the glance with DOWN then SELECT; whether the real glance renders
+> under `--with-glance` has not been measured. Re-enable it with
+> `python -m e2e run --with-glance` (or `e2e build --with-glance`) and
+> capture it before claiming it. See
+> [simulator-driver.md](simulator-driver.md#glance-the-build-profiles).
 >
 > **Every language in the matrix is provisioned.** The simulator stores
 > view is not exercised; every language in the matrix is provisioned
@@ -95,7 +106,7 @@ machine-asserted.
 | `lifecycle.cold-start` | Cold start into the sitemap, loading, cached sitemap and startup error view | Covered | `extended/localisation-error-config-url-round` (ui, fenix7, 6 languages (eng, deu, fre, ita, spa, pol runnable))<br>`smoke/launch-and-poll` (ui, fenix7) | `extended/localisation-error-config-url-round`: The ERRORVIEW id and the error view being the current view are machine-asserted; the wrapped or truncated rendered text is review-only.<br>`smoke/launch-and-poll`: Selection, Setpoint and Slider elements are present in the fixture but are not driven by this scenario. |
 | `lifecycle.deferred-errors` | Error while hidden or before a view exists, presented when the app becomes visible | Waived | Waived: Hiding the app and resuming it needs a device sleep or app-switcher action the driver cannot issue; errors.deferred has the same gap. | — |
 | `lifecycle.stop-start` | App stop and start, termination after inactivity and device sleep events | Waived | Waived: A scenario has exactly one launch step, so stop/start and termination after inactivity cannot be expressed in one scenario. | — |
-| `lifecycle.glance-widget` | Glance and widget content and refresh, including states only available in BLE mode | Blocked | **Blocked:** The app crashes the simulator on its first glance draw (`Invalid Font Specified` in `GlanceSitemapView.onUpdate`), before any HTTP request, and the glance latch is the deeper cause: `getGlanceView()` sets `AppLifecycle.setGlance()`, and in the simulator's single process that flag makes every lifecycle guard bail out, so `getInitialView()` never runs. E2E builds use the `watch-app` profile (generated manifest, stubbed glance view), which is the right app type but cannot undo the latch. Widget and glance content therefore cannot be inspected or asserted. Re-enable the real glance with `--with-glance` once #396 is resolved. ([#396](https://github.com/openhab/openhab-garmin/issues/396)) | — |
+| `lifecycle.glance-widget` | Glance and widget content and refresh, including states only available in BLE mode | Waived | Waived: Not yet verified, and not blocked by a known defect. The font crash that once justified this entry was the empty device font pack: staging the pack (`~/.Garmin/ConnectIQ/Fonts`) makes app views paint, and the app opens on the glance with DOWN then SELECT, so the latch hypothesis is retired. What remains is coverage: E2E builds use the `watch-app` profile, which stubs the glance view, and no scenario visits or captures the glance. Verify it with `python -m e2e build --device fenix7 --with-glance`, then a scenario that lands on the glance, waits for `category=glance` and captures it; the entry stays unverified until that capture is reviewed. | — |
 | `lifecycle.connection-return` | Behaviour after the phone or network returns | Waived | Waived: Returning to the phone or network is a mid-run mode transition, which the driver cannot drive (see communication.transitions). | — |
 | `lifecycle.device-matrix-and-strings` | Supported-device matrix coverage and localized user-facing strings | Covered | `extended/localisation-sitemap` (ui, edge540, 6 languages (eng, deu, fre, ita, spa, pol runnable)) | `extended/localisation-sitemap`: Rendered text is reviewed in screenshots; the harness has no OCR or text assertion. This covers the screens the scenario visits, not a string-by-string inventory, and glance/widget strings are not visited. |
 
@@ -156,4 +167,4 @@ machine-asserted.
 | `devices.screens` | Round and rectangular screens | Waived | Waived: The matrix includes round and rectangular screens. (verified by `python -m e2e variants`) | — |
 | `devices.menus` | ActionMenu and full-screen menu implementations | Waived | Waived: The matrix includes ActionMenu and full-menu implementations. (verified by `python -m e2e variants`) | — |
 | `devices.source-variants` | Device-specific Config and GlanceConfig source variants | Waived | Waived: Every source/config variant is assigned to a matrix device; the GlanceConfig variants still compile in the `watch-app` profile (only the glance view itself is stubbed), and `e2e variants` proves the assignment. (verified by `python -m e2e variants`) | — |
-| `devices.capabilities` | Capability variants such as Wi-Fi and glance | Blocked | **Blocked:** The matrix records no capability dimension, so capability variants are not asserted per device (a known #366 gap), and its glance half is additionally unverifiable: the glance crashes the simulator and is excluded from E2E builds. The Wi-Fi mode itself is covered by the dedicated scenarios; only the glance capability is blocked. ([#396](https://github.com/openhab/openhab-garmin/issues/396)) | — |
+| `devices.capabilities` | Capability variants such as Wi-Fi and glance | Waived | Waived: Not yet verified, and not blocked by a known defect. The device matrix records no capability dimension, so capability variants are not asserted per device (the known #366 gap), and no scenario visits the glance, so its per-device capability is unasserted too. Wi-Fi mode itself is covered by the dedicated scenarios. Verify the glance half with a `--with-glance` capture on each glance-capable device. | — |

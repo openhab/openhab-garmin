@@ -274,32 +274,34 @@ entries:
 # tracked issue is resolved. It renders as "Blocked" and links to that issue,
 # the same way unsupported languages are reported. Blocked and waived are
 # mutually exclusive, and an entry that a scenario covers must not stay blocked.
-blocked:
-  - id: lifecycle.glance-widget
-    issue: 396
-    reason: >-
-      The app crashes the simulator on its first glance draw (`Invalid Font
-      Specified` in `GlanceSitemapView.onUpdate`), before any HTTP request, and
-      the glance latch is the deeper cause: `getGlanceView()` sets
-      `AppLifecycle.setGlance()`, and in the simulator's single process that
-      flag makes every lifecycle guard bail out, so `getInitialView()` never
-      runs. E2E builds use the `watch-app` profile (generated manifest, stubbed
-      glance view), which is the right app type but cannot undo the latch.
-      Widget and glance content therefore cannot be inspected or asserted.
-      Re-enable the real glance with `--with-glance` once #396 is resolved.
-  - id: devices.capabilities
-    issue: 396
-    reason: >-
-      The matrix records no capability dimension, so capability variants are
-      not asserted per device (a known #366 gap), and its glance half is
-      additionally unverifiable: the glance crashes the simulator and is
-      excluded from E2E builds. The Wi-Fi mode itself is covered by the
-      dedicated scenarios; only the glance capability is blocked.
 
-# A waiver is a deliberate decision not to cover an entry with a scenario.
-# The reason must say why, and `verified_by` may name a separate automated
-# check. A waiver for an entry that a scenario covers is an error.
+# A waiver is a deliberate decision not to cover an entry with a scenario,
+# including "not yet verified": the reason must say which it is, and what would
+# verify it. `verified_by` may name a separate automated check. A waiver for an
+# entry that a scenario covers is an error.
 waivers:
+  # ---- Not yet verified: no known defect, but no scenario or capture yet
+  - id: lifecycle.glance-widget
+    reason: >-
+      Not yet verified, and not blocked by a known defect. The font crash that
+      once justified this entry was the empty device font pack: staging the
+      pack (`~/.Garmin/ConnectIQ/Fonts`) makes app views paint, and the app
+      opens on the glance with DOWN then SELECT, so the latch hypothesis is
+      retired. What remains is coverage: E2E builds use the `watch-app` profile,
+      which stubs the glance view, and no scenario visits or captures the
+      glance. Verify it with `python -m e2e build --device fenix7
+      --with-glance`, then a scenario that lands on the glance, waits for
+      `category=glance` and captures it; the entry stays unverified until that
+      capture is reviewed.
+  - id: devices.capabilities
+    reason: >-
+      Not yet verified, and not blocked by a known defect. The device matrix
+      records no capability dimension, so capability variants are not asserted
+      per device (the known #366 gap), and no scenario visits the glance, so its
+      per-device capability is unasserted too. Wi-Fi mode itself is covered by
+      the dedicated scenarios. Verify the glance half with a `--with-glance`
+      capture on each glance-capable device.
+
   # ---- Sitemap rendering that needs input or goldens the harness cannot drive yet
   - id: sitemap.parameters-label-icon
     reason: >-

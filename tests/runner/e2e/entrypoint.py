@@ -34,12 +34,22 @@ STALE = "stale"
 UNKNOWN = "unknown"
 
 
-def file_sha256(path: Path) -> Optional[str]:
-    """SHA-256 of a file's bytes, or ``None`` when it cannot be read."""
+def file_sha256(path: Path, *, normalise_newlines: bool = False) -> Optional[str]:
+    """SHA-256 of a file's bytes, or ``None`` when it cannot be read.
+
+    ``normalise_newlines`` mirrors the Dockerfile's
+    ``sed -i 's/\r$//' /entrypoint.sh``, which normalises line endings at build
+    time. The marker hashes the normalised (baked) bytes, so a checkout mounted
+    from a Windows host with CRLF must be normalised the same way or a fresh
+    image would report as stale for a reason that never ran in the container.
+    """
     try:
-        return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+        data = Path(path).read_bytes()
     except OSError:
         return None
+    if normalise_newlines:
+        data = data.replace(b"\r\n", b"\n")
+    return hashlib.sha256(data).hexdigest()
 
 
 @dataclass(frozen=True)
@@ -86,7 +96,7 @@ def entrypoint_status(
     script_path = Path(script) if script is not None else _resolve(env, ENV_SCRIPT, DEFAULT_SCRIPT)
     marker_path = Path(marker) if marker is not None else _resolve(env, ENV_MARKER, DEFAULT_MARKER)
 
-    expected = file_sha256(script_path)
+    expected = file_sha256(script_path, normalise_newlines=True)
     if expected is None:
         return EntrypointStatus(
             UNKNOWN,
