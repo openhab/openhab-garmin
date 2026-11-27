@@ -77,21 +77,58 @@ serve on the URL Compose gives the runner.
 ### openHAB profiles: a complete run is one pass per profile
 
 Profiles are **exclusive**: one openHAB serves one fixture tree, and the `dev`
-overlay is the only place constructs the stable pin cannot parse may live. So no
-single `run --all` can cover every scenario:
+overlay is the only place constructs the stable pin cannot parse may live. No
+single `run --all` can cover every scenario: the dev run skips the eight
+`stable`-targeted scenarios and the stable run skips both dev scenarios, so a
+complete pass is **stable plus dev** and neither run alone is a pass.
 
 ```bash
-# pass 1 — the default stack
+cd tests/compose
+
+# pass 1 — the default (stable) stack
+docker compose up -d --wait
 python -m e2e run --all
-# pass 2 — the dev overlay
-COMPOSE_PROFILES=dev docker compose -f compose.yaml -f compose.dev.yaml up -d --wait openhab-dev
+
+# pass 2 — the dev overlay on the same port
+docker compose -f compose.yaml -f compose.dev.yaml -f compose.host.yaml \
+  -f compose.host.dev.yaml down                     # volumes persist
+COMPOSE_PROFILES=dev docker compose -f compose.yaml -f compose.dev.yaml \
+  -f compose.host.yaml -f compose.host.dev.yaml up -d
+# only if openhab-dev predates the port being free (see below)
+docker compose -f compose.yaml -f compose.dev.yaml -f compose.host.yaml \
+  -f compose.host.dev.yaml restart openhab-dev
+until curl -fsS http://127.0.0.1:8080/rest/ | grep -q '"version"'; do sleep 2; done
 python -m e2e run --all
 ```
 
+**Restart `openhab-dev` if the container predates the port being free.** Both
+profiles publish the same port. A dev container created while stable still held
+it fails to bind and its Java runtime dies, yet the container keeps reporting
+`Up (healthy)`: the healthcheck proves only that the port answers, not that
+_this_ openHAB serves. A run against that state silently measures the stable
+instance and detects `stable`, which reads like a profile misconfiguration
+rather than a dead container. `down` the old stack first (volumes persist),
+then `restart openhab-dev` so it starts with the port free, and poll `GET
+/rest/` for JSON before running.
+
+A run identifies the profile from the live stack: `GET /rest/` must answer with
+JSON **and** the served version must equal the pinned tag's version
+(`tests/config/openhab.version`: `stable` = 5.2.5, `dev` = 5.3.0.M5). If the
+REST API does not answer, or the served version matches no pin, the run
+**fails** with the observed and expected versions instead of skipping: a dead
+container or a foreign image is an environment failure, not another profile.
+The check lives in detection rather than `preflight` because `preflight` runs
+before the stack exists and cannot see `/rest/`.
+
+`run --profile stable|dev` **asserts** the profile instead of selecting it. It
+fails before any scenario when the stack serves the other one, names the served
+version and the command that starts the wanted stack, and exits `2`. Omit it to
+run whatever is up; a dry run cannot check it because there is no stack.
+
 A scenario whose profile does not match the running stack is **skipped with its
 reason**, not failed: the engine asks the running instance which profile it
-serves (missing-set distance to each expected tree, preferring the exact tree, so
-a `dev` stack is not mistaken for `stable`), and reports
+serves (the pinned version on `/rest/`, cross-checked against the served item
+and sitemap sets), and reports
 
 ```text
 SKIPPED regression/dev-profile-command-confirmation: needs the 'dev' openHAB

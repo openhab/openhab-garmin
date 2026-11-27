@@ -404,6 +404,26 @@ def _cmd_run(args: argparse.Namespace) -> int:
     if driver_name not in DRIVER_NAMES:
         return _fail(f"unknown driver {driver_name!r}; known: {', '.join(DRIVER_NAMES)}")
 
+    # `run` identifies the profile from the live stack, so `--profile` is only
+    # an assertion. It is checked once, before any scenario, because running the
+    # wrong profile silently is the hazard this flag exists to remove.
+    openhab_profile = getattr(args, "openhab_profile", None)
+    if openhab_profile and dry_run:
+        print(
+            f"profile: --profile {openhab_profile!r} is not asserted in a dry "
+            "run (there is no stack to identify)"
+        )
+    elif openhab_profile:
+        try:
+            fixtures_module.assert_profile(
+                OpenHabClient(_openhab_url(args)),
+                openhab_profile,
+                wait_s=fixtures_module.DEFAULT_WAIT_S,
+            )
+        except FixtureError as error:
+            return _fail(str(error))
+        print(f"profile: the stack serves {openhab_profile!r}, as requested")
+
     # Golden capture is a rendering capability, not a property of the driver:
     # both the native and the Wine simulator paint once the device font pack is
     # in place. Without it the app crashes on its first draw, so a capture would
@@ -1466,6 +1486,16 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("scenarios", nargs="*", help="scenario names (suite/name, name, or a path)")
     run.add_argument("--all", action="store_true", help="run every scenario")
     run.add_argument("--suite", choices=("smoke", "regression", "extended"), help="run one suite")
+    run.add_argument(
+        "--profile",
+        dest="openhab_profile",
+        choices=fixtures_module.PROFILES,
+        help=(
+            "assert that the stack serves this openHAB profile and fail, naming "
+            "the profile it does serve, when it does not. `run` detects the "
+            "profile itself, so omit this to run whatever is up"
+        ),
+    )
     run.add_argument("--device", help="override the device for every scenario")
     run.add_argument("--driver", choices=DRIVER_NAMES, help="simulator driver (default: wine, or null with --dry-run)")
     run.add_argument("--dry-run", action="store_true", help="no Docker, no SDK, no simulator: exercise scenario wiring only")

@@ -17,6 +17,7 @@ from typing import List
 import pytest
 
 from e2e import cli
+from e2e import fixtures
 from e2e.shim import ShimRequest
 
 
@@ -220,3 +221,56 @@ def test_isolation_check_reports_differing_sequences(
         sitemap_results=["success", "success"],
     )
     assert code == 1
+
+
+def test_run_accepts_profile_as_an_assertion() -> None:
+    """`run --profile dev` must not be an "unrecognized arguments" dead end."""
+    parser = cli.build_parser()
+    args = parser.parse_args(["run", "--all", "--profile", "dev"])
+    assert args.openhab_profile == "dev"
+    assert parser.parse_args(["run", "--all"]).openhab_profile is None
+
+    help_text = " ".join(
+        action.help or ""
+        for action in _subparser(parser, "run")._actions
+        if action.dest == "openhab_profile"
+    )
+    assert "assert" in help_text.lower()
+    assert "detect" in help_text.lower(), "the flag must say `run` detects the profile"
+
+    with pytest.raises(SystemExit):
+        parser.parse_args(["run", "--all", "--profile", "5.3.0"])
+
+
+class _StableStack:
+    """A stack whose REST API reports the pinned stable version and tree."""
+
+    base_url = "http://localhost:8080/"
+
+    def server_version(self) -> str:
+        return fixtures.pinned_versions()["stable"]
+
+    def items(self):
+        return [
+            type("Item", (), {"name": name})()
+            for name in fixtures.load_expected("stable").items
+        ]
+
+    def sitemaps(self):
+        return list(fixtures.load_expected("stable").sitemaps)
+
+
+def test_run_profile_mismatch_fails_with_the_served_profile_and_command(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(cli, "OpenHabClient", lambda url: _StableStack())
+
+    code = cli.main(["run", "--all", "--profile", "dev"])
+
+    captured = capsys.readouterr()
+    assert code == 2, "a wrong profile is a configuration error, not a run"
+    assert "serves 'stable'" in captured.err
+    assert "asked for the 'dev'" in captured.err
+    assert "COMPOSE_PROFILES=dev" in captured.err
+    assert "restart openhab-dev" in captured.err
+

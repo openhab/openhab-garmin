@@ -258,7 +258,9 @@ stack) and `dev` (the overlay with `confirmCmd`). Profiles are exclusive, so
 `run --all` covers only the profile its stack serves and **skips** scenarios
 written for the other one with a reason; the summary prints
 `profiles covered: …` and `report.json` carries `profiles.covered` /
-`profiles.skipped`. See
+`profiles.skipped`. The dev run skips the eight `stable`-targeted scenarios and
+the stable run skips both dev scenarios, so a complete pass is **stable plus
+dev** — neither run alone is a pass. See
 [docs/scenarios.md](docs/scenarios.md#openhab-profiles-a-complete-run-is-one-pass-per-profile).
 
 ```bash
@@ -286,6 +288,30 @@ python -m e2e verify-fixtures         # the fixture guard on its own
 `e2e run` runs the same guard before every scenario, so a scenario can no longer
 reach an openHAB whose models were rejected; `setup` and `verify-fixtures` expose
 it for a manual check and for CI.
+
+### Switching openHAB profiles
+
+To move the stack to the dev profile, from `tests/compose`:
+
+```bash
+docker compose -f compose.yaml -f compose.dev.yaml -f compose.host.yaml \
+  -f compose.host.dev.yaml down                     # stop the running stack; volumes persist
+COMPOSE_PROFILES=dev docker compose -f compose.yaml -f compose.dev.yaml \
+  -f compose.host.yaml -f compose.host.dev.yaml up -d
+docker compose -f compose.yaml -f compose.dev.yaml -f compose.host.yaml \
+  -f compose.host.dev.yaml restart openhab-dev      # if it predates the port being free
+until curl -fsS http://127.0.0.1:8080/rest/ | grep -q '"version"'; do sleep 2; done
+python -m e2e run --all
+```
+
+`openhab-dev` must be restarted when it was created while `openhab-stable` still
+held port 8080: it failed to bind and its runtime died, but the container still
+reports `Up (healthy)`, so a run would silently measure the stable instance.
+The run identifies the profile from `GET /rest/` (JSON plus the pinned version);
+a REST API that does not answer, or a version that matches no pin, fails the run
+with the observed and expected versions instead of skipping. `run --profile dev`
+asserts the profile rather than selecting it, and fails with the served version
+and the start command when the stack is the other one.
 
 **Rebuild the runner image after changing `runner/entrypoint.sh` or
 `runner/Dockerfile`.** The entrypoint is baked into the image while the harness
@@ -406,6 +432,10 @@ run, so the results are not attributable to the app).
 
 `run` flags worth knowing:
 
+- `--profile stable|dev` asserts that the stack serves that openHAB profile; the
+  run detects the profile from `GET /rest/` anyway, and a mismatch exits `2`
+  naming the served version and the command that starts the wanted stack. Omit
+  it to run whatever is up.
 - `--device <id>` overrides the scenario's device (see `config/devices.yaml`).
 - `--driver wine|null`; `--dry-run` implies `null`.
 - `--key BUTTON=KEYSYM` (repeatable) sends that X keysym for a button instead of
@@ -921,6 +951,9 @@ manual counterpart to `tests/runner/tests/test_compose.py` and
 | `verify-fixtures --sizes` reports a sitemap above the byte budget | split it along scenario boundaries; the simulator rejects a response above 16,384 bytes with `-402` (see [docs/fixture-limits.md](docs/fixture-limits.md)) |
 | `verify-fixtures --sizes` reports the near/over fixtures no longer straddle the limit | regenerate them with `python tests/fixtures/openhab/generate_size_fixtures.py` and update the measured sizes in `docs/fixture-limits.md` |
 | Everything times out on the dev profile | you started it without `-f compose.dev.yaml` |
+| A run fails with `did not answer GET /rest/ with JSON` | the container is up but its openHAB runtime is dead; `restart openhab-<profile>` once the port is free and poll `/rest/` for JSON |
+| A run fails with `serves version '…', which matches no pinned profile` | a foreign or stale image answers on port 8080; start the pinned stack, or bump `config/openhab.version` and run `pin-images --write` |
+| `run --profile dev` says the stack serves `'stable'` | `openhab-dev` failed to bind while stable held 8080 and still reports healthy; `down` the stable stack, then `restart openhab-dev` |
 | `compose: services.shim.SHIM_BIND resolves to '0.0.0.0'` | the host overlay was edited to hardcode a bind address; use `${E2E_LOOPBACK_HOST}` |
 | `the generated network block has drifted` | run `python -m e2e network-env --write` after editing `config/network.yaml` |
 | `unknown flag: reset` / `!reset` parse error | Docker Compose is older than 2.24; upgrade it or use the bridge profile |

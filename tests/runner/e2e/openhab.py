@@ -107,6 +107,34 @@ class OpenHabClient:
             return False
         return status == 200
 
+    def server_version(self, timeout: float = 5.0) -> str:
+        """The ``version`` field from ``GET /rest/``.
+
+        The healthcheck only proves that the port answers. A container whose
+        Java runtime died after failing to bind still reports ``Up (healthy)``,
+        so the served version is what tells the pinned ``stable`` image from
+        the pinned ``dev`` one — and what proves this is openHAB at all.
+        """
+        status, payload = self._request("GET", "rest/", timeout=timeout)
+        if status != 200:
+            raise OpenHabError(f"GET {self.base_url}rest/ -> {status}")
+        try:
+            document = json.loads(payload.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as error:
+            raise OpenHabError(
+                f"GET {self.base_url}rest/ did not return JSON ({error}); the "
+                "port answers, but not with an openHAB REST API"
+            ) from None
+        if not isinstance(document, Mapping):
+            raise OpenHabError(f"GET {self.base_url}rest/ did not return a JSON object")
+        version = document.get("version")
+        if not isinstance(version, str) or not version.strip():
+            raise OpenHabError(
+                f"GET {self.base_url}rest/ returned JSON without a version, so "
+                "the running openHAB image cannot be identified"
+            )
+        return version.strip()
+
     def wait_ready(self, timeout_s: float = 180.0, interval_s: float = 2.0) -> None:
         """Block until ``GET /rest/`` succeeds.
 

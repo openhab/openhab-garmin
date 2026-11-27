@@ -24,11 +24,22 @@ from typing import Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 import yaml
 
-from .config import ConfigError
+from .config import ConfigError, openhab_images
 from .openhab import OpenHabClient, OpenHabError
 from .paths import tests_root
 
 PROFILES = ("stable", "dev")
+
+#: The Compose files a dedicated-VM (host-network) stack is started with. The
+#: error messages quote them so an operator can copy the command as written.
+COMPOSE_FILES = (
+    "-f compose.yaml -f compose.dev.yaml -f compose.host.yaml "
+    "-f compose.host.dev.yaml"
+)
+
+#: The image variant suffixes the pins carry. ``GET /rest/`` reports the bare
+#: upstream version, e.g. ``5.2.5`` for ``openhab/openhab:5.2.5-debian``.
+_IMAGE_VARIANT = re.compile(r"-(?:debian|alpine)$")
 
 EXPECTED_FILE = "openhab/expected.yaml"
 CONF_DIR = "openhab/conf"
@@ -75,6 +86,20 @@ _DSL_WARNING = re.compile(r"DSL model .* has errors")
 
 class FixtureError(ConfigError):
     """openHAB did not load the fixture tree the harness expected."""
+
+
+class ProfileError(FixtureError):
+    """The running stack cannot be identified as one of the pinned profiles.
+
+    Raised instead of returning "no profile", because a stack that answers on
+    the port without a pinned version is a broken environment, not a scenario
+    that belongs to another profile. The distinction matters: a skip looks like
+    a profile choice, a failure points at the container.
+    """
+
+
+class ProfileMismatch(ProfileError):
+    """The stack serves a different profile than the run was asked for."""
 
 
 class ScenarioSkipped(RuntimeError):
@@ -126,49 +151,171 @@ def checkout_fixtures_root() -> Path:
     return tests_root() / "fixtures"
 
 
+def served_version(tag: str) -> str:
+    """The bare upstream version a pinned image tag serves, e.g. ``5.2.5``."""
+    return _IMAGE_VARIANT.sub("", tag.strip())
+
+
+def pinned_versions(path: Optional[Path] = None) -> Dict[str, str]:
+    """The version each profile's pinned image reports on ``GET /rest/``."""
+    images = openhab_images(path) if path is not None else openhab_images()
+    return {
+        profile: served_version(images[f"openhab_{profile}"].tag)
+        for profile in PROFILES
+    }
+
+
+def _profile_items(profile: str, path: Optional[Path] = None) -> str:
+    """The pinned tag and served version of ``profile``, for failure messages."""
+    images = openhab_images(path) if path is not None else openhab_images()
+    image = images[f"openhab_{profile}"]
+    return f"{profile} = {image.tag} (serves {served_version(image.tag)})"
+
+
+def _start_command(profile: str) -> str:
+    if profile == "stable":
+        return "docker compose -f compose.yaml -f compose.host.yaml up -d"
+    return f"COMPOSE_PROFILES={profile} docker compose {COMPOSE_FILES} up -d"
+
+
+def _display_url(openhab: OpenHabClient) -> str:
+    return getattr(openhab, "base_url", "the configured openHAB URL")
+
+
 def detect_profile(
     openhab: OpenHabClient,
     *,
     expected_path: Optional[Path] = None,
+    version_file: Optional[Path] = None,
     wait_s: float = 0.0,
     interval_s: float = DEFAULT_INTERVAL_S,
-) -> Tuple[Optional[str], Dict[str, Tuple[int, int]]]:
-    """Which openHAB profile is actually running, and how far each one is off.
+) -> Tuple[str, Dict[str, Tuple[int, int]]]:
+    """Which pinned openHAB profile is running, and how far each tree is off.
 
     Profiles are exclusive — one openHAB at a time — so a full run needs one
     pass per profile. Without this, a scenario written for ``dev`` fails inside
     the fixture guard on a ``stable`` stack and looks like a product failure;
     the engine skips it with this answer instead.
 
-    Returns the profile whose missing sets are zero (preferring an exact match
-    on both items and sitemaps), or ``None`` when no profile matches, plus the
-    ``(missing_items, missing_sitemaps)`` counts per profile for the report.
+    A profile only counts as running when ``GET /rest/`` answers with JSON *and*
+    the served version equals the version its pinned image tag carries. A
+    container that failed to bind can still report ``Up (healthy)`` while
+    nothing serves; trusting the port alone would then silently measure the
+    other profile. So an unanswerable REST API or an unpinned version raises
+    :class:`ProfileError` with the observed and expected versions instead of
+    skipping. Fixture sets then distinguish nothing that the version already
+    decided; they are still compared so a tree that failed to load is named.
+
+    Returns the running profile and the ``(missing_items, missing_sitemaps)``
+    counts per profile for the report.
     """
+    versions = pinned_versions(version_file)
+    try:
+        observed = openhab.server_version()
+    except OpenHabError as error:
+        raise ProfileError(
+            f"the openHAB at {_display_url(openhab)} did not answer GET /rest/ "
+            f"with JSON ({error}). A container can report `Up (healthy)` after "
+            "its runtime failed to bind, because the healthcheck does not prove "
+            "the REST API answers, so the profile cannot be identified. Stop "
+            f"the other stack (volumes persist), start this one, restart "
+            "`openhab-<profile>` if the container predates the port being free, "
+            "then poll GET /rest/ for JSON before running. Expected "
+            f"{_profile_items('stable', version_file)} or "
+            f"{_profile_items('dev', version_file)}."
+        ) from None
+
+    running = next(
+        (profile for profile in PROFILES if versions[profile] == observed), None
+    )
+    if running is None:
+        expected = ", ".join(
+            _profile_items(profile, version_file) for profile in PROFILES
+        )
+        raise ProfileError(
+            f"the openHAB at {_display_url(openhab)} serves version "
+            f"{observed!r}, which matches no pinned profile: "
+            f"tests/config/openhab.version pins {expected}. Something other "
+            "than a pinned image is answering on this port, so the profile "
+            "cannot be identified. Start the pinned image for the profile you "
+            "want, or bump tests/config/openhab.version and run "
+            "`python -m e2e pin-images --write`."
+        )
+
     actual_items = {item.name for item in openhab.items()}
     actual_sitemaps = set(openhab.sitemaps())
-    best: Optional[str] = None
-    best_score: Optional[Tuple[int, int, int]] = None
-    distances: Dict[str, Tuple[int, int]] = {}
-    for profile in PROFILES:
-        expected = load_expected(profile, expected_path)
-        expected_items = set(expected.items)
-        expected_sitemaps = set(expected.sitemaps)
-        missing_items = len(expected_items - actual_items)
-        missing_sitemaps = len(expected_sitemaps - actual_sitemaps)
-        distances[profile] = (missing_items, missing_sitemaps)
-        # Prefer the profile that is missing nothing *and* has the fewest extra
-        # sets: a `dev` stack is a superset of `stable`, so `stable` alone would
-        # also match it and would win on a missing-only score.
-        extras = len(actual_sitemaps - expected_sitemaps) + len(
-            actual_items - expected_items
+    deadline = time.monotonic() + max(wait_s, 0.0)
+    while True:
+        distances: Dict[str, Tuple[int, int]] = {}
+        for profile in PROFILES:
+            expected = load_expected(profile, expected_path)
+            distances[profile] = (
+                len(set(expected.items) - actual_items),
+                len(set(expected.sitemaps) - actual_sitemaps),
+            )
+        missing_items, missing_sitemaps = distances[running]
+        if not missing_items and not missing_sitemaps:
+            return running, distances
+        # The item and sitemap providers can trail ``/rest/`` by a few seconds
+        # on a cold start; give them the caller's window before calling the
+        # tree broken. Unlike the version, this is a transient state.
+        if time.monotonic() >= deadline:
+            break
+        time.sleep(interval_s)
+        actual_items = {item.name for item in openhab.items()}
+        actual_sitemaps = set(openhab.sitemaps())
+
+    raise FixtureError(
+        f"openHAB {observed} is the pinned {running!r} image, but the "
+        f"fixture tree it serves is missing {missing_items} item(s) and "
+        f"{missing_sitemaps} sitemap(s). The models did not load (issue "
+        f"#394): re-stage them with `docker compose {COMPOSE_FILES} run "
+        f"--rm --no-deps openhab-{running}-init` and restart "
+        f"`openhab-{running}`."
+    )
+
+
+def assert_profile(
+    openhab: OpenHabClient,
+    wanted: str,
+    *,
+    expected_path: Optional[Path] = None,
+    version_file: Optional[Path] = None,
+    wait_s: float = 0.0,
+) -> str:
+    """Fail loudly unless the stack serves ``wanted``.
+
+    ``run`` detects the profile itself; ``--profile`` is an assertion, because
+    running the wrong profile silently is the real hazard. A mismatch names the
+    profile that is actually serving and the command that starts the wanted one.
+    """
+    if wanted not in PROFILES:
+        raise ConfigError(
+            f"unknown openHAB profile {wanted!r}; known: {', '.join(PROFILES)}"
         )
-        score = (missing_items + missing_sitemaps, extras, missing_sitemaps)
-        if best_score is None or score < best_score:
-            best_score = score
-            best = profile
-    if best_score is not None and best_score[0] == 0:
-        return best, distances
-    return None, distances
+    running, _distances = detect_profile(
+        openhab,
+        expected_path=expected_path,
+        version_file=version_file,
+        wait_s=wait_s,
+    )
+    if running == wanted:
+        return running
+
+    versions = pinned_versions(version_file)
+    raise ProfileMismatch(
+        f"this run asked for the {wanted!r} openHAB profile, but the stack at "
+        f"{_display_url(openhab)} serves {running!r} (openHAB "
+        f"{versions[running]}). Profiles are exclusive and share one port. From "
+        f"tests/compose, stop the running stack with `docker compose "
+        f"{COMPOSE_FILES} down` (the volumes persist), then start {wanted} with "
+        f"`{_start_command(wanted)}`. If `openhab-{wanted}` already existed it "
+        "may report `Up (healthy)` without serving anything — its runtime "
+        "failed to bind while the other profile held the port — so restart it "
+        f"(`docker compose {COMPOSE_FILES} restart openhab-{wanted}`) and poll "
+        "GET /rest/ for JSON before running. `--profile` only asserts; omit it "
+        "to let the run detect the profile."
+    )
 
 
 def staged_fixtures_root() -> Path:
