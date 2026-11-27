@@ -36,20 +36,42 @@ steps:
 
   - action: reset_shim
 
-  # `Text` is the first frame on the homepage.
+  # `Text` is the first frame on the homepage. A Frame opens as a submenu, so
+  # wait for its page before paging: the app builds frame children
+  # asynchronously after the page is shown.
   - action: press
     button: ENTER
+
+  - action: wait_for_event
+    description: The Text frame page is rendered before paging down.
+    event: VIEW
+    fields:
+      category: sitemap
+      view: PageMenu
+    timeout_ms: 30000
 
   - action: screenshot
     name: text-frame
 
-  # "Nested page" is the fifth entry in that frame.
+  # The entries are, in order: Temperature, TV, Window, Last Update, the static
+  # "This text has no item" text, then "Nested page" — so five page-downs from
+  # the first entry. The static text occupies an index even though it cannot be
+  # activated; counting it is what keeps this navigation unambiguous.
   - action: press
     button: DOWN
-    count: 4
+    count: 5
 
   - action: press
     button: ENTER
+
+  - action: wait_for_event
+    description: The nested page is open (one level deeper than the frame page).
+    event: VIEW
+    fields:
+      category: sitemap
+      view: PageMenu
+      depth: 3
+    timeout_ms: 15000
 
   - action: screenshot
     name: nested-page
