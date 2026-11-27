@@ -40,8 +40,10 @@ recorded, the app had not painted the menu yet, and because the wrong state was
 reproducible it passed on every run — a reproducible wrong baseline is worse than
 a flaky one. The scenario now waits for
 `E2E:VIEW;category=sitemap;view=HomepageMenu`, the golden declares `expect` and is
-refused when the live view differs, and a measured ink floor catches an unpainted
-window. No screen rectangle is assumed: the app's screen is not always centred and
+refused when the live view differs, a `stable: true` screenshot waits for the
+paint (a `VIEW` line is emitted on construction, not on paint, and the first
+attempt at this fix still captured the glance icon), and a measured ink floor
+catches an unpainted window. No screen rectangle is assumed: the app's screen is not always centred and
 newer bike computers crop the device's top, so per-device window goldens are the
 unit, and the simulator's window geometry is not pinnable (measured) nor
 normalisable across builds (39.7% RMSE after trim-and-resize). Details in

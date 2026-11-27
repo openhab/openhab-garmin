@@ -191,9 +191,10 @@ a run.
 | `wait_for_request` | `method`, `path`/`path_prefix`, `min_count`, `timeout_ms` | polls the shim trace |
 | `press` | `button` (`START`/`UP`/`DOWN`/`ENTER`/`BACK`/`MENU`), `count` | requires a button-capable device |
 | `tap` | `x`, `y`, `count` | requires a touch-capable device |
-| `screenshot` | `name` | lower-case slug; stored as `NN-name.png` |
+| `screenshot` | `name`, `stable`, `interval_ms`, `timeout_ms`, `stable_diff_ratio` | lower-case slug; stored as `NN-name.png`. `stable: true` recaptures until two frames agree, because a `VIEW` line is emitted before the view is painted |
 | `command` | `item`, `value`, `via` (`rest`/`shim`) | `rest` talks to openHAB directly |
 | `wait_for_event` | `event`, `fields`, `contains`, `timeout_ms` | see trace events below |
+| `wait_for_view` | `category`/`view`, `depth`, `timeout_ms` | shorthand for a `VIEW` event; put it before a screenshot |
 | `assert` | `shim_requests`, `golden`, `no_error_view`, `never_error_view`, `description` | at least one condition |
 
 ### `assert`
@@ -244,7 +245,8 @@ and rescaling does not reconcile simulators: Wine and the native build give
 window as an explicit failure, which is the honest outcome of a simulator
 upgrade.
 
-A golden must also declare the state it depicts and contain rendered content:
+A golden must also declare the state it depicts, wait for it to be **painted**,
+and contain rendered content:
 
 ```yaml
 - action: wait_for_view          # the request is recorded before the menu paints
@@ -252,6 +254,7 @@ A golden must also declare the state it depicts and contain rendered content:
   view: HomepageMenu
 - action: screenshot
   name: homepage
+  stable: true                   # capture until two consecutive frames agree
 - action: assert
   golden:
     name: homepage
@@ -261,6 +264,13 @@ A golden must also declare the state it depicts and contain rendered content:
       view: HomepageMenu
     min_ink_components: 40       # required: measured on a reviewed capture
 ```
+
+`E2E:VIEW` is emitted when a view is **constructed**, not when it is painted, so
+`wait_for_view` alone is not enough: the first attempt at this still captured the
+glance icon with the menu already reported. `stable: true` captures repeatedly
+until two consecutive frames differ by less than `stable_diff_ratio` (0.1% by
+default), which measures the paint instead of guessing a sleep; the guest settled
+in two attempts, 153 pixels apart.
 
 `expect` is mandatory and checked against the live trace before anything is
 written or compared: a capture of the glance, a loading view or any other state
