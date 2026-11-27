@@ -107,6 +107,47 @@ class OpenHabClient:
             return False
         return status == 200
 
+    def server_version(self, timeout: float = 5.0) -> str:
+        """The openHAB runtime version from ``GET /rest/``.
+
+        The top-level ``version`` in that document is the REST API version
+        (``8`` for openHAB 5.x) and is identical on every profile. The runtime
+        version that identifies the pinned image lives at
+        ``runtimeInfo.version``; reading the top-level field would compare
+        ``8`` with a pin and never match.
+
+        The healthcheck only proves that the port answers. A container whose
+        Java runtime died after failing to bind still reports ``Up (healthy)``,
+        so the runtime version is what tells the pinned ``stable`` image from
+        the pinned ``dev`` one — and what proves this is openHAB at all.
+        """
+        status, payload = self._request("GET", "rest/", timeout=timeout)
+        if status != 200:
+            raise OpenHabError(f"GET {self.base_url}rest/ -> {status}")
+        try:
+            document = json.loads(payload.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as error:
+            raise OpenHabError(
+                f"GET {self.base_url}rest/ did not return JSON ({error}); the "
+                "port answers, but not with an openHAB REST API"
+            ) from None
+        if not isinstance(document, Mapping):
+            raise OpenHabError(f"GET {self.base_url}rest/ did not return a JSON object")
+        runtime = document.get("runtimeInfo")
+        if not isinstance(runtime, Mapping):
+            raise OpenHabError(
+                f"GET {self.base_url}rest/ returned JSON without a runtimeInfo "
+                "object, so the running openHAB image cannot be identified"
+            )
+        version = runtime.get("version")
+        if not isinstance(version, str) or not version.strip():
+            raise OpenHabError(
+                f"GET {self.base_url}rest/ returned JSON without "
+                "runtimeInfo.version, so the running openHAB image cannot be "
+                "identified"
+            )
+        return version.strip()
+
     def wait_ready(self, timeout_s: float = 180.0, interval_s: float = 2.0) -> None:
         """Block until ``GET /rest/`` succeeds.
 

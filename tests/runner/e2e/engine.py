@@ -267,7 +267,11 @@ class ScenarioRunner:
         # running and skip with the reason instead; the run summary reports
         # which profiles it covered, so "complete" means one pass per profile.
         if not self.dry_run:
-            running, distances = fixtures_module.detect_profile(self.openhab)
+            running, distances = fixtures_module.detect_profile(
+                self.openhab,
+                wait_s=fixtures_module.DEFAULT_WAIT_S,
+                interval_s=fixtures_module.DEFAULT_INTERVAL_S,
+            )
             wanted = scenario.openhab.profile
             if running != wanted:
                 detail = ", ".join(
@@ -276,10 +280,13 @@ class ScenarioRunner:
                 )
                 raise fixtures_module.ScenarioSkipped(
                     f"needs the {wanted!r} openHAB profile, but the running stack "
-                    f"serves {running or 'no known profile'!r} ({detail}). Profiles "
+                    f"serves {running!r} ({detail}). Profiles "
                     "are exclusive, so run this scenario against the "
                     f"{wanted!r} stack: set COMPOSE_PROFILES={wanted} and start "
                     f"openhab-{wanted}, then `python -m e2e run {scenario.scenario_id}`. "
+                    f"If openhab-{wanted} already existed, restart it once the "
+                    "other stack releases the port: a container that failed to "
+                    "bind stays `Up (healthy)` without serving anything. "
                     "A complete pass is one run per profile; see "
                     "tests/docs/scenarios.md."
                 )
