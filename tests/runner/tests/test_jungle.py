@@ -33,7 +33,8 @@ from e2e.jungle import (
 )
 from e2e.paths import repo_root
 from e2e.sdk import SdkLayout
-from e2e.settings import load_settings
+from e2e.scenarios import find_scenario
+from e2e.settings import load_settings, scenario_settings
 from e2e.variants import jungle_products, parse_jungle, resolve_device
 
 JUNGLE = repo_root() / "monkey.jungle"
@@ -265,6 +266,61 @@ def test_build_asserts_the_compiled_settings(
     assert result.settings_values["url_0"] == settings.properties["url_0"]
     generated = _properties(result.jungle)
     assert "resource-override-fenix7" in generated["fenix7.resourcePath"]
+
+
+def test_scenario_settings_let_the_scenario_choose_its_sitemap() -> None:
+    """The fixture supplies behaviour; the scenario and the harness supply the page and URL."""
+    scenario = find_scenario("regression/unsupported-widget")
+    settings = scenario_settings(
+        scenario, shim_url="http://shim.invalid:8080"
+    )
+
+    assert scenario.fixture == "fast-polling"
+    assert load_settings("fast-polling").sitemap == "garmin_e2e"
+    assert scenario.openhab.sitemap == "garmin_unsupported"
+    assert settings.sitemap == "garmin_unsupported", "the scenario's page wins"
+    assert settings.url == "http://shim.invalid:8080/", "the harness URL wins"
+    # Everything else still comes from the fixture.
+    assert settings.properties["pollingInterval_0"] == load_settings(
+        "fast-polling"
+    ).properties["pollingInterval_0"]
+
+
+def test_scenario_settings_keep_other_scenario_overrides() -> None:
+    scenario = find_scenario("smoke/toggle-switch")
+    assert scenario.openhab.sitemap == "garmin_commands"
+    settings = scenario_settings(scenario, shim_url="http://shim.invalid:8080")
+    assert settings.sitemap == "garmin_commands"
+
+
+def test_the_build_asserts_the_scenario_sitemap_not_the_fixture_default(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A PRG built for a scenario must compile the page the scenario asserts."""
+    scenario = find_scenario("regression/unsupported-widget")
+    settings = scenario_settings(scenario, shim_url="http://shim.invalid:8080")
+    assert settings.sitemap == "garmin_unsupported"
+
+    document = {
+        "properties": [
+            {
+                "id": "url_0",
+                "type": "string",
+                "defaultValue": settings.properties["url_0"],
+            },
+            {
+                "id": "sitemap_0",
+                "type": "string",
+                "defaultValue": settings.properties["sitemap_0"],
+            },
+        ]
+    }
+    _fake_monkeyc(monkeypatch, {}, settings_document=document)
+
+    result = build_prg(_layout(tmp_path), "fenix7", tmp_path / "out", settings=settings)
+
+    assert result.settings_values["sitemap_0"] == "garmin_unsupported"
+    assert result.settings_values["url_0"] == "http://shim.invalid:8080/"
 
 
 def test_build_fails_when_the_compiled_settings_do_not_match(

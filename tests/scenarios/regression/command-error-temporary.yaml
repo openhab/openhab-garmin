@@ -52,19 +52,7 @@ steps:
 
   - action: reset_shim
 
-  # Widgets is the first frame -> its first element is the Toggle Switch.
-  # A Frame opens as a submenu, so the element needs a second select.
-  - action: press
-    button: ENTER
-
-  - action: wait_for_event
-    description: The Widgets frame page is rendered before selecting its element.
-    event: VIEW
-    fields:
-      category: sitemap
-      view: PageMenu
-    timeout_ms: 30000
-
+  # Widgets is the first frame -> Toggle Switch.
   - action: press
     button: ENTER
 

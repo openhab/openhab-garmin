@@ -36,7 +36,7 @@ from .config import ConfigError, Device
 from .openhab import OpenHabClient, OpenHabError
 from .reporting import ERRORED, FAILED, PASSED, SKIPPED, ScenarioResult, StepResult
 from .scenarios import Scenario, Step
-from .settings import AppSettings, load_settings
+from .settings import AppSettings, load_settings, scenario_settings
 from .shim import ShimClient, ShimError, ShimRequest
 from .sim import Button, DriverError, SimulatorDriver, create_driver
 from .sdk import SdkError, SdkLayout, require_fonts
@@ -158,7 +158,7 @@ class ScenarioRunner:
                 driver=driver,
                 openhab=self.openhab,
                 shim=self.shim,
-                settings=load_settings(scenario.fixture),
+                settings=scenario_settings(scenario, shim_url=self.shim.base_url),
                 workdir=workdir,
                 goldens_dir=self.goldens_dir,
                 dry_run=self.dry_run,
@@ -249,9 +249,7 @@ class ScenarioRunner:
 
     def _prepare_stack(self) -> AppSettings:
         scenario = self.scenario
-        settings = load_settings(scenario.fixture)
-        if scenario.settings:
-            settings = settings.with_overrides(scenario.settings)
+        settings = scenario_settings(scenario, shim_url=self.shim.base_url)
 
         if self.dry_run:
             self.log(

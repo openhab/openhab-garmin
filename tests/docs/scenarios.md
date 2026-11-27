@@ -37,6 +37,16 @@ shim:                          # fault script, see tests/shim/README.md
 notes: Free-form operator note.
 ```
 
+**Two properties a scenario always wins over its fixture.** `openhab.sitemap`
+becomes the compiled `sitemap_0`, and the harness's shim URL becomes `url_0`,
+whatever the settings fixture says. The fixture supplies the behavioural
+defaults (polling interval, suppress-empty, webhook) and nothing else, because a
+fixture default sitemap compiles a page the scenario does not assert — the app
+then polls one sitemap while the scenario waits for another, which reads as a
+missing request rather than a configuration mismatch. The build cache key is the
+**composed** settings, so two scenarios sharing a fixture but not a sitemap
+cannot share a PRG.
+
 Unknown devices, tiers, modes, languages, suites, actions, step keys, settings
 property ids and shim rule keys are all rejected at load time with the file, the
 key and the reason.

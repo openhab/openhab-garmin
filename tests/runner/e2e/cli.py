@@ -100,7 +100,7 @@ from .sdk import (
     load_layout,
     require_fonts,
 )
-from .settings import SettingsError, load_settings
+from .settings import SettingsError, load_settings, scenario_settings
 from .shim import ShimClient, ShimError
 from .trace import parse_lines
 from .sim import DRIVER_NAMES, Button, create_driver
@@ -445,9 +445,13 @@ def _cmd_run(args: argparse.Namespace) -> int:
     with key_context as developer_key:
         for scenario in scenarios:
             device = _device_for(scenario, args)
-            settings = load_settings(scenario.fixture)
-            if scenario.settings:
-                settings = settings.with_overrides(scenario.settings)
+            # The scenario's sitemap and the harness's shim URL win over the
+            # fixture defaults, and the cache key is computed from the composed
+            # settings so two scenarios sharing a fixture but not a sitemap
+            # cannot share a PRG.
+            settings = scenario_settings(
+                scenario, shim_url=_shim_url(args)
+            )
             prg: Optional[Path] = None
             if layout is not None:
                 if args.prg:
