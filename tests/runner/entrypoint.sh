@@ -11,6 +11,23 @@
 # is cheap and independent while staging copies ~250 MB.
 set -euo pipefail
 
+# Record which entrypoint actually ran. The script is baked into the image while
+# the harness is mounted read-only from the checkout, so editing this file and
+# restarting an existing image runs the OLD script against the NEW checks - which
+# once reported a missing font pack as the cause. The harness compares this hash
+# with its own copy (e2e.entrypoint) and names the stale image instead.
+record_entrypoint_hash() {
+    local marker="${CIQ_ENTRYPOINT_MARKER:-/run/ciq-entrypoint.sha256}"
+    mkdir -p "$(dirname "$marker")" 2>/dev/null || true
+    if command -v sha256sum >/dev/null 2>&1; then
+        sha256sum "$0" 2>/dev/null | awk '{print $1}' > "$marker" 2>/dev/null || true
+    elif command -v shasum >/dev/null 2>&1; then
+        shasum -a 256 "$0" 2>/dev/null | awk '{print $1}' > "$marker" 2>/dev/null || true
+    fi
+}
+
+record_entrypoint_hash
+
 sdk_hint() {
     cat >&2 <<'MSG'
 ========================================================================

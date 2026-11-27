@@ -51,6 +51,7 @@ from typing import Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 
 from . import compose as compose_module
 from .config import ConfigError, read_sdk_version
+from .entrypoint import FRESH, EntrypointStatus, entrypoint_status
 from .network import Network, load_network
 from .paths import repo_root, tests_root
 from .sdk import SdkError, inspect_sdk
@@ -70,9 +71,11 @@ CHECKS = (
     ("docker.engine", "docker"),
     ("docker.compose", "docker"),
     ("docker.compose-config", "docker"),
+    ("docker.entrypoint", "docker"),
     ("compose.files", "compose"),
     ("sdk.layout", "sdk"),
     ("sdk.fonts", "sdk"),
+    ("sdk.fonts-env", "sdk"),
     ("pins.images", "pins"),
     ("ports.loopback", "ports"),
     ("layout.repository", "layout"),
@@ -467,6 +470,87 @@ def check_image_pins(
 # ---------------------------------------------------------------------------
 # Connect IQ SDK
 # ---------------------------------------------------------------------------
+
+
+def check_fonts_env(env_file: Optional[Path] = None) -> CheckResult:
+    """``CIQ_FONTS_HOST_PATH`` is set in the Compose environment file.
+
+    The runner stages the font pack from ``/opt/ciq-fonts``, which Compose mounts
+    from this variable. Leaving it absent produces the alarming "no Connect IQ
+    device fonts are usable" message inside the container even though the pack is
+    sitting in the operator's home, so the missing *variable* is reported here
+    instead, with the path a guest is expected to use.
+    """
+    check_id, group = "sdk.fonts-env", "sdk"
+    path = Path(env_file) if env_file is not None else tests_root() / "compose" / ".env"
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return CheckResult(
+            check_id,
+            group,
+            WARN,
+            f"{path} does not exist yet; copy .env.example and set "
+            "CIQ_FONTS_HOST_PATH to the Connect IQ Fonts directory",
+            {"env_file": str(path)},
+        )
+    value = ""
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("CIQ_FONTS_HOST_PATH="):
+            value = stripped.split("=", 1)[1].strip().strip('"').strip("'")
+            break
+    if not value:
+        return CheckResult(
+            check_id,
+            group,
+            FAIL,
+            f"CIQ_FONTS_HOST_PATH is unset in {path}, so the runner mounts an "
+            "empty /opt/ciq-fonts and fails with a font error that looks like a "
+            "missing pack; on the guest set it to "
+            "/home/ansible/.Garmin/ConnectIQ/Fonts",
+            {"env_file": str(path)},
+        )
+    directory = Path(value).expanduser()
+    problem = fonts_problem(directory)
+    if problem is not None:
+        return CheckResult(
+            check_id,
+            group,
+            FAIL,
+            f"CIQ_FONTS_HOST_PATH={value} is not a usable font pack: {problem}",
+            {"env_file": str(path), "fonts": value},
+        )
+    return CheckResult(
+        check_id,
+        group,
+        PASS,
+        f"CIQ_FONTS_HOST_PATH={value} ({font_asset_count(directory)} font files)",
+        {"env_file": str(path), "fonts": value},
+    )
+
+
+def check_entrypoint(environ: Mapping[str, str]) -> CheckResult:
+    """The running container's ``entrypoint.sh`` is the one the harness ships.
+
+    ``entrypoint.sh`` is baked into the image while the harness is mounted, so
+    an image older than the checkout runs stale startup logic against new checks
+    - which once blamed a missing font pack. ``unknown`` is reported as a warning,
+    never a failure: CI never starts the runner container.
+    """
+    check_id, group = "docker.entrypoint", "docker"
+    status: EntrypointStatus = entrypoint_status(environ)
+    if status.status == FRESH:
+        return CheckResult(check_id, group, PASS, status.detail)
+    if status.stale:
+        return CheckResult(
+            check_id,
+            group,
+            FAIL,
+            f"{status.detail}; {status.rebuild_hint()}",
+            {"running": status.running, "expected": status.expected},
+        )
+    return CheckResult(check_id, group, WARN, status.detail)
 
 
 def check_sdk(
@@ -1057,11 +1141,13 @@ def run_preflight(
         "docker.compose-config": lambda: check_compose_config(
             active.run, active.which
         ),
+        "docker.entrypoint": lambda: check_entrypoint(environ),
         "compose.files": lambda: check_compose_files(),
         "sdk.layout": lambda: check_sdk(
             environ, expected_version=expected_sdk_version
         ),
         "sdk.fonts": lambda: check_fonts(environ),
+        "sdk.fonts-env": lambda: check_fonts_env(),
         "pins.images": lambda: check_image_pins(),
         "ports.loopback": ports_check,
         "layout.repository": lambda: check_repository_layout(repo_path),

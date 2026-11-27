@@ -74,6 +74,7 @@ from .coverage import (
     write_markdown,
 )
 from .engine import run_scenario
+from .entrypoint import FRESH, entrypoint_status
 from .fixtures import FixtureError
 from .health import EXIT_INVALID_ENVIRONMENT, HealthError
 from .languages import (
@@ -1015,6 +1016,13 @@ def _cmd_sdk_check(args: argparse.Namespace) -> int:
         for line in describe_candidates():
             print(f"  {line}")
 
+    # The image is older than the checkout far more often than the fonts are
+    # really missing, and the font failure below would point at the wrong cause.
+    # Report this first, as a warning: it is a diagnostic, not a verdict.
+    status = entrypoint_status()
+    if status.status != FRESH and status.stale:
+        print(f"warning: {status.detail}\n         {status.rebuild_hint()}", file=sys.stderr)
+
     # The font pack is a hard requirement, not a warning: the simulator opens it
     # before every draw and the app crashes with `Invalid Font Specified` when it
     # is absent. It is reported even with --quiet, because entrypoint.sh relies
@@ -1023,6 +1031,13 @@ def _cmd_sdk_check(args: argparse.Namespace) -> int:
         require_fonts()
     except SdkError as error:
         print(f"error: {error}", file=sys.stderr)
+        if status.stale:
+            print(
+                "note: the entrypoint above is stale, so the old startup logic "
+                "may never have staged the fonts; rebuild the image before "
+                "chasing the font pack.",
+                file=sys.stderr,
+            )
         return EXIT_CONFIG
     return EXIT_OK
 

@@ -659,3 +659,138 @@ def test_cli_preflight_rejects_an_unknown_skip_group(capsys):
 
     assert code == 2
     assert "unknown --skip group" in capsys.readouterr().err
+
+
+# ---------------------------------------------------------------------------
+# stale image vs missing fonts: report the real cause first
+# ---------------------------------------------------------------------------
+
+def _entrypoint_pair(tmp_path, *, running: str | None = None):
+    """A harness entrypoint plus the hash marker the running one wrote."""
+    script = tmp_path / "work" / "tests" / "runner" / "entrypoint.sh"
+    script.parent.mkdir(parents=True, exist_ok=True)
+    script.write_text("#!/usr/bin/env bash\necho current\n", encoding="utf-8")
+    marker = tmp_path / "run" / "ciq-entrypoint.sha256"
+    marker.parent.mkdir(parents=True, exist_ok=True)
+    if running is not None:
+        marker.write_text(running + "\n", encoding="utf-8")
+    return script, marker
+
+
+def test_entrypoint_is_fresh_when_the_hashes_match(tmp_path):
+    from e2e.entrypoint import FRESH, entrypoint_status, file_sha256
+
+    script, marker = _entrypoint_pair(tmp_path, running=None)
+    marker.write_text(file_sha256(script) + "\n", encoding="utf-8")
+    status = entrypoint_status({}, script=script, marker=marker)
+    assert status.status == FRESH
+    assert not status.stale
+
+
+def test_entrypoint_is_stale_when_the_image_predates_the_checkout(tmp_path):
+    from e2e.entrypoint import STALE, entrypoint_status
+
+    script, marker = _entrypoint_pair(tmp_path, running="0" * 64)
+    status = entrypoint_status({}, script=script, marker=marker)
+    assert status.status == STALE
+    assert "docker compose build runner" in status.rebuild_hint()
+    assert "old entrypoint" in status.rebuild_hint()
+
+
+def test_entrypoint_is_unknown_without_a_marker(tmp_path):
+    """An image built before this check existed must not fail a run."""
+    from e2e.entrypoint import UNKNOWN, entrypoint_status
+
+    script, marker = _entrypoint_pair(tmp_path)
+    status = entrypoint_status({}, script=script, marker=marker)
+    assert status.status == UNKNOWN
+    assert "rebuild the runner image" in status.detail
+
+
+def test_entrypoint_is_unknown_outside_a_container(tmp_path):
+    from e2e.entrypoint import UNKNOWN, entrypoint_status
+
+    status = entrypoint_status(
+        {}, script=tmp_path / "absent.sh", marker=tmp_path / "absent.sha"
+    )
+    assert status.status == UNKNOWN
+
+
+def test_preflight_fails_a_stale_entrypoint_with_the_rebuild_command(tmp_path):
+    script, marker = _entrypoint_pair(tmp_path, running="0" * 64)
+    result = preflight.check_entrypoint(
+        {"CIQ_ENTRYPOINT_SCRIPT": str(script), "CIQ_ENTRYPOINT_MARKER": str(marker)}
+    )
+    assert result.status == preflight.FAIL
+    assert "docker compose build runner" in result.reason
+    assert result.group == "docker"
+
+
+def test_preflight_passes_a_fresh_entrypoint(tmp_path):
+    from e2e.entrypoint import file_sha256
+
+    script, marker = _entrypoint_pair(tmp_path, running=None)
+    marker.write_text(file_sha256(script) + "\n", encoding="utf-8")
+    result = preflight.check_entrypoint(
+        {"CIQ_ENTRYPOINT_SCRIPT": str(script), "CIQ_ENTRYPOINT_MARKER": str(marker)}
+    )
+    assert result.status == preflight.PASS
+
+
+def test_preflight_warns_rather_than_fails_without_a_marker(tmp_path):
+    script, marker = _entrypoint_pair(tmp_path)
+    result = preflight.check_entrypoint(
+        {"CIQ_ENTRYPOINT_SCRIPT": str(script), "CIQ_ENTRYPOINT_MARKER": str(marker)}
+    )
+    assert result.status == preflight.WARN
+
+
+def test_fonts_env_fails_when_the_variable_is_absent(tmp_path):
+    env_file = tmp_path / ".env"
+    env_file.write_text("CIQ_SDK_HOST_PATH=/opt/sdk\nCIQ_FONTS_HOST_PATH=\n", encoding="utf-8")
+    result = preflight.check_fonts_env(env_file)
+    assert result.status == preflight.FAIL
+    assert "/home/ansible/.Garmin/ConnectIQ/Fonts" in result.reason
+    assert "CIQ_FONTS_HOST_PATH" in result.reason
+
+
+def test_fonts_env_fails_when_the_variable_is_missing_entirely(tmp_path):
+    env_file = tmp_path / ".env"
+    env_file.write_text("CIQ_SDK_HOST_PATH=/opt/sdk\n", encoding="utf-8")
+    result = preflight.check_fonts_env(env_file)
+    assert result.status == preflight.FAIL
+    assert "unset" in result.reason
+
+
+def test_fonts_env_passes_with_a_populated_pack(tmp_path):
+    pack = tmp_path / "Fonts"
+    pack.mkdir()
+    (pack / "FNT_TEST.cft").write_text("face", encoding="utf-8")
+    env_file = tmp_path / ".env"
+    env_file.write_text(f"CIQ_FONTS_HOST_PATH={pack}\n", encoding="utf-8")
+    result = preflight.check_fonts_env(env_file)
+    assert result.status == preflight.PASS
+    assert "1 font files" in result.reason
+
+
+def test_fonts_env_names_an_empty_pack(tmp_path):
+    pack = tmp_path / "Fonts"
+    pack.mkdir()
+    env_file = tmp_path / ".env"
+    env_file.write_text(f"CIQ_FONTS_HOST_PATH={pack}\n", encoding="utf-8")
+    result = preflight.check_fonts_env(env_file)
+    assert result.status == preflight.FAIL
+    assert "is empty" in result.reason
+
+
+def test_fonts_env_warns_when_the_file_is_not_there_yet(tmp_path):
+    result = preflight.check_fonts_env(tmp_path / "absent.env")
+    assert result.status == preflight.WARN
+    assert ".env.example" in result.reason
+
+
+def test_the_new_checks_live_in_groups_ci_skips():
+    """CI has no runner container and no licensed fonts, so both must be skipped."""
+    assert ("docker.entrypoint", "docker") in preflight.CHECKS
+    assert ("sdk.fonts-env", "sdk") in preflight.CHECKS
+    assert "docker" in preflight.GROUPS and "sdk" in preflight.GROUPS
