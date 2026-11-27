@@ -492,14 +492,37 @@ def _point_at(target: Path, source: Path) -> None:
         shutil.copytree(source, target)
 
 
+def _remove_tree(target: Path) -> None:
+    """Delete ``target`` even where ``rmtree`` trips over overlayfs.
+
+    ``shutil.rmtree`` intermittently raises ``ENOTEMPTY`` from ``rmdir`` on an
+    overlay filesystem: the directory listing is empty and the syscall still
+    fails. Retrying until the path is really gone turns a spurious error into a
+    no-op, and a genuine permission problem still surfaces on the last attempt.
+    """
+    if target.is_symlink() or target.is_file():
+        target.unlink()
+        return
+    for _ in range(3):
+        if not target.exists():
+            return
+        shutil.rmtree(target, ignore_errors=True)
+    if target.exists():
+        shutil.rmtree(target)
+
+
 def _copy_tree(target: Path, source: Path) -> None:
     """Replace ``target`` with a real copy of ``source``."""
     target.parent.mkdir(parents=True, exist_ok=True)
-    if target.is_symlink() or target.is_file():
-        target.unlink()
-    elif target.is_dir():
-        shutil.rmtree(target)
-    shutil.copytree(source, target)
+    _remove_tree(target)
+    try:
+        shutil.copytree(source, target)
+    except OSError as error:
+        raise SdkError(
+            f"could not copy the font pack from {source} to {target}: {error}\n"
+            "The pack is ~1 GB; check free space and that the destination is "
+            "writable (a symlinked destination is replaced, never followed)."
+        ) from error
 
 
 @dataclass(frozen=True)
