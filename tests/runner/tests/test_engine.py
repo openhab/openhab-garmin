@@ -517,9 +517,12 @@ def test_ink_components_ignores_specks() -> None:
     assert ink_components(width, height, pixels) == 0
 
 
-def test_a_blank_window_fails_the_content_guard() -> None:
+def test_a_blank_window_fails_the_content_guard(monkeypatch) -> None:
     from e2e.assertions import screen_content_problem
 
+    # The guard shells out to ImageMagick, which CI does not install; patch the
+    # lookup so the injected runner is used (see the "absent" test below).
+    monkeypatch.setattr("e2e.assertions.shutil.which", lambda name: f"/usr/bin/{name}")
     blank = _pgm_bytes(60, 60, [])
     problem = screen_content_problem(
         Path("blank.png"), 40, runner=lambda command: blank
@@ -528,9 +531,10 @@ def test_a_blank_window_fails_the_content_guard() -> None:
     assert "must never become a baseline" in problem
 
 
-def test_a_rendered_window_passes_the_content_guard() -> None:
+def test_a_rendered_window_passes_the_content_guard(monkeypatch) -> None:
     from e2e.assertions import screen_content_problem
 
+    monkeypatch.setattr("e2e.assertions.shutil.which", lambda name: f"/usr/bin/{name}")
     blobs = [(4 * i, 20, 3, 6) for i in range(12)]
     rendered = _pgm_bytes(60, 60, blobs)
     assert (
