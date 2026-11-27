@@ -52,6 +52,7 @@ import yaml
 
 from shim.faults import ShimScriptError, parse_script
 
+from .assertions import DEFAULT_MAX_DIFF_RATIO
 from .config import SCENARIO_DIR, ConfigError, load_devices
 from .scope import find_unknown_ids, load_scope
 from .settings import KNOWN_PROPERTIES
@@ -445,16 +446,53 @@ def _assertion_params(raw: Mapping[str, Any], where: str) -> Dict[str, Any]:
     if "golden" in raw:
         spec_where = f"{where}.golden"
         spec = _require_mapping(raw["golden"], spec_where)
-        _reject_unknown(spec, {"name", "max_diff_ratio"}, spec_where)
+        _reject_unknown(spec, {"name", "max_diff_ratio", "expect",
+                               "min_ink_components"}, spec_where)
         if "name" not in spec:
             raise ScenarioError(f"{spec_where}: 'name' is required")
         name = _string(spec["name"], f"{spec_where}.name")
         if not _SCREENSHOT_NAME.match(name):
             raise ScenarioError(f"{spec_where}.name: invalid screenshot name {name!r}")
+        # `expect` is required on purpose. A golden without a declared state can
+        # only be checked against itself, which is how a glance screen was once
+        # committed as the homepage baseline: the capture was reproducible, so it
+        # passed. Declaring the view makes the wrong state fail closed.
+        if "expect" not in spec:
+            raise ScenarioError(
+                f"{spec_where}: 'expect' is required. State the view the golden "
+                "depicts, e.g. expect: {category: sitemap, view: HomepageMenu}, so "
+                "a capture of the glance or a loading screen is refused instead of "
+                "becoming the baseline."
+            )
+        expect = _require_mapping(spec["expect"], f"{spec_where}.expect")
+        _reject_unknown(expect, {"category", "view", "depth"}, f"{spec_where}.expect")
+        if not any(key in expect for key in ("category", "view")):
+            raise ScenarioError(
+                f"{spec_where}.expect: needs 'category' or 'view'"
+            )
+        built_expect: Dict[str, Any] = {}
+        for key in ("category", "view"):
+            if key in expect:
+                built_expect[key] = _match_text(expect[key], f"{spec_where}.expect.{key}")
+        if "depth" in expect:
+            built_expect["depth"] = str(_int(expect["depth"], f"{spec_where}.expect.depth", 1))
+        # The pixel backstop is required too: its threshold is measured on
+        # review, and a golden author who never measured it has not looked.
+        if "min_ink_components" not in spec:
+            raise ScenarioError(
+                f"{spec_where}: 'min_ink_components' is required. It is the number "
+                "of distinct ink blobs a rendered view contains; measure it on a "
+                "reviewed capture (a glance has far fewer than a menu) so a blank "
+                "or unpainted screen can never pass."
+            )
         params["golden"] = {
             "name": name,
-            "max_diff_ratio": _ratio(spec.get("max_diff_ratio", 0.02),
+            "max_diff_ratio": _ratio(spec.get("max_diff_ratio", DEFAULT_MAX_DIFF_RATIO),
                                       f"{spec_where}.max_diff_ratio"),
+            "expect": built_expect,
+            "min_ink_components": _int(
+                spec["min_ink_components"], f"{spec_where}.min_ink_components", 1
+            ),
         }
 
     if "no_error_view" in raw:
@@ -478,6 +516,31 @@ def _assertion_params(raw: Mapping[str, Any], where: str) -> Dict[str, Any]:
     return params
 
 
+def _step_wait_for_view(raw: Mapping[str, Any], where: str) -> Dict[str, Any]:
+    """Wait until the app reports the view a scenario needs on screen.
+
+    Cheaper and more precise than a fixed sleep: the trace already carries
+    ``E2E:VIEW;category=...;view=...``, so a screenshot taken after this step is
+    of the intended view rather than of the glance it was passing through.
+    """
+    _reject_unknown(raw, {"action", "category", "view", "depth", "timeout_ms",
+                          "description"}, where)
+    params: Dict[str, Any] = {}
+    for key in ("category", "view"):
+        if key in raw:
+            params[key] = _match_text(raw[key], f"{where}.{key}")
+    if not params:
+        raise ScenarioError(
+            f"{where}: needs 'category' or 'view' (or both) to wait for"
+        )
+    if "depth" in raw:
+        params["depth"] = str(_int(raw["depth"], f"{where}.depth", 1))
+    params["timeout_ms"] = _int(raw.get("timeout_ms", 30_000), f"{where}.timeout_ms", 1, 600_000)
+    if "description" in raw:
+        params["description"] = _string(raw["description"], f"{where}.description")
+    return params
+
+
 _STEP_HANDLERS = {
     "launch": _step_launch,
     "stop": _step_stop,
@@ -489,6 +552,7 @@ _STEP_HANDLERS = {
     "screenshot": _step_screenshot,
     "command": _step_command,
     "wait_for_event": _step_wait_for_event,
+    "wait_for_view": _step_wait_for_view,
     "assert": _assertion_params,
 }
 

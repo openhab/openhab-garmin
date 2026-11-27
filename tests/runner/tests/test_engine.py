@@ -14,6 +14,8 @@ from dataclasses import replace
 from pathlib import Path
 from typing import ClassVar, List, Sequence
 
+import pytest
+
 from e2e import cli
 from e2e import engine
 from e2e.config import default_device_id, find_device
@@ -409,3 +411,135 @@ def test_update_goldens_passes_the_font_gate_with_a_pack(tmp_path, monkeypatch, 
     assert "no Connect IQ device fonts" not in captured.err
     assert "sdk stub for the test" in captured.err
     assert code == cli.EXIT_CONFIG
+
+
+# ---------------------------------------------------------------------------
+# golden guards: the wrong state must never become a baseline
+# ---------------------------------------------------------------------------
+
+def _runner_with_view(tmp_path: Path, *lines: str):
+    """A ScenarioRunner whose trace reports the given console lines."""
+    from e2e.trace import TraceLog
+
+    runner = engine.ScenarioRunner.__new__(engine.ScenarioRunner)
+    trace = TraceLog(lambda: list(lines))
+    trace.poll()
+
+    class _Ctx:
+        pass
+
+    context = _Ctx()
+    context.trace = trace
+    context.driver = _NullWithEvents()
+    return runner, context
+
+
+class _NullWithEvents(NullDriver):
+    """The dry-run driver, but claiming an event stream so the guard runs."""
+
+    supports_events = True
+
+
+GLANCE = "E2E:VIEW;category=glance;view=GlanceSitemapView;depth=1"
+MENU = "E2E:VIEW;category=sitemap;view=HomepageMenu;depth=1"
+LOADING = "E2E:VIEW;category=sitemap;view=LoadingView;depth=1"
+
+
+def test_golden_guard_rejects_the_glance(tmp_path: Path) -> None:
+    runner, context = _runner_with_view(tmp_path, GLANCE)
+    expect = {"category": "sitemap", "view": "HomepageMenu"}
+    with pytest.raises(engine.AssertionFailure) as error:
+        runner._require_view(context, expect, "homepage")
+    message = str(error.value)
+    assert "GlanceSitemapView" in message
+    assert "must never become the baseline" in message
+
+
+def test_golden_guard_rejects_a_loading_view(tmp_path: Path) -> None:
+    runner, context = _runner_with_view(tmp_path, LOADING)
+    with pytest.raises(engine.AssertionFailure) as error:
+        runner._require_view(context, {"category": "sitemap", "view": "HomepageMenu"},
+                             "homepage")
+    assert "LoadingView" in str(error.value)
+
+
+def test_golden_guard_accepts_the_expected_view(tmp_path: Path) -> None:
+    runner, context = _runner_with_view(tmp_path, GLANCE, MENU)
+    runner._require_view(context, {"category": "sitemap", "view": "HomepageMenu"},
+                         "homepage")
+
+
+def test_golden_guard_refuses_without_any_view(tmp_path: Path) -> None:
+    runner, context = _runner_with_view(tmp_path, "E2E:LANGUAGE;code=eng")
+    with pytest.raises(engine.AssertionFailure) as error:
+        runner._require_view(context, {"category": "sitemap"}, "homepage")
+    assert "no E2E:VIEW event" in str(error.value)
+
+
+def test_golden_guard_matches_a_category_only_expectation(tmp_path: Path) -> None:
+    runner, context = _runner_with_view(tmp_path, LOADING)
+    runner._require_view(context, {"category": "sitemap"}, "homepage")
+
+# ---------------------------------------------------------------------------
+# content guard: an unpainted window must never become a baseline
+# ---------------------------------------------------------------------------
+
+def _pgm_bytes(width: int, height: int, blobs) -> bytes:
+    pixels = bytearray([255] * (width * height))
+    for x0, y0, w, h in blobs:
+        for y in range(y0, y0 + h):
+            for x in range(x0, x0 + w):
+                pixels[y * width + x] = 0
+    return b"P5\n%d %d\n255\n" % (width, height) + bytes(pixels)
+
+
+def test_parse_pgm_reads_a_binary_image() -> None:
+    from e2e.assertions import parse_pgm
+
+    assert parse_pgm(b"P5\n3 2\n255\n" + bytes(range(6))) == (3, 2, bytes(range(6)))
+    assert parse_pgm(b"P2\n3 2\n255\n0 0 0") is None
+
+
+def test_ink_components_counts_blobs_not_pixels() -> None:
+    from e2e.assertions import ink_components
+
+    data = _pgm_bytes(40, 40, [(2, 2, 3, 3), (10, 10, 3, 3), (20, 20, 4, 4)])
+    width, height, pixels = 40, 40, data.split(b"\n", 3)[3]
+    assert ink_components(width, height, pixels) == 3
+
+
+def test_ink_components_ignores_specks() -> None:
+    from e2e.assertions import ink_components
+
+    data = _pgm_bytes(40, 40, [(2, 2, 1, 1), (10, 10, 1, 2)])
+    width, height, pixels = 40, 40, data.split(b"\n", 3)[3]
+    assert ink_components(width, height, pixels) == 0
+
+
+def test_a_blank_window_fails_the_content_guard() -> None:
+    from e2e.assertions import screen_content_problem
+
+    blank = _pgm_bytes(60, 60, [])
+    problem = screen_content_problem(
+        Path("blank.png"), 40, runner=lambda command: blank
+    )
+    assert problem is not None
+    assert "must never become a baseline" in problem
+
+
+def test_a_rendered_window_passes_the_content_guard() -> None:
+    from e2e.assertions import screen_content_problem
+
+    blobs = [(4 * i, 20, 3, 6) for i in range(12)]
+    rendered = _pgm_bytes(60, 60, blobs)
+    assert (
+        screen_content_problem(Path("menu.png"), 10, runner=lambda command: rendered)
+        is None
+    )
+
+
+def test_the_content_guard_is_absent_without_imagemagick(monkeypatch) -> None:
+    from e2e.assertions import screen_content_problem
+
+    monkeypatch.setattr("e2e.assertions.shutil.which", lambda name: None)
+    assert screen_content_problem(Path("x.png"), 40) is None

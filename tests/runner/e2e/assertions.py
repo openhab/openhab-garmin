@@ -18,12 +18,24 @@ from __future__ import annotations
 import shutil
 import subprocess
 from pathlib import Path
-from typing import Iterable, List, Mapping, Optional, Sequence, Tuple
+from typing import Callable, Iterable, List, Mapping, Optional, Sequence, Tuple
 
 from .shim import ShimRequest
 
-#: Tolerated fraction of differing pixels for golden comparisons.
-DEFAULT_MAX_DIFF_RATIO = 0.02
+#: Tolerated fraction of differing pixels for golden comparisons. A whole-window
+#: golden includes the simulator's status strip, whose live counters tick: the
+#: guest measured 157 differing pixels (0.06%) between two captures of the same
+#: view with the pointer parked, and 466 (0.19%) when the pointer moved. A wrong
+#: view (glance instead of the sitemap menu) differs by ~1.6%, so 0.2% tolerates
+#: the strip without accepting the failure this default used to hide.
+DEFAULT_MAX_DIFF_RATIO = 0.002
+
+#: A pixel this far from the image's modal background counts as ink for
+#: :func:`screen_content_problem` (0-255 scale).
+INK_THRESHOLD = 40
+
+#: Ink components smaller than this are noise, not glyphs.
+INK_MIN_COMPONENT_PX = 3
 
 
 class AssertionFailure(AssertionError):
@@ -193,3 +205,134 @@ def update_golden(actual: Path, golden: Path) -> None:
         raise AssertionFailure(f"screenshot {actual} does not exist")
     golden.parent.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(actual, golden)
+
+
+# ---------------------------------------------------------------------------
+# content guard: never lock in a screen that shows nothing
+# ---------------------------------------------------------------------------
+
+def parse_pgm(data: bytes) -> Optional[Tuple[int, int, bytes]]:
+    """Decode a binary (P5) PGM image into ``(width, height, pixels)``."""
+    if not data.startswith(b"P5"):
+        return None
+    fields = data.split(b"\n", 3)
+    if len(fields) != 4:
+        return None
+    try:
+        width, height = (int(part) for part in fields[1].split())
+        maxval = int(fields[2])
+    except ValueError:
+        return None
+    pixels = fields[3]
+    if width <= 0 or height <= 0 or maxval != 255 or len(pixels) < width * height:
+        return None
+    return width, height, pixels
+
+
+def modal_value(pixels: bytes) -> int:
+    """The most common byte value, i.e. the image's background."""
+    counts = [0] * 256
+    for value in pixels:
+        counts[value] += 1
+    return max(range(256), key=lambda value: counts[value])
+
+
+def ink_components(
+    width: int,
+    height: int,
+    pixels: bytes,
+    *,
+    threshold: int = INK_THRESHOLD,
+    min_size: int = INK_MIN_COMPONENT_PX,
+) -> int:
+    """Number of connected ink blobs at least ``min_size`` pixels large.
+
+    Text is many small blobs; an idle watch face is a handful of large ones. The
+    count works on the whole image, so it makes no assumption about where the
+    app's screen sits inside the simulator window (it is not always centred, and
+    the latest bike computers crop the device's top).
+    """
+    background = modal_value(pixels)
+    seen = bytearray(width * height)
+    count = 0
+    for start_y in range(height):
+        for start_x in range(width):
+            index = start_y * width + start_x
+            if seen[index]:
+                continue
+            seen[index] = 1
+            if abs(pixels[index] - background) <= threshold:
+                continue
+            stack = [(start_x, start_y)]
+            size = 0
+            while stack:
+                x, y = stack.pop()
+                size += 1
+                for nx, ny in ((x + 1, y), (x - 1, y), (x, y + 1), (x, y - 1)):
+                    if 0 <= nx < width and 0 <= ny < height:
+                        neighbour = ny * width + nx
+                        if not seen[neighbour] and abs(pixels[neighbour] - background) > threshold:
+                            seen[neighbour] = 1
+                            stack.append((nx, ny))
+            if size >= min_size:
+                count += 1
+    return count
+
+
+def _pgm_stdout(command: Sequence[str]) -> Optional[bytes]:
+    try:
+        completed = subprocess.run(  # noqa: S603 - fixed argument list
+            list(command), capture_output=True, timeout=120
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if completed.returncode != 0:
+        return None
+    return completed.stdout or b""
+
+
+def image_ink_components(
+    path: Path,
+    *,
+    runner: Optional[Callable[[Sequence[str]], Optional[bytes]]] = None,
+) -> Optional[int]:
+    """Ink-component count for ``path``, or ``None`` without ImageMagick."""
+    convert = shutil.which("convert")
+    if convert is None:
+        return None
+    command = [convert, str(path), "-colorspace", "gray", "-depth", "8", "pgm:-"]
+    data = (runner or _pgm_stdout)(command)
+    if data is None:
+        return None
+    parsed = parse_pgm(data)
+    if parsed is None:
+        return None
+    width, height, pixels = parsed
+    return ink_components(width, height, pixels)
+
+
+def screen_content_problem(
+    path: Path,
+    min_components: int,
+    *,
+    runner: Optional[Callable[[Sequence[str]], Optional[bytes]]] = None,
+) -> Optional[str]:
+    """Why ``path`` must not become a golden, or ``None`` when it looks rendered.
+
+    This is the pixel backstop behind the view check: a capture of the glance or
+    of an unpainted screen has far fewer ink blobs than a rendered menu. The
+    guest measured 40 blobs for the glance and 74 for the sitemap menu within the
+    device screen; a whole-window capture carries extra chrome blobs, so the
+    threshold belongs to the scenario and is measured on review.
+    """
+    count = image_ink_components(path, runner=runner)
+    if count is None:
+        return None
+    if count < min_components:
+        return (
+            f"{path} contains only {count} distinct ink blobs, fewer than the "
+            f"{min_components} this scenario requires of a rendered view. A glance "
+            "or an unpainted screen must never become a baseline; check that the "
+            "screenshot step waits for the expected view, then re-capture."
+        )
+    return None

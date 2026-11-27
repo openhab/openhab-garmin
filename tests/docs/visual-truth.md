@@ -31,6 +31,22 @@ older SDK (see
 [simulator-driver.md](simulator-driver.md#-1001-on-a-healthy-200)). A `VIEW`
 line means a view was **constructed**, not painted.
 
+Revision note (2026-11-27, window goldens and the state guard): a golden is the
+**whole simulator window**, captured with the pointer parked and with the view
+verified from the trace before the image is written or compared. The first
+baseline in this repository was a reproducible capture of the **glance**, not the
+sitemap homepage: the scenario screenshotted as soon as the HTTP request was
+recorded, the app had not painted the menu yet, and because the wrong state was
+reproducible it passed on every run — a reproducible wrong baseline is worse than
+a flaky one. The scenario now waits for
+`E2E:VIEW;category=sitemap;view=HomepageMenu`, the golden declares `expect` and is
+refused when the live view differs, and a measured ink floor catches an unpainted
+window. No screen rectangle is assumed: the app's screen is not always centred and
+newer bike computers crop the device's top, so per-device window goldens are the
+unit, and the simulator's window geometry is not pinnable (measured) nor
+normalisable across builds (39.7% RMSE after trim-and-resize). Details in
+[scenarios.md](scenarios.md#the-whole-scenario-budget-must-fit-a-launch).
+
 Revision note (2026-11-26, fonts resolved): the missing device font pack was the
 whole cause, and it is now verified. With `%APPDATA%\Garmin\ConnectIQ\Fonts`
 (2,756 entries, 46 `.ttf`) copied into `~/.Garmin/ConnectIQ/Fonts` and the Wine

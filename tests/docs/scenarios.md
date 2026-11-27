@@ -221,19 +221,53 @@ a run.
     max_diff_ratio: 0.02
 ```
 
-Goldens live in `tests/goldens/<device>/<name>.png`. Capture them with
+Goldens live in `tests/goldens/<device>/<name>.png`, one set per device: a
+fenix and an Edge are not comparable images. Capture them with
 `--update-goldens`, review the image, then commit it. A golden assertion is
 compared against the screenshot captured earlier in the same scenario.
 
-The golden is the **device screen**, not the simulator window: the run crops the
-window capture to the screen before comparing, and keeps the full window as a
-diagnostic artifact. The window chrome is simulator-version and driver specific
-(Wine renders 409×600, the native build 446×607) while the device screen is the
-same in both, so a window-sized golden would fail whenever the chrome changed for
-a reason unrelated to the app. The crop is detected per run from the screen's
-dark disc; pin `E2E_WINE_SCREEN_RECT=x,y,width,height` when detection is
-ambiguous (for example a light-themed screen). A driver that cannot isolate the
-screen reports the golden as skipped instead of comparing the wrong pixels.
+**The golden is the whole simulator window, and the app's screen is never
+assumed to be centred, square or even inside a known rectangle** — it is not
+always centred, and the latest bike computers crop the top of the device. A
+capture therefore needs no screen rectangle at all. Each capture is taken with
+the pointer parked at a fixed window point (the simulator's status strip prints
+the pointer position), so two captures of the same view differ only by the
+strip's live counters: measured 157 pixels (0.06%) against a 0.2% tolerance,
+whereas a wrong view differs by about 1.6%.
+
+Window geometry is **not** pinned. `WindowX`, `WindowY`, `WindowWidth` and
+`WindowHeight` are in `simulator.ini` and were measured ignored on start (a
+409x600 window stayed 409x600 whatever they said), and normalising by trimming
+and rescaling does not reconcile simulators: Wine and the native build give
+39.7% RMSE after trim-and-resize. A window-sized golden is therefore valid for
+**one** simulator build; the size check in the comparison reports a changed
+window as an explicit failure, which is the honest outcome of a simulator
+upgrade.
+
+A golden must also declare the state it depicts and contain rendered content:
+
+```yaml
+- action: wait_for_view          # the request is recorded before the menu paints
+  category: sitemap
+  view: HomepageMenu
+- action: screenshot
+  name: homepage
+- action: assert
+  golden:
+    name: homepage
+    max_diff_ratio: 0.002
+    expect:                      # required: the capture must be this view
+      category: sitemap
+      view: HomepageMenu
+    min_ink_components: 40       # required: measured on a reviewed capture
+```
+
+`expect` is mandatory and checked against the live trace before anything is
+written or compared: a capture of the glance, a loading view or any other state
+fails closed. `min_ink_components` is the pixel backstop — a count of distinct
+ink blobs — measured on review; on a whole window the states are close (glance
+64, menu 76) so the view check is the enforcement and this floor only catches a
+window that painted nothing at all.
 
 Capturing needs the Connect IQ device font pack: the harness refuses
 `--update-goldens` when `$HOME/.Garmin/ConnectIQ/Fonts` is missing, empty or has

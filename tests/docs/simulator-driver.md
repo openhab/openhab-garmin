@@ -1001,11 +1001,10 @@ the `monkeydo` event stream all have working primitives here, behind the same
 - **The device screen is scaled inside the window.** The 260×260 device screen is
   drawn at **309×309**: at `(53,147)` in a native 446×607 window and at
   `(53,141)` in a 409×600 Wine window. `display.location` is therefore _not_ 1:1
-  with the window in this setup, so a crop has to be derived from the window (the
-  dark circular region) or pinned with `E2E_WINE_SCREEN_RECT`. Cropping the
-  declared rectangle lands on the bezel and the idle watch face. This is also why
-  a golden is the screen crop and never the window: `screen_screenshot()` detects
-  the region per run and the full window stays a diagnostic artifact.
+  with the window in this setup, and the position is not a simple centre fit —
+  which is exactly why a golden is the whole window and no rectangle is derived.
+  `E2E_WINE_SCREEN_RECT` still pins a rectangle for input mapping; it is not used
+  to cut a golden.
 - **Under Wine the device window only exists after the push.** `simulator.exe`
   starts with just the 342×666 control window; the device window appears when
   `monkeydo` pushes the app. Searching for it before the push returns nothing,

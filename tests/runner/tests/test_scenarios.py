@@ -27,6 +27,7 @@ from e2e.scenarios import (
     launch_budget_problems,
     load_scenario,
     load_scenarios,
+    parse_steps,
 )
 
 BASE = {
@@ -645,3 +646,80 @@ def test_a_scenario_without_launch_is_left_alone() -> None:
         steps=[SimpleNamespace(action="screenshot")],
     )
     assert launch_budget_problems([stub]) == []
+
+# ---------------------------------------------------------------------------
+# golden state guard: a wrong-state capture must never become a baseline
+# ---------------------------------------------------------------------------
+
+def _golden(**overrides):
+    spec = {
+        "name": "homepage",
+        "max_diff_ratio": 0.002,
+        "expect": {"category": "sitemap", "view": "HomepageMenu"},
+        "min_ink_components": 40,
+    }
+    spec.update(overrides)
+    document = dict(BASE)
+    document["steps"] = [{"action": "launch"}, {"action": "assert", "golden": spec}]
+    return document
+
+
+def _parse(document):
+    return parse_steps(document["steps"])
+
+
+def test_golden_requires_an_expected_view() -> None:
+    document = _golden()
+    del document["steps"][1]["golden"]["expect"]
+    with pytest.raises(ScenarioError) as error:
+        _parse(document)
+    assert "'expect' is required" in str(error.value)
+
+
+def test_golden_expect_needs_a_category_or_a_view() -> None:
+    with pytest.raises(ScenarioError) as error:
+        _parse(_golden(expect={}))
+    assert "needs 'category' or 'view'" in str(error.value)
+
+
+def test_golden_requires_a_measured_ink_floor() -> None:
+    document = _golden()
+    del document["steps"][1]["golden"]["min_ink_components"]
+    with pytest.raises(ScenarioError) as error:
+        _parse(document)
+    assert "min_ink_components" in str(error.value)
+
+
+def test_golden_default_ratio_tolerates_the_status_strip_only() -> None:
+    document = _golden()
+    del document["steps"][1]["golden"]["max_diff_ratio"]
+    steps = _parse(document)
+    golden = [step for step in steps if step.action == "assert"][0].params["golden"]
+    from e2e.assertions import DEFAULT_MAX_DIFF_RATIO
+
+    assert golden["max_diff_ratio"] == DEFAULT_MAX_DIFF_RATIO
+    assert DEFAULT_MAX_DIFF_RATIO <= 0.005, (
+        "the default must stay below the ~1.6% a wrong view differs by, or a "
+        "glance baseline would pass"
+    )
+
+
+def test_wait_for_view_needs_a_category_or_a_view() -> None:
+    document = dict(BASE)
+    document["steps"] = [{"action": "launch"}, {"action": "wait_for_view"}]
+    with pytest.raises(ScenarioError) as error:
+        _parse(document)
+    assert "needs 'category' or 'view'" in str(error.value)
+
+
+def test_wait_for_view_accepts_the_menu_and_defaults_the_timeout() -> None:
+    document = dict(BASE)
+    document["steps"] = [
+        {"action": "launch"},
+        {"action": "wait_for_view", "category": "sitemap", "view": "HomepageMenu"},
+    ]
+    step = _parse(document)[1]
+    assert step.action == "wait_for_view"
+    assert step.params["category"] == "sitemap"
+    assert step.params["view"] == "HomepageMenu"
+    assert step.params["timeout_ms"] == 30_000
