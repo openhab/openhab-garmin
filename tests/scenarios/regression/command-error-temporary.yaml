@@ -54,8 +54,13 @@ steps:
 
   # Widgets is the first frame -> its first element is the Toggle Switch.
   # A Frame opens as a submenu, so the element needs a second select.
+  # The opening press is measured: the guest loses the first click after a view
+  # appears, so a silent press is re-issued by the driver and named if it stays
+  # silent, instead of surfacing as a timeout two steps later.
   - action: press
     button: ENTER
+    expect: effect
+    timeout_ms: 6000
 
   - action: wait_for_event
     description: The Widgets frame page is rendered before selecting its element.

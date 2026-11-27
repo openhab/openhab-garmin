@@ -38,9 +38,13 @@ steps:
 
   # `Text` is the first frame on the homepage. A Frame opens as a submenu, so
   # wait for its page before paging: the app builds frame children
-  # asynchronously after the page is shown.
+  # asynchronously after the page is shown. The press is measured because a
+  # click lost right after the view appears would otherwise surface as a missing
+  # page two steps later.
   - action: press
     button: ENTER
+    expect: effect
+    timeout_ms: 6000
 
   - action: wait_for_event
     description: The Text frame page is rendered before paging down.
@@ -60,9 +64,13 @@ steps:
   - action: press
     button: DOWN
     count: 5
+    expect: effect
+    timeout_ms: 6000
 
   - action: press
     button: ENTER
+    expect: effect
+    timeout_ms: 6000
 
   - action: wait_for_event
     description: The nested page is open (one level deeper than the frame page).

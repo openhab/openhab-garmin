@@ -46,9 +46,13 @@ steps:
 
   # Widgets is the first frame of garmin_commands: open it, then select its
   # first element (the toggle). A Frame is a submenu in the app, so one ENTER
-  # only opens the page; the second activates the element.
+  # only opens the page; the second activates the element. The opening press is
+  # measured, because a click lost right after the view appears used to surface
+  # as "no POST" three steps later.
   - action: press
     button: ENTER
+    expect: effect
+    timeout_ms: 6000
 
   - action: wait_for_event
     description: The Widgets frame page is rendered before selecting its element.
