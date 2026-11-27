@@ -43,8 +43,18 @@ steps:
   - action: press
     button: ENTER
 
+  # Selecting the unsupported element shows the error view; wait for it so the
+  # golden cannot capture the LoadingView it passes through.
+  - action: wait_for_view
+    category: error
+    timeout_ms: 30000
+    description: The unsupported-element error view is on screen.
+
   - action: screenshot
     name: unsupported-widget-error
+    # E2E:VIEW reports a *constructed* view, so capture until two frames agree
+    # and the golden cannot record a half-painted error screen.
+    stable: true
 
   - action: assert
     description: An error is shown, and no command is sent for the item.
