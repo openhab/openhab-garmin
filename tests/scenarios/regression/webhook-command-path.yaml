@@ -80,11 +80,18 @@ steps:
     min_count: 1
     timeout_ms: 15000
 
+  # The webhook is a GET, so its payload is the query string, not a body:
+  # action and itemName are fixed in WebhookCommandRequest, command is appended.
+  # Asserting the query is what pins the documented payload; a bare path match
+  # would only prove that *some* webhook request happened.
   - action: assert
-    description: The command used the webhook GET path, not the REST item path.
+    description: >-
+      The command is carried in the webhook query (action, itemName and command
+      as GET parameters), not as a request body.
     shim_requests:
       method: GET
       path_prefix: /webhook/e2e-webhook
+      path_contains: "action=sendCommand&itemName=E2E_Toggle&command=ON"
       min_count: 1
 
   - action: assert

@@ -273,8 +273,8 @@ def _step_reset_shim(raw: Mapping[str, Any], where: str) -> Dict[str, Any]:
 
 
 def _request_match(raw: Mapping[str, Any], where: str, require_path: bool = True) -> Dict[str, Any]:
-    allowed = {"method", "path", "path_prefix", "body_contains", "body_equals",
-               "status", "reset", "matched_rule", "faulted"}
+    allowed = {"method", "path", "path_contains", "path_prefix", "body_contains",
+               "body_equals", "status", "reset", "matched_rule", "faulted"}
     _reject_unknown(raw, allowed, where)
     params: Dict[str, Any] = {}
     if "method" in raw:
@@ -282,10 +282,17 @@ def _request_match(raw: Mapping[str, Any], where: str, require_path: bool = True
                                  ("GET", "POST", "PUT", "PATCH", "DELETE"))
     if "path" in raw:
         params["path"] = _match_text(raw["path"], f"{where}.path")
+    if "path_contains" in raw:
+        params["path_contains"] = _match_text(
+            raw["path_contains"], f"{where}.path_contains"
+        )
     if "path_prefix" in raw:
         params["path_prefix"] = _match_text(raw["path_prefix"], f"{where}.path_prefix")
-    if "path" in params and "path_prefix" in params:
-        raise ScenarioError(f"{where}: set either 'path' or 'path_prefix', not both")
+    if "path" in params and ("path_prefix" in params or "path_contains" in params):
+        raise ScenarioError(
+            f"{where}: 'path' is already exact; do not combine it with "
+            "'path_prefix' or 'path_contains'"
+        )
     if "body_contains" in raw:
         params["body_contains"] = _string(raw["body_contains"], f"{where}.body_contains")
     if "body_equals" in raw:
@@ -298,30 +305,38 @@ def _request_match(raw: Mapping[str, Any], where: str, require_path: bool = True
         params["matched_rule"] = _match_text(raw["matched_rule"], f"{where}.matched_rule")
     if "faulted" in raw:
         params["faulted"] = _bool(raw["faulted"], f"{where}.faulted")
-    if require_path and not any(key in params for key in ("path", "path_prefix")):
-        raise ScenarioError(f"{where}: needs 'path' or 'path_prefix'")
+    if require_path and not any(key in params for key in ("path", "path_prefix", "path_contains")):
+        raise ScenarioError(
+            f"{where}: needs 'path', 'path_prefix' or 'path_contains'"
+        )
     return params
 
 
 def _step_wait_for_request(raw: Mapping[str, Any], where: str) -> Dict[str, Any]:
-    _reject_unknown(raw, {"action", "description", "method", "path", "path_prefix",
-                          "min_count", "timeout_ms", "matched_rule", "faulted"}, where)
+    _reject_unknown(raw, {"action", "description", "method", "path", "path_contains",
+                          "path_prefix", "min_count", "timeout_ms", "matched_rule",
+                          "faulted"}, where)
     params: Dict[str, Any] = {
         "min_count": _int(raw.get("min_count", 1), f"{where}.min_count", 1)
     }
-    for key in ("method", "path", "path_prefix"):
+    for key in ("method", "path", "path_contains", "path_prefix"):
         if key in raw:
             params[key] = raw[key]
     if "method" in params:
         params["method"] = _enum(params["method"], f"{where}.method",
                                  ("GET", "POST", "PUT", "PATCH", "DELETE"))
-    for key in ("path", "path_prefix"):
+    for key in ("path", "path_contains", "path_prefix"):
         if key in params:
             params[key] = _match_text(params[key], f"{where}.{key}")
-    if "path" in params and "path_prefix" in params:
-        raise ScenarioError(f"{where}: set either 'path' or 'path_prefix', not both")
-    if not any(key in params for key in ("path", "path_prefix")):
-        raise ScenarioError(f"{where}: needs 'path' or 'path_prefix'")
+    if "path" in params and ("path_prefix" in params or "path_contains" in params):
+        raise ScenarioError(
+            f"{where}: 'path' is already exact; do not combine it with "
+            "'path_prefix' or 'path_contains'"
+        )
+    if not any(key in params for key in ("path", "path_prefix", "path_contains")):
+        raise ScenarioError(
+            f"{where}: needs 'path', 'path_prefix' or 'path_contains'"
+        )
     if "matched_rule" in raw:
         params["matched_rule"] = _match_text(raw["matched_rule"], f"{where}.matched_rule")
     if "faulted" in raw:
@@ -484,14 +499,15 @@ def _assertion_params(raw: Mapping[str, Any], where: str) -> Dict[str, Any]:
     if "shim_requests" in raw:
         spec_where = f"{where}.shim_requests"
         spec = _require_mapping(raw["shim_requests"], spec_where)
-        _reject_unknown(spec, {"method", "path", "path_prefix", "body_contains",
-                               "body_equals", "status", "reset", "matched_rule",
-                               "faulted", "min_count", "max_count"}, spec_where)
+        _reject_unknown(spec, {"method", "path", "path_contains", "path_prefix",
+                               "body_contains", "body_equals", "status", "reset",
+                               "matched_rule", "faulted", "min_count", "max_count"},
+                        spec_where)
         built: Dict[str, Any] = _request_match(
             {key: value for key, value in spec.items()
-             if key in {"method", "path", "path_prefix", "body_contains",
-                        "body_equals", "status", "reset", "matched_rule",
-                        "faulted"}},
+             if key in {"method", "path", "path_contains", "path_prefix",
+                        "body_contains", "body_equals", "status", "reset",
+                        "matched_rule", "faulted"}},
             spec_where,
             require_path=False,
         )

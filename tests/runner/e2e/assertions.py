@@ -55,6 +55,7 @@ class AssertionFailure(AssertionError):
 MATCH_KEYS = (
     "method",
     "path",
+    "path_contains",
     "path_prefix",
     "body_contains",
     "body_equals",
@@ -69,6 +70,7 @@ def filter_requests(
     requests: Iterable[ShimRequest],
     method: Optional[str] = None,
     path: Optional[str] = None,
+    path_contains: Optional[str] = None,
     path_prefix: Optional[str] = None,
     body_contains: Optional[str] = None,
     body_equals: Optional[str] = None,
@@ -79,15 +81,19 @@ def filter_requests(
 ) -> List[ShimRequest]:
     """Return the recorded requests that satisfy every given condition.
 
-    ``body_contains``/``body_equals`` apply to the body the app *sent*;
-    ``status``, ``reset``, ``matched_rule`` and ``faulted`` describe what the
-    shim *served*.
+    ``path_contains`` is the substring form for a request target, including any
+    query string; it is what a ``GET`` carries as its payload, so a webhook
+    command is asserted with it. ``body_contains``/``body_equals`` apply to the
+    body the app *sent*; ``status``, ``reset``, ``matched_rule`` and ``faulted``
+    describe what the shim *served*.
     """
     matched: List[ShimRequest] = []
     for request in requests:
         if method is not None and request.method.upper() != method.upper():
             continue
         if path is not None and request.path != path:
+            continue
+        if path_contains is not None and path_contains not in request.path:
             continue
         if path_prefix is not None and not request.path.startswith(path_prefix):
             continue

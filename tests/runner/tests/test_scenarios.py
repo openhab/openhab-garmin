@@ -412,7 +412,7 @@ def test_wait_for_request_needs_a_target(tmp_path: Path) -> None:
     document = _with(steps=[{"action": "launch"}, {"action": "wait_for_request"}])
     with pytest.raises(ScenarioError) as error:
         load_scenario(_write(tmp_path, document))
-    assert "needs 'path' or 'path_prefix'" in str(error.value)
+    assert "needs 'path', 'path_prefix' or 'path_contains'" in str(error.value)
 
 
 def test_wait_for_event_requires_a_target(tmp_path: Path) -> None:
@@ -813,3 +813,29 @@ def test_press_rejects_a_timeout_without_an_expectation() -> None:
     with pytest.raises(ScenarioError) as error:
         _parse(document)
     assert "timeout_ms" in str(error.value)
+
+def test_request_match_accepts_path_contains(tmp_path: Path) -> None:
+    document = _with(steps=[
+        {"action": "launch"},
+        {"action": "assert",
+         "shim_requests": {"path_prefix": "/webhook/", "path_contains": "command=ON",
+                           "min_count": 1}},
+    ])
+
+    spec = load_scenario(_write(tmp_path, document)).steps[1].get("shim_requests")
+
+    assert spec["path_contains"] == "command=ON"
+    assert spec["path_prefix"] == "/webhook/"
+
+
+def test_an_exact_path_cannot_be_combined_with_a_substring(tmp_path: Path) -> None:
+    document = _with(steps=[
+        {"action": "launch"},
+        {"action": "assert",
+         "shim_requests": {"path": "/webhook/x", "path_contains": "command=ON",
+                           "min_count": 1}},
+    ])
+
+    with pytest.raises(ScenarioError) as error:
+        load_scenario(_write(tmp_path, document))
+    assert "exact" in str(error.value)

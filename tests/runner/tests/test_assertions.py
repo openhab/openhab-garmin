@@ -96,3 +96,21 @@ def test_a_stale_shim_image_fails_loudly_instead_of_reporting_an_empty_body() ->
         )
 
     assert "request_body" in str(error.value)
+
+#: A webhook command carries its payload in the query, not in a body.
+WEBHOOK = (
+    "/webhook/e2e-webhook?action=sendCommand&itemName=E2E_Toggle&command=ON"
+)
+
+
+def test_path_contains_pins_the_query_that_a_get_carries() -> None:
+    request = _poll(seq=1, method="GET", path=WEBHOOK, status=404, response_bytes=0)
+
+    assert filter_requests([request], path_contains="command=ON") == [request]
+    assert filter_requests([request], path_contains="command=OFF") == []
+    assert (
+        filter_requests(
+            [request], path_prefix="/webhook/e2e-webhook", path_contains="command=ON"
+        )
+        == [request]
+    )

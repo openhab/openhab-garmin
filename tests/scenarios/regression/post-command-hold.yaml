@@ -87,14 +87,20 @@ steps:
     min_count: 1
     timeout_ms: 15000
 
+  # openHAB 5.0 and newer accept the command JSON-wrapped; the app sends
+  # {"value":"ON"} with Content-Type: application/json (NativeCommandRequest),
+  # because the Garmin SDK cannot send raw request content. The payload is
+  # asserted exactly: this is what pins the documented contract.
   - action: assert
-    description: Exactly one command is sent while the item is held.
+    description: >-
+      Exactly one command is sent while the item is held, as the documented
+      JSON payload {"value":"ON"} with status 200.
     shim_requests:
       method: POST
       path_prefix: /rest/items/E2E_Toggle
       min_count: 1
       max_count: 1
-      body_equals: "ON"
+      body_equals: '{"value":"ON"}'
       status: 200
 
   - action: screenshot
