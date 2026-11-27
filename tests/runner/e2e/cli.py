@@ -17,6 +17,7 @@ Subcommands:
     pin-images        resolve/verify image digests from Docker Hub
     sdk-check         validate the mounted Connect IQ SDK
     link-devices      stage the Connect IQ device definitions where monkeyc looks
+    link-fonts        stage the device font pack the simulator draws with
     health-snapshot   record the stack's restart counts and memory before/after a run
     build             compile the PRG for one or more devices
 
@@ -90,8 +91,13 @@ from .sdk import (
     SdkError,
     describe_candidates,
     device_definition_count,
+    font_asset_count,
+    fonts_dir,
+    fonts_problem,
     link_devices,
+    link_fonts,
     load_layout,
+    require_fonts,
 )
 from .settings import SettingsError, load_settings
 from .shim import ShimClient, ShimError
@@ -394,6 +400,17 @@ def _cmd_run(args: argparse.Namespace) -> int:
     driver_name = args.driver or ("null" if dry_run else "wine")
     if driver_name not in DRIVER_NAMES:
         return _fail(f"unknown driver {driver_name!r}; known: {', '.join(DRIVER_NAMES)}")
+
+    # Golden capture is a rendering capability, not a property of the driver:
+    # both the native and the Wine simulator paint once the device font pack is
+    # in place. Without it the app crashes on its first draw, so a capture would
+    # freeze a crash as the expected state.
+    if args.update_goldens and not dry_run:
+        try:
+            require_fonts()
+        except SdkError as error:
+            print(f"error: {error}", file=sys.stderr)
+            return EXIT_CONFIG
 
     if args.prg:
         print(
@@ -993,8 +1010,37 @@ def _cmd_sdk_check(args: argparse.Namespace) -> int:
             )
         else:
             print("devices:   <not found>")
+        assets = font_asset_count(fonts_dir())
+        print(f"fonts:     {fonts_dir()} ({assets} font files)")
         for line in describe_candidates():
             print(f"  {line}")
+
+    # The font pack is a hard requirement, not a warning: the simulator opens it
+    # before every draw and the app crashes with `Invalid Font Specified` when it
+    # is absent. It is reported even with --quiet, because entrypoint.sh relies
+    # on this call to fail the container with an actionable message.
+    try:
+        require_fonts()
+    except SdkError as error:
+        print(f"error: {error}", file=sys.stderr)
+        return EXIT_CONFIG
+    return EXIT_OK
+
+
+def _cmd_link_fonts(args: argparse.Namespace) -> int:
+    """Stage the device font pack where both simulators read it."""
+    try:
+        links = link_fonts(
+            Path(args.mount) if args.mount else None,
+            Path(args.target) if args.target else None,
+        )
+    except SdkError as error:
+        print(f"error: {error}", file=sys.stderr)
+        return EXIT_CONFIG
+    if not args.quiet:
+        print(f"fonts:     {links.linux} ({font_asset_count(links.linux)} font files)")
+        print(f"wine:      {links.wine}")
+        print(f"source:    {links.source}")
     return EXIT_OK
 
 
@@ -1433,6 +1479,28 @@ def build_parser() -> argparse.ArgumentParser:
     )
     devices.add_argument("--quiet", action="store_true")
     devices.set_defaults(handler=_cmd_link_devices)
+
+    fonts = subparsers.add_parser(
+        "link-fonts",
+        help="stage the device font pack the simulator draws with",
+        description=(
+            "Link the Connect IQ device font pack into the two locations the "
+            "simulators read: $HOME/.Garmin/ConnectIQ/Fonts for the native "
+            "build, and the Wine prefix's ConnectIQ/Fonts for simulator.exe. "
+            "The fonts are licensed Garmin assets and are never committed; "
+            "mount them read-only and stage them from here."
+        ),
+    )
+    fonts.add_argument(
+        "--mount",
+        help="font pack to stage (default: $CIQ_FONTS_ROOT, then /opt/ciq-fonts)",
+    )
+    fonts.add_argument(
+        "--target",
+        help="native destination (default: $HOME/.Garmin/ConnectIQ/Fonts)",
+    )
+    fonts.add_argument("--quiet", action="store_true")
+    fonts.set_defaults(handler=_cmd_link_fonts)
 
     snapshot = subparsers.add_parser(
         "health-snapshot",

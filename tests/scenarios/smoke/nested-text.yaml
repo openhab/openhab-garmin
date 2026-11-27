@@ -19,7 +19,7 @@ openhab:
     E2E_LastUpdate: "2026-11-23T10:00:00.000+0100"
     E2E_Window: CLOSED
 language: eng
-timeout_s: 90
+timeout_s: 300
 
 covers:
   - sitemap.element-types

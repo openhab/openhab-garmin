@@ -18,7 +18,7 @@ openhab:
   items:
     E2E_Toggle: "OFF"
 language: eng
-timeout_s: 90
+timeout_s: 300
 
 covers:
   - sitemap.element-types

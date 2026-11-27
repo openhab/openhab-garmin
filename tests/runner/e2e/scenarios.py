@@ -17,7 +17,10 @@ Top level (all required unless noted)::
     openhab         {profile: stable|dev, sitemap: <name>, items: {item: state}}
     language        eng | deu | fre | ita | spa | pol
                     (or `languages: [...]` for a matrix, see below)
-    timeout_s       whole-scenario budget, 1..1800
+    timeout_s       whole-scenario budget, 1..1800. A scenario that launches the
+                    app must budget at least LAUNCH_SCENARIO_MINIMUM_S (300 s),
+                    because the launch step can spend the settle and retry
+                    budget before the app's first view; CI enforces it.
     steps           non-empty list, see ACTIONS below
 
 Optional::
@@ -49,6 +52,7 @@ import yaml
 
 from shim.faults import ShimScriptError, parse_script
 
+from .assertions import DEFAULT_MAX_DIFF_RATIO
 from .config import SCENARIO_DIR, ConfigError, load_devices
 from .scope import find_unknown_ids, load_scope
 from .settings import KNOWN_PROPERTIES
@@ -58,6 +62,22 @@ TIERS = ("protocol", "ui")
 SUITES = ("smoke", "regression", "extended")
 MODES = ("ble", "wifi", "offline")
 LANGUAGES = ("eng", "deu", "fre", "ita", "spa", "pol")
+
+#: Worst case a single ``launch`` step can consume, in seconds. The Wine driver
+#: may settle for ``LAUNCH_SETTLE_MAX_S`` (90 s) before pressing and then spend
+#: ``LAUNCH_RETRY_BUDGET_S`` (180 s) retrying, because input delivery is
+#: intermittent. ``test_the_launch_minimum_mirrors_the_driver`` asserts these
+#: numbers still match ``e2e.sim.wine``; change them together.
+LAUNCH_SETTLE_WORST_CASE_S = 90
+LAUNCH_RETRY_WORST_CASE_S = 180
+LAUNCH_STEP_WORST_CASE_S = LAUNCH_SETTLE_WORST_CASE_S + LAUNCH_RETRY_WORST_CASE_S  # 270
+
+#: Minimum whole-scenario budget for a scenario that launches the app: the
+#: launch worst case plus room for the scenario's own steps. A smaller budget
+#: fails a slow-but-legitimate run for a reason unrelated to the app, which is
+#: why every launch scenario is checked against this rather than a hand-picked
+#: number per file.
+LAUNCH_SCENARIO_MINIMUM_S = LAUNCH_STEP_WORST_CASE_S + 30  # 300
 OPENHAB_PROFILES = ("stable", "dev")
 BUTTONS = ("START", "UP", "DOWN", "ENTER", "BACK", "MENU")
 COMMAND_TRANSPORTS = ("rest", "shim")
@@ -322,7 +342,8 @@ def _step_tap(raw: Mapping[str, Any], where: str) -> Dict[str, Any]:
 
 
 def _step_screenshot(raw: Mapping[str, Any], where: str) -> Dict[str, Any]:
-    _reject_unknown(raw, {"action", "name"}, where)
+    _reject_unknown(raw, {"action", "name", "stable", "interval_ms", "timeout_ms",
+                          "stable_diff_ratio"}, where)
     if "name" not in raw:
         raise ScenarioError(f"{where}: 'name' is required")
     name = _string(raw["name"], f"{where}.name")
@@ -330,7 +351,18 @@ def _step_screenshot(raw: Mapping[str, Any], where: str) -> Dict[str, Any]:
         raise ScenarioError(
             f"{where}.name: use lower-case letters, digits, '-' or '_'; got {name!r}"
         )
-    return {"name": name}
+    params: Dict[str, Any] = {"name": name}
+    if "stable" in raw:
+        params["stable"] = _bool(raw["stable"], f"{where}.stable")
+    if "interval_ms" in raw:
+        params["interval_ms"] = _int(raw["interval_ms"], f"{where}.interval_ms", 50, 10_000)
+    if "timeout_ms" in raw:
+        params["timeout_ms"] = _int(raw["timeout_ms"], f"{where}.timeout_ms", 1, 600_000)
+    if "stable_diff_ratio" in raw:
+        params["stable_diff_ratio"] = _ratio(
+            raw["stable_diff_ratio"], f"{where}.stable_diff_ratio"
+        )
+    return params
 
 
 def _step_command(raw: Mapping[str, Any], where: str) -> Dict[str, Any]:
@@ -426,16 +458,53 @@ def _assertion_params(raw: Mapping[str, Any], where: str) -> Dict[str, Any]:
     if "golden" in raw:
         spec_where = f"{where}.golden"
         spec = _require_mapping(raw["golden"], spec_where)
-        _reject_unknown(spec, {"name", "max_diff_ratio"}, spec_where)
+        _reject_unknown(spec, {"name", "max_diff_ratio", "expect",
+                               "min_ink_components"}, spec_where)
         if "name" not in spec:
             raise ScenarioError(f"{spec_where}: 'name' is required")
         name = _string(spec["name"], f"{spec_where}.name")
         if not _SCREENSHOT_NAME.match(name):
             raise ScenarioError(f"{spec_where}.name: invalid screenshot name {name!r}")
+        # `expect` is required on purpose. A golden without a declared state can
+        # only be checked against itself, which is how a glance screen was once
+        # committed as the homepage baseline: the capture was reproducible, so it
+        # passed. Declaring the view makes the wrong state fail closed.
+        if "expect" not in spec:
+            raise ScenarioError(
+                f"{spec_where}: 'expect' is required. State the view the golden "
+                "depicts, e.g. expect: {category: sitemap, view: HomepageMenu}, so "
+                "a capture of the glance or a loading screen is refused instead of "
+                "becoming the baseline."
+            )
+        expect = _require_mapping(spec["expect"], f"{spec_where}.expect")
+        _reject_unknown(expect, {"category", "view", "depth"}, f"{spec_where}.expect")
+        if not any(key in expect for key in ("category", "view")):
+            raise ScenarioError(
+                f"{spec_where}.expect: needs 'category' or 'view'"
+            )
+        built_expect: Dict[str, Any] = {}
+        for key in ("category", "view"):
+            if key in expect:
+                built_expect[key] = _match_text(expect[key], f"{spec_where}.expect.{key}")
+        if "depth" in expect:
+            built_expect["depth"] = str(_int(expect["depth"], f"{spec_where}.expect.depth", 1))
+        # The pixel backstop is required too: its threshold is measured on
+        # review, and a golden author who never measured it has not looked.
+        if "min_ink_components" not in spec:
+            raise ScenarioError(
+                f"{spec_where}: 'min_ink_components' is required. It is the number "
+                "of distinct ink blobs a rendered view contains; measure it on a "
+                "reviewed capture (a glance has far fewer than a menu) so a blank "
+                "or unpainted screen can never pass."
+            )
         params["golden"] = {
             "name": name,
-            "max_diff_ratio": _ratio(spec.get("max_diff_ratio", 0.02),
+            "max_diff_ratio": _ratio(spec.get("max_diff_ratio", DEFAULT_MAX_DIFF_RATIO),
                                       f"{spec_where}.max_diff_ratio"),
+            "expect": built_expect,
+            "min_ink_components": _int(
+                spec["min_ink_components"], f"{spec_where}.min_ink_components", 1
+            ),
         }
 
     if "no_error_view" in raw:
@@ -459,6 +528,31 @@ def _assertion_params(raw: Mapping[str, Any], where: str) -> Dict[str, Any]:
     return params
 
 
+def _step_wait_for_view(raw: Mapping[str, Any], where: str) -> Dict[str, Any]:
+    """Wait until the app reports the view a scenario needs on screen.
+
+    Cheaper and more precise than a fixed sleep: the trace already carries
+    ``E2E:VIEW;category=...;view=...``, so a screenshot taken after this step is
+    of the intended view rather than of the glance it was passing through.
+    """
+    _reject_unknown(raw, {"action", "category", "view", "depth", "timeout_ms",
+                          "description"}, where)
+    params: Dict[str, Any] = {}
+    for key in ("category", "view"):
+        if key in raw:
+            params[key] = _match_text(raw[key], f"{where}.{key}")
+    if not params:
+        raise ScenarioError(
+            f"{where}: needs 'category' or 'view' (or both) to wait for"
+        )
+    if "depth" in raw:
+        params["depth"] = str(_int(raw["depth"], f"{where}.depth", 1))
+    params["timeout_ms"] = _int(raw.get("timeout_ms", 30_000), f"{where}.timeout_ms", 1, 600_000)
+    if "description" in raw:
+        params["description"] = _string(raw["description"], f"{where}.description")
+    return params
+
+
 _STEP_HANDLERS = {
     "launch": _step_launch,
     "stop": _step_stop,
@@ -470,6 +564,7 @@ _STEP_HANDLERS = {
     "screenshot": _step_screenshot,
     "command": _step_command,
     "wait_for_event": _step_wait_for_event,
+    "wait_for_view": _step_wait_for_view,
     "assert": _assertion_params,
 }
 
@@ -551,6 +646,23 @@ class Scenario:
     def shim_script(self) -> Dict[str, Any]:
         """The fault script document installed before the run."""
         return {"version": 1, "rules": [dict(rule) for rule in self.shim_rules]}
+
+
+def launch_budget_problems(scenarios: Iterable[Scenario]) -> List[Tuple[str, int]]:
+    """Launching scenarios whose budget cannot fit a launch, as (id, timeout).
+
+    This is the invariant behind ``LAUNCH_SCENARIO_MINIMUM_S``: a launch step is
+    allowed 270 s before the app's first view, so a smaller whole-scenario budget
+    turns a slow-but-legitimate run into a timeout that looks like an app
+    failure. Scenarios without a launch step are not constrained; the schema
+    currently requires exactly one, so this guards a future relaxation.
+    """
+    return [
+        (scenario.scenario_id, scenario.timeout_s)
+        for scenario in scenarios
+        if any(step.action == "launch" for step in scenario.steps)
+        and scenario.timeout_s < LAUNCH_SCENARIO_MINIMUM_S
+    ]
 
 
 def _parse_openhab(raw: Any, where: str) -> OpenHabSpec:

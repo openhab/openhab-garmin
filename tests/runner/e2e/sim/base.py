@@ -123,6 +123,19 @@ class SimulatorDriver(abc.ABC):
     def screenshot(self, path: Path) -> Path:
         """Capture the simulator window as a PNG at ``path``."""
 
+    def screen_screenshot(self, window_capture: Path, path: Path) -> Optional[Path]:
+        """Crop a window capture to the device screen, or return ``None``.
+
+        Goldens compare the device screen, never the window: the window chrome
+        is simulator-version and driver specific (Wine renders one size, the
+        native build another, the device screen is the same in both), so a
+        window-sized golden would encode the simulator's bezel and window size
+        as expected app output. A driver that cannot isolate the screen returns
+        ``None``, and the caller skips the comparison instead of asserting on
+        the wrong pixels.
+        """
+        return None
+
     @abc.abstractmethod
     def events(self) -> Sequence[str]:
         """Return the app console lines seen so far, oldest first."""

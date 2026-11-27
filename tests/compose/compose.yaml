@@ -220,6 +220,11 @@ services:
       # instead of a bind mount; entrypoint.sh links whatever it finds into
       # $HOME/.Garmin/ConnectIQ/Devices.
       - ${CIQ_DEVICES_HOST_PATH:-e2e-empty-devices}:/opt/ciq-devices:ro
+      # The device font pack. Licensed Garmin assets, so it is mounted, never
+      # baked in or committed. Unset by default for the same reason as the
+      # devices mount, and entrypoint.sh then fails with the actionable message
+      # because the simulator cannot render without it.
+      - ${CIQ_FONTS_HOST_PATH:-e2e-empty-fonts}:/opt/ciq-fonts:ro
       - ${E2E_REPO_ROOT:-../..}:/work:ro
       - ../fixtures:/e2e-fixtures:ro
       # Logs only: the openHAB services still own these volumes read-write.
@@ -248,3 +253,7 @@ volumes:
   # Only used as the source of the optional /opt/ciq-devices mount when
   # CIQ_DEVICES_HOST_PATH is unset: an empty volume keeps the mount harmless.
   e2e-empty-devices:
+  # Same for the device font pack: entrypoint.sh fails with an actionable
+  # message when this is empty, rather than letting the app crash on its first
+  # draw with "Invalid Font Specified".
+  e2e-empty-fonts:

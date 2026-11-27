@@ -31,7 +31,7 @@ openhab:
     E2E_MediaControl: "PLAY"
     E2E_Temperature: "21.5"
 languages: [eng, deu, fre, ita, spa, pol]
-timeout_s: 150
+timeout_s: 300
 
 covers:
   - localisation.languages

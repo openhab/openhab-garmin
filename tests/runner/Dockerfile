@@ -6,6 +6,12 @@
 # read-only at /opt/ciq-sdk, copied to a writable path at container start (see
 # entrypoint.sh) and validated there.
 #
+# The Connect IQ device font pack is handled the same way, for the same reason:
+# it is licensed Garmin assets, mounted read-only at /opt/ciq-fonts and staged
+# by entrypoint.sh into $HOME/.Garmin/ConnectIQ/Fonts. Without it the simulator
+# cannot resolve a device face and the app crashes on its first draw with
+# "Invalid Font Specified", so it is never baked into the image either.
+#
 # Build context is tests/ (see compose.yaml).
 
 ARG RUNNER_BASE_IMAGE=ubuntu:24.04
@@ -91,8 +97,7 @@ COPY runner/entrypoint.sh /entrypoint.sh
 RUN sed -i 's/\r$//' /entrypoint.sh && chmod +x /entrypoint.sh
 
 # The repository is bind-mounted at /work by compose; these paths only need to
-# be correct for the CLI to import itself and to find the shared shim grammar.
-#
+# be correct for the CLI to import itself and to find the shared shim grammar.#
 # CIQ_SDK_ROOT is declared here and points at the copy, not at the read-only
 # mount: `docker exec` starts a new process from the image environment and never
 # sees an `export` from the entrypoint, so every consumer (exec, a driver, the

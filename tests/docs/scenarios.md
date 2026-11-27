@@ -22,7 +22,7 @@ openhab:
     E2E_Light: "ON"            # quote ON/OFF: YAML 1.1 parses bare ON as a boolean
 language: eng                  # eng | deu | fre | ita | spa | pol
                                # or: languages: [eng, deu, fre, ita, spa, pol]
-timeout_s: 90                  # whole-scenario budget, 1..1800
+timeout_s: 300                 # whole-scenario budget, 1..1800; see below
 steps: [...]                   # non-empty; the first step must be `launch`
 covers:                        # optional; #140 scope ids, see Scope coverage below
   - sitemap.element-types
@@ -40,6 +40,24 @@ notes: Free-form operator note.
 Unknown devices, tiers, modes, languages, suites, actions, step keys, settings
 property ids and shim rule keys are all rejected at load time with the file, the
 key and the reason.
+
+### The whole-scenario budget must fit a launch
+
+`timeout_s` covers the whole scenario, and opening the app is the expensive part:
+the Wine driver may settle for up to **90 s** before pressing and then spend up
+to **180 s** retrying the launch sequence, because input delivery is
+intermittent. A launch step can therefore consume **270 s** before the app's
+first view, and a scenario that budgets less fails a slow-but-legitimate run for
+a reason that has nothing to do with the app.
+
+Every scenario here budgets **300 s** (the launch worst case plus room for its
+own steps). The numbers live in one place — `LAUNCH_SETTLE_WORST_CASE_S`,
+`LAUNCH_RETRY_WORST_CASE_S` and `LAUNCH_SCENARIO_MINIMUM_S` in
+`e2e/scenarios.py` — and two CI checks keep them honest:
+`test_the_launch_minimum_mirrors_the_driver` fails when they drift from
+`e2e.sim.wine`, and `test_every_launch_scenario_budgets_for_the_launch_worst_case`
+fails when a scenario drops below the minimum. Do not lower the retry budget to
+fit a shorter scenario: the retries exist because delivery is intermittent.
 
 The `openhab.profile` field selects which fixture tree the scenario expects:
 `stable` uses `fixtures/openhab/conf`, `dev` additionally uses the
@@ -173,9 +191,10 @@ a run.
 | `wait_for_request` | `method`, `path`/`path_prefix`, `min_count`, `timeout_ms` | polls the shim trace |
 | `press` | `button` (`START`/`UP`/`DOWN`/`ENTER`/`BACK`/`MENU`), `count` | requires a button-capable device |
 | `tap` | `x`, `y`, `count` | requires a touch-capable device |
-| `screenshot` | `name` | lower-case slug; stored as `NN-name.png` |
+| `screenshot` | `name`, `stable`, `interval_ms`, `timeout_ms`, `stable_diff_ratio` | lower-case slug; stored as `NN-name.png`. `stable: true` recaptures until two frames agree, because a `VIEW` line is emitted before the view is painted |
 | `command` | `item`, `value`, `via` (`rest`/`shim`) | `rest` talks to openHAB directly |
 | `wait_for_event` | `event`, `fields`, `contains`, `timeout_ms` | see trace events below |
+| `wait_for_view` | `category`/`view`, `depth`, `timeout_ms` | shorthand for a `VIEW` event; put it before a screenshot |
 | `assert` | `shim_requests`, `golden`, `no_error_view`, `never_error_view`, `description` | at least one condition |
 
 ### `assert`
@@ -203,9 +222,110 @@ a run.
     max_diff_ratio: 0.02
 ```
 
-Goldens live in `tests/goldens/<device>/<name>.png`. Capture them with
+Goldens live in `tests/goldens/<device>/<name>.png`, one set per device: a
+fenix and an Edge are not comparable images. Capture them with
 `--update-goldens`, review the image, then commit it. A golden assertion is
 compared against the screenshot captured earlier in the same scenario.
+
+**The golden is the whole simulator window, and the app's screen is never
+assumed to be centred, square or even inside a known rectangle.** Devices differ
+in all three ways, and the window capture handles each without a rectangle:
+
+| Device | Screen shape | Art canvas | Declared `display.location` | Layout |
+| --- | --- | --- | --- | --- |
+| `fenix7` | round | 409×560 | 260×260 at (77,146) | bezel all round |
+| `edge540` | rectangle | 382×518 | 246×322 at (69,78) | rectangle with bezel above and below |
+| `edge1050` | rectangle | 752×961 | 480×800 at (136,6) | bezel almost gone at the top |
+| `edge1060` | rectangle | 675×984 | 480×800 at (97,1) | **top cut**: 1 px from the top, no bezel above |
+
+`fenix7` and `edge1060` are captured (`tests/goldens/<device>/homepage.png`), and
+the two prove the rule at its extremes: a round phone-free watch and a top-cut
+rectangle whose display starts one pixel from the top of the art. Each is verified
+with the scenario's device override:
+
+```bash
+python -m e2e run smoke/launch-and-poll --driver wine --device edge1060
+```
+
+`edge1050` (y=6) is **blocked** for a different reason — its `simulator.json`
+declares only `start` and `lap` hit areas, with no `up`/`down`/`enter`, so the
+harness's DOWN, DOWN, SELECT launch sequence cannot open the app on it at all.
+That is a device-definition gap to record, not a golden-design problem;
+`edge1060` declares the navigation keys and works.
+
+`display.location` is a **device-space declaration, not window pixels**, and the
+two differ measurably: `fenix7` declares 260×260 at (77,146) and renders
+309×309 at (53,141) — a ~1.19× scale and an offset that is not a centre fit.
+Nothing may derive a capture rectangle from it. That mismatch is why the earlier
+screen-crop code was wrong, and why the golden is the window.
+
+Each capture is taken with the pointer parked at a fixed window point (the
+simulator's status strip prints the pointer position), so two captures of the
+same view differ only by the strip's live counters: measured 157 pixels (0.06%)
+against a 0.2% tolerance, whereas a wrong view differs by about 1.6%.
+
+Window geometry is **not** pinned. `WindowX`, `WindowY`, `WindowWidth` and
+`WindowHeight` are in `simulator.ini` and were measured ignored on start (a
+409×600 window stayed 409×600 whatever they said), and normalising by trimming
+and rescaling does not reconcile simulators: Wine and the native build give
+39.7% RMSE after trim-and-resize. Together those measurements are the reason a
+window golden is valid for **one simulator build**: when the simulator version
+changes and the window size changes with it, the goldens must be **re-captured
+deliberately** — the size check in the comparison is what tells you to, and it
+reports the old and new dimensions explicitly instead of failing obscurely.
+
+A golden must also declare the state it depicts, wait for it to be **painted**,
+and contain rendered content:
+
+```yaml
+- action: wait_for_view          # the request is recorded before the menu paints
+  category: sitemap
+  view: HomepageMenu
+- action: screenshot
+  name: homepage
+  stable: true                   # capture until two consecutive frames agree
+- action: assert
+  golden:
+    name: homepage
+    max_diff_ratio: 0.002
+    expect:                      # required: the capture must be this view
+      category: sitemap
+      view: HomepageMenu
+    min_ink_components: 40       # required: measured on a reviewed capture
+```
+
+`E2E:VIEW` is emitted when a view is **constructed**, not when it is painted, so
+`wait_for_view` alone is not enough: the first attempt at this still captured the
+glance icon with the menu already reported. `stable: true` captures repeatedly
+until two consecutive frames differ by less than `stable_diff_ratio` (0.1% by
+default), which measures the paint instead of guessing a sleep; the guest settled
+in two attempts, 153 pixels apart.
+
+`expect` is mandatory and checked against the live trace before anything is
+written or compared: a capture of the glance, a loading view or any other state
+fails closed. `min_ink_components` is the pixel backstop — a count of distinct
+ink blobs — measured on review; on a whole window the states are close (glance
+64, menu 76) so the view check is the enforcement and this floor only catches a
+window that painted nothing at all.
+
+Capturing needs the Connect IQ device font pack: the harness refuses
+`--update-goldens` when `$HOME/.Garmin/ConnectIQ/Fonts` is missing, empty or has
+no `.cft`/`.ttf` faces, because the app would crash with `Invalid Font Specified`
+and the capture would freeze that crash as the expected state. The pack is
+licensed Garmin content: mount or copy it, never commit it. See
+[sdk.md](sdk.md#device-fonts).
+
+A golden is therefore only valid if it was captured where the pack was present.
+Without it the app crashes on its first draw, so a capture taken in a broken
+environment locks a **blank screen** in as the reference every future run is
+measured against — exactly the failure the capture-time guard exists to prevent.
+
+A golden must also be **re-captured**, not compared, whenever something that
+shapes the pixels changes: the device definition in `Devices/<device>`, the
+app's theme resources, or the fixture sitemap the scenario renders. Otherwise a
+correct test fails for a correct reason, and the tempting "fix" is to regenerate
+the baseline without looking. Capture on purpose, review the image, and say in
+the commit why the baseline moved.
 
 `no_error_view` is a statement about the view the app is showing _now_, not
 about the whole run:

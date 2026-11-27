@@ -28,7 +28,7 @@ openhab:
   items:
     E2E_ColorLight: "0,0,100"
 languages: [eng, deu, fre, ita, spa, pol]
-timeout_s: 150
+timeout_s: 300
 
 covers:
   - localisation.languages

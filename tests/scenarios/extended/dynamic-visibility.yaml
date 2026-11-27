@@ -22,7 +22,7 @@ openhab:
     E2E_Visible: "OFF"
     E2E_Temperature: "20.0"
 language: eng
-timeout_s: 150
+timeout_s: 300
 
 covers:
   - sitemap.dynamic

@@ -31,7 +31,7 @@ from typing import Callable, Dict, List, Mapping, Optional, Tuple
 
 from . import assertions
 from . import fixtures as fixtures_module
-from .assertions import AssertionFailure
+from .assertions import AssertionFailure, DEFAULT_STABLE_DIFF_RATIO
 from .config import ConfigError, Device
 from .openhab import OpenHabClient, OpenHabError
 from .reporting import ERRORED, FAILED, PASSED, SKIPPED, ScenarioResult, StepResult
@@ -39,7 +39,7 @@ from .scenarios import Scenario, Step
 from .settings import AppSettings, load_settings
 from .shim import ShimClient, ShimError, ShimRequest
 from .sim import Button, DriverError, SimulatorDriver, create_driver
-from .sdk import SdkLayout
+from .sdk import SdkError, SdkLayout, require_fonts
 from .trace import EventMatch, TraceLog
 
 Log = Callable[[str], None]
@@ -374,9 +374,58 @@ class ScenarioRunner:
     def _do_screenshot(self, step: Step, context: _Context) -> Tuple[str, str, List[str]]:
         name = step.get("name")
         path = context.workdir / f"{step.index:02d}-{name}.png"
+        if step.get("stable") and not context.dry_run and context.driver.supports_screenshots:
+            written = self._stable_screenshot(step, context, path)
+            context.screenshots[name] = Path(written)
+            return PASSED, f"{name} -> {written} (stable frame)", [str(written)]
         written = context.driver.screenshot(path)
         context.screenshots[name] = Path(written)
         return PASSED, f"{name} -> {written}", [str(written)]
+
+    def _stable_screenshot(self, step: Step, context: _Context, path: Path) -> Path:
+        """Capture until two consecutive frames agree.
+
+        ``E2E:VIEW`` is emitted when a view is *constructed*, not when it has
+        been painted: a capture taken the instant ``HomepageMenu`` is reported
+        still holds the previous screen, which is how the glance became a
+        baseline. Waiting for two identical frames proves the paint finished,
+        and is deterministic where a fixed sleep is a guess.
+        """
+        interval = step.get("interval_ms", 1000) / 1000.0
+        timeout_s = min(step.get("timeout_ms", 30_000) / 1000.0, context.remaining())
+        threshold = step.get("stable_diff_ratio", DEFAULT_STABLE_DIFF_RATIO)
+        deadline = time.monotonic() + timeout_s
+        # Each capture goes to its own file: writing both to `path` would compare
+        # the second capture with itself and call any screen stable.
+        previous = context.driver.screenshot(path)
+        attempts = 0
+        while time.monotonic() < deadline:
+            attempts += 1
+            probe = path.with_name(f"{path.stem}-probe{attempts}{path.suffix}")
+            time.sleep(interval)
+            current = context.driver.screenshot(probe)
+            differing = assertions.diff_pixels(previous, current)
+            if differing is not None:
+                try:
+                    width, height = assertions.image_size(current)
+                except AssertionFailure:
+                    width = height = 0
+                if width and differing <= threshold * width * height:
+                    path.write_bytes(Path(current).read_bytes())
+                    try:
+                        Path(probe).unlink()
+                    except OSError:
+                        pass
+                    self.log(
+                        f"screenshot {path.name}: stable after {attempts} attempt(s) "
+                        f"({differing} differing pixels)"
+                    )
+                    return path
+            previous = current
+        raise AssertionFailure(
+            f"the screen never settled within {timeout_s:.0f}s, so the capture "
+            "would be of a repainting screen; the last comparison still differed"
+        )
 
     def _do_command(self, step: Step, context: _Context) -> Tuple[str, str, List[str]]:
         item = step.get("item")
@@ -412,6 +461,64 @@ class ScenarioRunner:
             )
         return PASSED, f"{found.describe()} at {found.received_at:.3f}", []
 
+    def _require_view(self, context: "_Context", expect: Mapping[str, str], name: str) -> None:
+        """Fail closed when the app is not showing the view the golden claims.
+
+        A golden is only worth committing if it depicts the state the scenario
+        asserts. Without this check a capture of the glance — reproducible, and
+        therefore passing on every later run — was once committed as the sitemap
+        homepage: a reproducible wrong baseline is worse than a flaky one.
+        """
+        if context.trace is None or not context.driver.supports_events:
+            raise AssertionFailure(
+                f"golden {name}: the driver has no console event stream, so the "
+                f"view cannot be verified against expect={dict(expect)}. A golden "
+                "must be verified, not assumed."
+            )
+        context.trace.poll()
+        event = context.trace.current_view_event()
+        if event is None:
+            raise AssertionFailure(
+                f"golden {name}: no E2E:VIEW event has been seen, so the capture "
+                f"cannot be verified against expect={dict(expect)}. Wait for the "
+                "view with a wait_for_view step before the screenshot."
+            )
+        mismatches = [
+            f"{field}={event.get(field)!r} (expected {value!r})"
+            for field, value in expect.items()
+            if event.get(field) != value
+        ]
+        if mismatches:
+            raise AssertionFailure(
+                f"golden {name}: the app is showing {event.describe()}, which does "
+                f"not match expect ({'; '.join(mismatches)}). A capture of the "
+                "glance, a loading view or any other state must never become the "
+                "baseline; add a wait_for_view step before the screenshot."
+            )
+        return None
+
+    def _do_wait_for_view(self, step: Step, context: _Context) -> Tuple[str, str, List[str]]:
+        """Wait until the app reports the view the scenario needs on screen."""
+        if context.skip_events:
+            return SKIPPED, "--skip-events", []
+        if not context.driver.supports_events or context.trace is None:
+            return SKIPPED, f"{context.driver.name} driver has no console event stream", []
+        fields = {
+            field: step.params[field]
+            for field in ("category", "view", "depth")
+            if field in step.params
+        }
+        match = EventMatch(event="VIEW", fields=fields)
+        timeout_s = min(step.get("timeout_ms", 30_000) / 1000.0, context.remaining())
+        context.trace.poll()
+        found = context.trace.wait_for(match, timeout_s)
+        if found is None:
+            raise AssertionFailure(
+                f"the app did not show a view matching {match.describe()} within "
+                f"{timeout_s:.1f}s; seen: {context.trace.describe()}"
+            )
+        return PASSED, found.describe(), []
+
     def _do_assert(self, step: Step, context: _Context) -> Tuple[str, str, List[str]]:
         notes: List[str] = []
         artifacts: List[str] = []
@@ -443,14 +550,28 @@ class ScenarioRunner:
                 notes.append(f"golden {name}: skipped (driver has no real screenshots)")
             else:
                 golden_path = context.goldens_dir / context.device.id / f"{name}.png"
+                self._require_view(context, golden["expect"], name)
+                problem = assertions.screen_content_problem(
+                    actual, golden["min_ink_components"]
+                )
+                if problem is not None:
+                    raise AssertionFailure(f"golden {name}: {problem}")
+                artifacts.append(str(actual))
                 if context.update_goldens:
+                    # Defence in depth for the write path: --update-goldens is
+                    # already refused without a font pack, and a capture written
+                    # from a crashed render must never become the baseline.
+                    if not context.dry_run:
+                        try:
+                            require_fonts()
+                        except SdkError as error:
+                            raise AssertionFailure(str(error)) from error
                     assertions.update_golden(actual, golden_path)
                     notes.append(f"golden {name}: updated {golden_path}")
                 else:
                     assertions.assert_golden(actual, golden_path, golden["max_diff_ratio"])
                     notes.append(f"golden {name}: matches {golden_path}")
                 evaluated = True
-                artifacts.append(str(actual))
 
         no_error_view = step.get("no_error_view")
         if no_error_view is not None:

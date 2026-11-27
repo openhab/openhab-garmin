@@ -31,20 +31,41 @@ older SDK (see
 [simulator-driver.md](simulator-driver.md#-1001-on-a-healthy-200)). A `VIEW`
 line means a view was **constructed**, not painted.
 
-Revision note (2026-11-26, native Linux simulator): the SDK's
-`linux/bin/simulator` was run end to end. Input works (DOWN, DOWN, SELECT opens
-the app and the sitemap request returns `code=200;bytes=29680`), but it crashes
-on the next draw with the **same** `Invalid Font Specified`, and so does Garmin's
-own `samples/TrueTypeFonts`. It is not Wine: the simulator opens
-`~/.Garmin/ConnectIQ/Fonts/` and the directory is empty, so "goldens must come
-from Windows" stands for a different reason than the note below assumes. The
-renderer itself is fine: the next step is to copy `%APPDATA%\Garmin\ConnectIQ\Fonts` from the working Windows
-installation into `~/.Garmin/ConnectIQ/Fonts` (native) and
-`<WINEPREFIX>/drive_c/users/<user>/AppData/Roaming/Garmin/ConnectIQ/Fonts`
-(Wine), rerun the same PRG on both, and record whether either paints the
-sitemap. If the native build does, the visual tier becomes possible on this VM.
-Details, the measured package set and the exact recovery step in
-[simulator-driver.md](simulator-driver.md#the-native-linux-simulator-input-yes-text-no-402).
+Revision note (2026-11-27, window goldens and the state guard): a golden is the
+**whole simulator window**, captured with the pointer parked and with the view
+verified from the trace before the image is written or compared. The first
+baseline in this repository was a reproducible capture of the **glance**, not the
+sitemap homepage: the scenario screenshotted as soon as the HTTP request was
+recorded, the app had not painted the menu yet, and because the wrong state was
+reproducible it passed on every run — a reproducible wrong baseline is worse than
+a flaky one. The scenario now waits for
+`E2E:VIEW;category=sitemap;view=HomepageMenu`, the golden declares `expect` and is
+refused when the live view differs, a `stable: true` screenshot waits for the
+paint (a `VIEW` line is emitted on construction, not on paint, and the first
+attempt at this fix still captured the glance icon), and a measured ink floor
+catches an unpainted window. No screen rectangle is assumed, and the device table
+in [scenarios.md](scenarios.md) is the evidence: a round watch, a rectangle with
+bezel all round, and a rectangle whose display starts 1 px from the top
+(`edge1060`, captured) are three different layouts the same window capture
+handles. `display.location` is device-space, not window pixels: `fenix7` declares
+260×260 at (77,146) and renders 309×309 at (53,141). The simulator's window
+geometry is not pinnable (measured) nor normalisable across builds (39.7% RMSE
+after trim-and-resize), so a window golden is valid for one simulator build and a
+size change means re-capture deliberately — the size check says so.
+
+Revision note (2026-11-26, fonts resolved): the missing device font pack was the
+whole cause, and it is now verified. With `%APPDATA%\Garmin\ConnectIQ\Fonts`
+(2,756 entries, 46 `.ttf`) copied into `~/.Garmin/ConnectIQ/Fonts` and the Wine
+prefix's `ConnectIQ/Fonts`, **both** the native `linux/bin/simulator` and
+`simulator.exe` under Wine reach `HomepageMenu`, paint the text ("My Home / Text
+/ Default / Point and Slider"), draw `ErrorView`, and their 309×309 screen crops
+are pixel-identical (`compare -metric AE` = 0, `RMSE 0 (0)`). **"Goldens must
+come from Windows" is retired**: goldens are capturable on this VM. The harness
+now refuses `--update-goldens` when the pack is missing and names the directory,
+and `entrypoint.sh` refuses to start the runner without it; the fonts are
+licensed assets and are mounted, never committed. Details, the measured package
+set and the two driving traps in
+[simulator-driver.md](simulator-driver.md#the-native-linux-simulator-input-and-text-402).
 
 The short answer:
 
@@ -1266,8 +1287,15 @@ and/or the glance), per device and language.
   measured jitter), so the golden is stable.
 - A deliberate 1-pixel change fails the comparison. The phase must prove the
   assertion can fail.
-- `--update-goldens` requires a human review and is refused in CI without an
-  explicit opt-in.
+- `--update-goldens` requires a human review, the device font pack (the harness
+  refuses without it and names the directory) and an explicit opt-in outside CI.
+- A golden is only valid when it was captured with the font pack present: without
+  it the app crashes on its first draw, so the capture would freeze a blank
+  screen as the reference every later run is compared against.
+- A golden must be re-captured when the device definition, the app's theme
+  resources or the fixture sitemap it renders changes — otherwise a correct test
+  fails for a correct reason and someone regenerates the baseline without
+  looking.
 - A golden from one simulator version is never compared with another.
 
 **Command:** `python -m e2e run <capture-scenario> --driver wine

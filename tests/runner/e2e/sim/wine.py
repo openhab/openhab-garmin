@@ -89,6 +89,10 @@ ENV_SETTINGS_FILE = "E2E_WINE_SETTINGS_FILE"
 #: ``x,y,width,height`` of the watch screen inside the simulator window. The
 #: default is a centred, aspect-preserving fit; pin this when taps miss.
 ENV_SCREEN_RECT = "E2E_WINE_SCREEN_RECT"
+#: Where :meth:`WineSimulatorDriver.screenshot` parks the pointer before a
+#: capture. The simulator's status strip prints the pointer position, so a
+#: capture would otherwise depend on where the last press left the mouse.
+POINTER_PARK_POINT = (2, 2)
 #: Prefix for per-button X keysym overrides, e.g. ``E2E_WINE_KEY_MENU=ctrl+m``.
 ENV_KEY_PREFIX = "E2E_WINE_KEY_"
 #: Startup and readiness budgets in seconds.
@@ -560,6 +564,18 @@ def xdotool_key_to_window_command(
 
 def xdotool_mousemove_command(x: int, y: int) -> List[str]:
     return ["xdotool", "mousemove", str(int(x)), str(int(y))]
+
+
+def xdotool_mousemove_window_command(window: str, x: int, y: int) -> List[str]:
+    """Move the pointer to a point relative to ``window``."""
+    return [
+        "xdotool",
+        "mousemove",
+        "--window",
+        str(window),
+        str(int(x)),
+        str(int(y)),
+    ]
 
 
 def xdotool_click_only_command(
@@ -2680,8 +2696,17 @@ class WineSimulatorDriver(SimulatorDriver):
         )
 
     def screenshot(self, path: Path) -> Path:
-        """Capture the simulator window (never the root window) as a PNG."""
+        """Capture the simulator window (never the root window) as a PNG.
+
+        The pointer is parked first: the simulator's status strip prints the
+        pointer position, so a capture taken wherever the mouse happened to be
+        would differ for a reason unrelated to the app. Measured on the guest
+        with a whole-window capture: moving the pointer changes 466 pixels
+        (0.19% of a 409x600 window); the same state with a parked pointer drifts
+        by ~157 pixels (0.06%) because the strip's live counters tick.
+        """
         window = self._require_window()
+        self._park_pointer(window)
         target = Path(path)
         target.parent.mkdir(parents=True, exist_ok=True)
         completed = self._run(
@@ -2701,6 +2726,27 @@ class WineSimulatorDriver(SimulatorDriver):
             raise DriverError(f"{target}: {reason}")
         self._record(f"screenshot -> {target}")
         return target
+
+    def _park_pointer(self, window: str) -> None:
+        """Move the pointer to a fixed window point so captures are repeatable.
+
+        The status strip prints the pointer position, so leaving the pointer
+        wherever a press left it makes two captures of the same view differ.
+        Parking is best effort: a failure is recorded, never fatal, because the
+        capture itself is still valid and the tolerance absorbs the difference.
+        """
+        completed = self._run(
+            xdotool_mousemove_window_command(window, *POINTER_PARK_POINT),
+            check=False,
+            action="park the pointer for a deterministic capture",
+        )
+        if completed.returncode != 0:
+            self._record(
+                "warning: the pointer could not be parked before the capture, so "
+                "the status strip may print a different pointer position"
+            )
+            return
+        self._record(f"pointer parked at {POINTER_PARK_POINT} in window {window}")
 
     def pixel_difference(self, before: Path, after: Path) -> Optional[int]:
         """Absolute pixel difference between two captures, or ``None``.

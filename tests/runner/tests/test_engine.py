@@ -14,6 +14,9 @@ from dataclasses import replace
 from pathlib import Path
 from typing import ClassVar, List, Sequence
 
+import pytest
+
+from e2e import cli
 from e2e import engine
 from e2e.config import default_device_id, find_device
 from e2e.contract import FAIL, PASS, run_contract, summary
@@ -362,3 +365,301 @@ def test_failure_is_reported_for_an_unknown_settings_fixture(tmp_path: Path) -> 
     )
     assert result.status == "failed"
     assert any("unknown settings fixture" in failure for failure in result.failures)
+
+
+# ---------------------------------------------------------------------------
+# golden capture capability (decided by the font pack, not the driver name)
+# ---------------------------------------------------------------------------
+
+def _font_pack(path: Path) -> Path:
+    path.mkdir(parents=True, exist_ok=True)
+    (path / "FNT_TEST_0.cft").write_text("face", encoding="utf-8")
+    (path / "FNT_TEST_0.md5").write_text("hash", encoding="utf-8")
+    return path
+
+
+def test_update_goldens_is_refused_without_device_fonts(tmp_path, monkeypatch, capsys) -> None:
+    """A capture from a crashed render must never become the baseline."""
+    absent = tmp_path / "absent"
+    monkeypatch.setenv("GARMIN_FONTS_DIR", str(absent))
+
+    code = cli.main(["run", "smoke/launch-and-poll", "--update-goldens"])
+
+    captured = capsys.readouterr()
+    assert code == cli.EXIT_CONFIG
+    assert "no Connect IQ device fonts" in captured.err
+    assert str(absent) in captured.err
+    assert "Invalid Font Specified" in captured.err
+
+
+def test_update_goldens_passes_the_font_gate_with_a_pack(tmp_path, monkeypatch, capsys) -> None:
+    """With a pack in place the capability is available to every driver."""
+    pack = _font_pack(tmp_path / "fonts")
+    monkeypatch.setenv("GARMIN_FONTS_DIR", str(pack))
+    calls: List[str] = []
+
+    def stub_layout():
+        calls.append("layout")
+        raise cli.SdkError("sdk stub for the test")
+
+    monkeypatch.setattr(cli, "load_layout", stub_layout)
+
+    code = cli.main(["run", "smoke/launch-and-poll", "--update-goldens"])
+
+    captured = capsys.readouterr()
+    assert calls == ["layout"], "the run must reach the SDK stage, so the font gate passed"
+    assert "no Connect IQ device fonts" not in captured.err
+    assert "sdk stub for the test" in captured.err
+    assert code == cli.EXIT_CONFIG
+
+
+# ---------------------------------------------------------------------------
+# golden guards: the wrong state must never become a baseline
+# ---------------------------------------------------------------------------
+
+def _runner_with_view(tmp_path: Path, *lines: str):
+    """A ScenarioRunner whose trace reports the given console lines."""
+    from e2e.trace import TraceLog
+
+    runner = engine.ScenarioRunner.__new__(engine.ScenarioRunner)
+    runner.log = lambda message: None
+    trace = TraceLog(lambda: list(lines))
+    trace.poll()
+
+    class _Ctx:
+        pass
+
+    context = _Ctx()
+    context.trace = trace
+    context.driver = _NullWithEvents()
+    return runner, context
+
+
+class _NullWithEvents(NullDriver):
+    """The dry-run driver, but claiming an event stream so the guard runs."""
+
+    supports_events = True
+
+
+GLANCE = "E2E:VIEW;category=glance;view=GlanceSitemapView;depth=1"
+MENU = "E2E:VIEW;category=sitemap;view=HomepageMenu;depth=1"
+LOADING = "E2E:VIEW;category=sitemap;view=LoadingView;depth=1"
+
+
+def test_golden_guard_rejects_the_glance(tmp_path: Path) -> None:
+    runner, context = _runner_with_view(tmp_path, GLANCE)
+    expect = {"category": "sitemap", "view": "HomepageMenu"}
+    with pytest.raises(engine.AssertionFailure) as error:
+        runner._require_view(context, expect, "homepage")
+    message = str(error.value)
+    assert "GlanceSitemapView" in message
+    assert "must never become the baseline" in message
+
+
+def test_golden_guard_rejects_a_loading_view(tmp_path: Path) -> None:
+    runner, context = _runner_with_view(tmp_path, LOADING)
+    with pytest.raises(engine.AssertionFailure) as error:
+        runner._require_view(context, {"category": "sitemap", "view": "HomepageMenu"},
+                             "homepage")
+    assert "LoadingView" in str(error.value)
+
+
+def test_golden_guard_accepts_the_expected_view(tmp_path: Path) -> None:
+    runner, context = _runner_with_view(tmp_path, GLANCE, MENU)
+    runner._require_view(context, {"category": "sitemap", "view": "HomepageMenu"},
+                         "homepage")
+
+
+def test_golden_guard_refuses_without_any_view(tmp_path: Path) -> None:
+    runner, context = _runner_with_view(tmp_path, "E2E:LANGUAGE;code=eng")
+    with pytest.raises(engine.AssertionFailure) as error:
+        runner._require_view(context, {"category": "sitemap"}, "homepage")
+    assert "no E2E:VIEW event" in str(error.value)
+
+
+def test_golden_guard_matches_a_category_only_expectation(tmp_path: Path) -> None:
+    runner, context = _runner_with_view(tmp_path, LOADING)
+    runner._require_view(context, {"category": "sitemap"}, "homepage")
+
+# ---------------------------------------------------------------------------
+# content guard: an unpainted window must never become a baseline
+# ---------------------------------------------------------------------------
+
+def _pgm_bytes(width: int, height: int, blobs) -> bytes:
+    pixels = bytearray([255] * (width * height))
+    for x0, y0, w, h in blobs:
+        for y in range(y0, y0 + h):
+            for x in range(x0, x0 + w):
+                pixels[y * width + x] = 0
+    return b"P5\n%d %d\n255\n" % (width, height) + bytes(pixels)
+
+
+def test_parse_pgm_reads_a_binary_image() -> None:
+    from e2e.assertions import parse_pgm
+
+    assert parse_pgm(b"P5\n3 2\n255\n" + bytes(range(6))) == (3, 2, bytes(range(6)))
+    assert parse_pgm(b"P2\n3 2\n255\n0 0 0") is None
+
+
+def test_ink_components_counts_blobs_not_pixels() -> None:
+    from e2e.assertions import ink_components
+
+    data = _pgm_bytes(40, 40, [(2, 2, 3, 3), (10, 10, 3, 3), (20, 20, 4, 4)])
+    width, height, pixels = 40, 40, data.split(b"\n", 3)[3]
+    assert ink_components(width, height, pixels) == 3
+
+
+def test_ink_components_ignores_specks() -> None:
+    from e2e.assertions import ink_components
+
+    data = _pgm_bytes(40, 40, [(2, 2, 1, 1), (10, 10, 1, 2)])
+    width, height, pixels = 40, 40, data.split(b"\n", 3)[3]
+    assert ink_components(width, height, pixels) == 0
+
+
+def test_a_blank_window_fails_the_content_guard(monkeypatch) -> None:
+    from e2e.assertions import screen_content_problem
+
+    # The guard shells out to ImageMagick, which CI does not install; patch the
+    # lookup so the injected runner is used (see the "absent" test below).
+    monkeypatch.setattr("e2e.assertions.shutil.which", lambda name: f"/usr/bin/{name}")
+    blank = _pgm_bytes(60, 60, [])
+    problem = screen_content_problem(
+        Path("blank.png"), 40, runner=lambda command: blank
+    )
+    assert problem is not None
+    assert "must never become a baseline" in problem
+
+
+def test_a_rendered_window_passes_the_content_guard(monkeypatch) -> None:
+    from e2e.assertions import screen_content_problem
+
+    monkeypatch.setattr("e2e.assertions.shutil.which", lambda name: f"/usr/bin/{name}")
+    blobs = [(4 * i, 20, 3, 6) for i in range(12)]
+    rendered = _pgm_bytes(60, 60, blobs)
+    assert (
+        screen_content_problem(Path("menu.png"), 10, runner=lambda command: rendered)
+        is None
+    )
+
+
+def test_the_content_guard_is_absent_without_imagemagick(monkeypatch) -> None:
+    from e2e.assertions import screen_content_problem
+
+    monkeypatch.setattr("e2e.assertions.shutil.which", lambda name: None)
+    assert screen_content_problem(Path("x.png"), 40) is None
+
+# ---------------------------------------------------------------------------
+# wait_for_view dispatch
+# ---------------------------------------------------------------------------
+
+def test_wait_for_view_returns_when_the_menu_appears(tmp_path: Path) -> None:
+    from e2e.scenarios import Step
+
+    runner, context = _runner_with_view(tmp_path, GLANCE, MENU)
+    context.skip_events = False
+    context.remaining = lambda: 5.0
+    step = Step(index=1, action="wait_for_view",
+                params={"category": "sitemap", "view": "HomepageMenu"})
+    status, message, _artifacts = runner._do_wait_for_view(step, context)
+    assert status == "passed"
+    assert "HomepageMenu" in message
+
+
+def test_wait_for_view_fails_when_the_menu_never_appears(tmp_path: Path) -> None:
+    from e2e.scenarios import Step
+
+    runner, context = _runner_with_view(tmp_path, GLANCE)
+    context.skip_events = False
+    context.remaining = lambda: 0.0
+    step = Step(index=1, action="wait_for_view",
+                params={"category": "sitemap", "view": "HomepageMenu"})
+    with pytest.raises(engine.AssertionFailure) as error:
+        runner._do_wait_for_view(step, context)
+    assert "did not show a view" in str(error.value)
+
+
+def test_wait_for_view_is_skipped_without_an_event_stream(tmp_path: Path) -> None:
+    from e2e.scenarios import Step
+    from e2e.sim.null import NullDriver
+
+    runner = engine.ScenarioRunner.__new__(engine.ScenarioRunner)
+
+    class _Ctx:
+        trace = None
+        driver = NullDriver()
+        skip_events = False
+
+    step = Step(index=1, action="wait_for_view", params={"category": "sitemap"})
+    status, message, _artifacts = runner._do_wait_for_view(step, _Ctx())
+    assert status == "skipped"
+    assert "no console event stream" in message
+
+# ---------------------------------------------------------------------------
+# stable capture: VIEW is constructed, not painted
+# ---------------------------------------------------------------------------
+
+def test_stable_screenshot_waits_until_two_frames_agree(tmp_path, monkeypatch) -> None:
+    from e2e.scenarios import Step
+
+    runner, context = _runner_with_view(tmp_path, MENU)
+    context.skip_events = False
+    context.dry_run = False
+    context.workdir = tmp_path
+    context.remaining = lambda: 30.0
+
+    frames = [b"frame-1", b"frame-2", b"frame-2"]
+    seen: List[int] = []
+
+    class _Driver(_NullWithEvents):
+        supports_screenshots = True
+
+        def screenshot(self, path):
+            index = len(seen)
+            seen.append(index)
+            Path(path).write_bytes(frames[min(index, len(frames) - 1)])
+            return Path(path)
+
+    context.driver = _Driver()
+    context.screenshots = {}
+    monkeypatch.setattr("e2e.sim.wine.time.sleep", lambda seconds: None)
+    monkeypatch.setattr(engine.time, "sleep", lambda seconds: None)
+
+    diffs = {(b"frame-1", b"frame-2"): 5000, (b"frame-2", b"frame-2"): 0}
+    monkeypatch.setattr(
+        "e2e.assertions.diff_pixels",
+        lambda a, b: diffs[(Path(a).read_bytes(), Path(b).read_bytes())],
+    )
+    monkeypatch.setattr("e2e.assertions.image_size", lambda path: (409, 600))
+
+    step = Step(index=2, action="screenshot", params={"name": "homepage", "stable": True})
+    status, message, artifacts = runner._do_screenshot(step, context)
+    assert status == "passed"
+    assert "stable frame" in message
+    assert seen == [0, 1, 2], "two consecutive equal frames are required"
+    assert Path(artifacts[0]).read_bytes() == b"frame-2"
+
+
+def test_stable_screenshot_fails_when_the_screen_never_settles(tmp_path, monkeypatch) -> None:
+    from e2e.scenarios import Step
+
+    runner, context = _runner_with_view(tmp_path, MENU)
+    context.dry_run = False
+    context.workdir = tmp_path
+    context.remaining = lambda: 0.0
+
+    class _Driver(_NullWithEvents):
+        supports_screenshots = True
+
+        def screenshot(self, path):
+            Path(path).write_bytes(b"jitter")
+            return Path(path)
+
+    context.driver = _Driver()
+    monkeypatch.setattr(engine.time, "sleep", lambda seconds: None)
+    monkeypatch.setattr("e2e.assertions.diff_pixels", lambda a, b: 999)
+
+    step = Step(index=2, action="screenshot", params={"name": "homepage", "stable": True})
+    with pytest.raises(engine.AssertionFailure) as error:
+        runner._do_screenshot(step, context)
+    assert "never settled" in str(error.value)

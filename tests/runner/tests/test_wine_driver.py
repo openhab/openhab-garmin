@@ -793,7 +793,13 @@ def test_launch_stops_when_the_app_opens(
     class OpeningRun(FakeRun):
         def __call__(self, command, **kwargs):  # noqa: ANN001, ANN003
             completed = super().__call__(command, **kwargs)
-            if command[1] == "mousemove" and "sitemap" not in str(driver._events):
+            # Parking the pointer is capture setup, not input: only a real
+            # press may open the app.
+            if (
+                command[1] == "mousemove"
+                and "--window" not in command
+                and "sitemap" not in str(driver._events)
+            ):
                 driver._events.append(
                     (0.0, "E2E:VIEW;category=sitemap;view=HomepageMenu;depth=2")
                 )
@@ -2733,3 +2739,38 @@ def test_contract_fails_a_press_that_has_no_effect(
     assert by_name["press-effect"].status == FAIL
     assert "no different VIEW" in by_name["press-effect"].detail
     assert exit_code(cases) == 1
+
+
+# ---------------------------------------------------------------------------
+# deterministic capture
+# ---------------------------------------------------------------------------
+
+def test_the_pointer_is_parked_at_a_fixed_point() -> None:
+    from e2e.sim.wine import POINTER_PARK_POINT, xdotool_mousemove_window_command
+
+    assert POINTER_PARK_POINT == (2, 2)
+    assert xdotool_mousemove_window_command("42", *POINTER_PARK_POINT) == [
+        "xdotool", "mousemove", "--window", "42", "2", "2",
+    ]
+
+
+def test_screenshot_parks_the_pointer_before_capturing(tmp_path, monkeypatch) -> None:
+    """The status strip prints the pointer position, so capture must pin it."""
+    driver = _pressing_driver(tmp_path, monkeypatch)
+    commands: List[List[str]] = []
+
+    def fake_run(command, *, check=False, timeout=30.0, action=""):
+        commands.append(list(command))
+        if command[0] == "import":
+            Path(command[-1]).write_bytes(png_bytes(409, 600))
+        return subprocess.CompletedProcess(list(command), 0, "", "")
+
+    monkeypatch.setattr(driver, "_run", fake_run)
+    driver.screenshot(tmp_path / "shot.png")
+
+    park = [index for index, command in enumerate(commands) if "mousemove" in command]
+    capture = [index for index, command in enumerate(commands) if command[0] == "import"]
+    assert park and capture
+    assert park[0] < capture[0], "the pointer must be parked before the capture"
+    assert commands[park[0]][:2] == ["xdotool", "mousemove"]
+    assert "--window" in commands[park[0]]

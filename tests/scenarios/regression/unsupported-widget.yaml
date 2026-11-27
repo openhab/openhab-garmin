@@ -18,7 +18,7 @@ openhab:
   items:
     E2E_ColorLight: "0,0,100"
 language: eng
-timeout_s: 90
+timeout_s: 300
 
 covers:
   - sitemap.element-types
@@ -56,4 +56,8 @@ steps:
   - action: assert
     golden:
       name: unsupported-widget-error
-      max_diff_ratio: 0.02
+      max_diff_ratio: 0.002
+      # The selected element is unsupported, so the app shows the error view.
+      expect:
+        category: error
+      min_ink_components: 40
