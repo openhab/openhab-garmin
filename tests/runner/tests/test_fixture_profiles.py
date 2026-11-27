@@ -1,20 +1,47 @@
 """Profile detection: which pinned openHAB image actually serves the port.
 
 Profiles are exclusive — one openHAB serves one tree — so a full run needs one
-pass per profile. These tests pin the detection rule: the version on ``GET
-/rest/`` identifies the image, a stack that does not answer or serves an
+pass per profile. These tests pin the detection rule: the runtime version on
+``GET /rest/`` identifies the image, a stack that does not answer or serves an
 unpinned version is a failure (not a skip), and a `dev` scenario on a `stable`
 stack is skipped with a reason instead of failing in the guard.
+
+The REST payloads below have the shape a real stack returns. The top-level
+``version`` is the REST API version (``8``) and is the same on both profiles;
+the runtime version is ``runtimeInfo.version``. Keeping the decoy is the point:
+reading ``document["version"]`` made every run against a live stack fail, and
+only a payload in this shape catches that mistake.
 """
 
 from __future__ import annotations
 
-from typing import List, Optional, Sequence
+import json
+from typing import Any, Dict, List, Optional, Sequence
 
 import pytest
 
 from e2e import fixtures
 from e2e.openhab import OpenHabClient, OpenHabError
+
+
+def _rest_root(runtime_version: str) -> Dict[str, Any]:
+    """A captured-shape ``GET /rest/`` document (fields the harness reads)."""
+    return {
+        "version": "8",  # REST API version: identical on stable and dev
+        "locale": "en_US",
+        "measurementSystem": "SI",
+        "timezone": "UTC",
+        "runtimeInfo": {
+            "version": runtime_version,
+            "buildString": "Release Build",
+        },
+    }
+
+
+#: Captured from the dedicated VM's stable stack (openHAB 5.2.5). The dev stack
+#: serves the same shape with ``runtimeInfo.version`` = 5.3.0.M5.
+STABLE_ROOT = _rest_root("5.2.5")
+DEV_ROOT = _rest_root("5.3.0.M5")
 
 
 class _Item:
@@ -23,26 +50,31 @@ class _Item:
 
 
 class _OpenHab:
-    """A stubbed REST client: no socket, only the three methods detection uses."""
+    """A stubbed client: real parsing over a captured-shape REST document."""
 
     def __init__(
         self,
         items: Sequence[str] = (),
         sitemaps: Sequence[str] = (),
         *,
-        version: str = "5.2.5",
+        runtime_version: str = "5.2.5",
         error: Optional[str] = None,
     ) -> None:
         self.base_url = "http://127.0.0.1:8080/"
         self._items = [_Item(name) for name in items]
         self._sitemaps = list(sitemaps)
-        self._version = version
+        self._root = _rest_root(runtime_version)
         self._error = error
 
     def server_version(self) -> str:
         if self._error is not None:
             raise OpenHabError(self._error)
-        return self._version
+        client = OpenHabClient(self.base_url)
+        client._request = lambda *args, **kwargs: (
+            200,
+            json.dumps(self._root).encode("utf-8"),
+        )
+        return client.server_version()
 
     def items(self) -> List[_Item]:
         return self._items
@@ -55,12 +87,12 @@ def _expected(profile: str):
     return fixtures.load_expected(profile)
 
 
-def _stack(profile: str, *, version: Optional[str] = None) -> _OpenHab:
+def _stack(profile: str, *, runtime_version: Optional[str] = None) -> _OpenHab:
     expected = _expected(profile)
     return _OpenHab(
         list(expected.items),
         list(expected.sitemaps),
-        version=version or fixtures.pinned_versions()[profile],
+        runtime_version=runtime_version or fixtures.pinned_versions()[profile],
     )
 
 
@@ -70,16 +102,52 @@ def test_the_pinned_tag_reduces_to_the_version_the_rest_api_reports() -> None:
     assert fixtures.pinned_versions() == {"stable": "5.2.5", "dev": "5.3.0.M5"}
 
 
-def test_the_client_reads_the_version_from_the_rest_root(
+def test_the_client_reads_the_runtime_version_not_the_rest_api_version(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The decoy top-level ``version`` is ``8``; the pin lives in runtimeInfo."""
+    client = OpenHabClient("http://127.0.0.1:8080")
+    monkeypatch.setattr(
+        client,
+        "_request",
+        lambda *args, **kwargs: (200, json.dumps(STABLE_ROOT).encode("utf-8")),
+    )
+    assert client.server_version() == "5.2.5"
+    assert client.server_version() != STABLE_ROOT["version"]
+
+
+def test_the_client_reads_the_dev_runtime_version(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     client = OpenHabClient("http://127.0.0.1:8080")
     monkeypatch.setattr(
         client,
         "_request",
-        lambda *args, **kwargs: (200, b'{"version": "5.3.0.M5", "locale": "en"}'),
+        lambda *args, **kwargs: (200, json.dumps(DEV_ROOT).encode("utf-8")),
     )
     assert client.server_version() == "5.3.0.M5"
+
+
+def test_the_client_rejects_a_root_without_runtime_info(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = OpenHabClient("http://127.0.0.1:8080")
+    payload = json.dumps({"version": "8", "locale": "en_US"}).encode("utf-8")
+    monkeypatch.setattr(client, "_request", lambda *args, **kwargs: (200, payload))
+    with pytest.raises(OpenHabError) as raised:
+        client.server_version()
+    assert "runtimeInfo" in str(raised.value)
+
+
+def test_the_client_rejects_a_root_without_a_runtime_version(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = OpenHabClient("http://127.0.0.1:8080")
+    payload = json.dumps({"version": "8", "runtimeInfo": {}}).encode("utf-8")
+    monkeypatch.setattr(client, "_request", lambda *args, **kwargs: (200, payload))
+    with pytest.raises(OpenHabError) as raised:
+        client.server_version()
+    assert "runtimeInfo.version" in str(raised.value)
 
 
 def test_the_client_rejects_a_root_that_is_not_json(
@@ -117,7 +185,7 @@ def test_a_stable_stack_is_not_mistaken_for_dev() -> None:
 def test_an_unpinned_version_fails_with_the_observed_and_expected_versions() -> None:
     """A stack from another image is a broken environment, not another profile."""
     with pytest.raises(fixtures.ProfileError) as raised:
-        fixtures.detect_profile(_stack("stable", version="5.3.1"))
+        fixtures.detect_profile(_stack("stable", runtime_version="5.3.1"))
     message = str(raised.value)
     assert "5.3.1" in message, "the observed version must be in the failure"
     assert "5.2.5" in message and "5.3.0.M5" in message, "both pins must be named"
@@ -158,7 +226,11 @@ def test_the_requested_profile_passes_the_assertion() -> None:
 def test_a_dev_image_with_a_stable_fixture_tree_fails_loudly() -> None:
     """The version decides the profile; a tree that did not load is a failure."""
     stable = _expected("stable")
-    stack = _OpenHab(list(stable.items), list(stable.sitemaps), version="5.3.0.M5")
+    stack = _OpenHab(
+        list(stable.items),
+        list(stable.sitemaps),
+        runtime_version="5.3.0.M5",
+    )
     with pytest.raises(fixtures.FixtureError) as raised:
         fixtures.detect_profile(stack)
     message = str(raised.value)

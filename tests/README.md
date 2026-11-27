@@ -300,18 +300,19 @@ COMPOSE_PROFILES=dev docker compose -f compose.yaml -f compose.dev.yaml \
   -f compose.host.yaml -f compose.host.dev.yaml up -d
 docker compose -f compose.yaml -f compose.dev.yaml -f compose.host.yaml \
   -f compose.host.dev.yaml restart openhab-dev      # if it predates the port being free
-until curl -fsS http://127.0.0.1:8080/rest/ | grep -q '"version"'; do sleep 2; done
+until curl -fsS http://127.0.0.1:8080/rest/ | grep -q '"runtimeInfo"'; do sleep 2; done
 python -m e2e run --all
 ```
 
 `openhab-dev` must be restarted when it was created while `openhab-stable` still
 held port 8080: it failed to bind and its runtime died, but the container still
 reports `Up (healthy)`, so a run would silently measure the stable instance.
-The run identifies the profile from `GET /rest/` (JSON plus the pinned version);
-a REST API that does not answer, or a version that matches no pin, fails the run
+The run identifies the profile from `GET /rest/` (JSON plus the runtime version
+in `runtimeInfo.version`, not the REST API's top-level `version`); a REST API
+that does not answer, or a runtime version that matches no pin, fails the run
 with the observed and expected versions instead of skipping. `run --profile dev`
-asserts the profile rather than selecting it, and fails with the served version
-and the start command when the stack is the other one.
+asserts the profile rather than selecting it, and fails with the served runtime
+version and the start command when the stack is the other one.
 
 **Rebuild the runner image after changing `runner/entrypoint.sh` or
 `runner/Dockerfile`.** The entrypoint is baked into the image while the harness

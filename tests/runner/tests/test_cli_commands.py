@@ -11,6 +11,7 @@ instead of on the guest.
 from __future__ import annotations
 
 import argparse
+import json
 from pathlib import Path
 from typing import List
 
@@ -18,6 +19,7 @@ import pytest
 
 from e2e import cli
 from e2e import fixtures
+from e2e.openhab import OpenHabClient
 from e2e.shim import ShimRequest
 
 
@@ -248,7 +250,22 @@ class _StableStack:
     base_url = "http://localhost:8080/"
 
     def server_version(self) -> str:
-        return fixtures.pinned_versions()["stable"]
+        # Parse the captured-shape document with the real client: a stub that
+        # returned the pin directly would not catch a wrong field in
+        # OpenHabClient.server_version().
+        client = OpenHabClient(self.base_url)
+        client._request = lambda *args, **kwargs: (
+            200,
+            json.dumps(
+                {
+                    "version": "8",
+                    "runtimeInfo": {
+                        "version": fixtures.pinned_versions()["stable"]
+                    },
+                }
+            ).encode("utf-8"),
+        )
+        return client.server_version()
 
     def items(self):
         return [

@@ -97,7 +97,7 @@ COMPOSE_PROFILES=dev docker compose -f compose.yaml -f compose.dev.yaml \
 # only if openhab-dev predates the port being free (see below)
 docker compose -f compose.yaml -f compose.dev.yaml -f compose.host.yaml \
   -f compose.host.dev.yaml restart openhab-dev
-until curl -fsS http://127.0.0.1:8080/rest/ | grep -q '"version"'; do sleep 2; done
+until curl -fsS http://127.0.0.1:8080/rest/ | grep -q '"runtimeInfo"'; do sleep 2; done
 python -m e2e run --all
 ```
 
@@ -112,9 +112,10 @@ then `restart openhab-dev` so it starts with the port free, and poll `GET
 /rest/` for JSON before running.
 
 A run identifies the profile from the live stack: `GET /rest/` must answer with
-JSON **and** the served version must equal the pinned tag's version
-(`tests/config/openhab.version`: `stable` = 5.2.5, `dev` = 5.3.0.M5). If the
-REST API does not answer, or the served version matches no pin, the run
+JSON **and** the runtime version (`runtimeInfo.version`, not the REST API's
+top-level `version`, which is `8` on every profile) must equal the pinned tag's
+version (`tests/config/openhab.version`: `stable` = 5.2.5, `dev` = 5.3.0.M5). If
+the REST API does not answer, or the runtime version matches no pin, the run
 **fails** with the observed and expected versions instead of skipping: a dead
 container or a foreign image is an environment failure, not another profile.
 The check lives in detection rather than `preflight` because `preflight` runs
@@ -127,8 +128,8 @@ run whatever is up; a dry run cannot check it because there is no stack.
 
 A scenario whose profile does not match the running stack is **skipped with its
 reason**, not failed: the engine asks the running instance which profile it
-serves (the pinned version on `/rest/`, cross-checked against the served item
-and sitemap sets), and reports
+serves (the pinned runtime version from `runtimeInfo.version` on `/rest/`,
+cross-checked against the served item and sitemap sets), and reports
 
 ```text
 SKIPPED regression/dev-profile-command-confirmation: needs the 'dev' openHAB
