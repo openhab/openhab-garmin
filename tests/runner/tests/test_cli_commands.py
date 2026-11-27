@@ -27,6 +27,48 @@ def _subcommands(parser: argparse.ArgumentParser) -> List[str]:
     return []
 
 
+def _subparser(parser: argparse.ArgumentParser, name: str) -> argparse.ArgumentParser:
+    for action in parser._actions:
+        if isinstance(action, argparse._SubParsersAction):
+            return action.choices[name]
+    raise AssertionError(f"no subcommands in {parser.prog}")
+
+
+def test_a_container_run_can_write_a_golden_somewhere_writable() -> None:
+    """`tests/goldens` is read-only in the runner; `--goldens` is the way out."""
+    parser = cli.build_parser()
+    args = parser.parse_args(
+        [
+            "run",
+            "regression/unsupported-widget",
+            "--update-goldens",
+            "--goldens",
+            "/artifacts/goldens",
+        ]
+    )
+    assert args.update_goldens is True
+    assert args.goldens == "/artifacts/goldens"
+
+    help_text = " ".join(
+        action.help or ""
+        for action in _subparser(parser, "run")._actions
+        if action.dest in ("update_goldens", "goldens")
+    )
+    assert "--goldens" in help_text, "the read-only trap must be named where it bites"
+    assert "read-only" in help_text.lower()
+
+
+def test_the_goldens_option_overrides_the_checkout_directory(
+    tmp_path: Path,
+) -> None:
+    args = cli.build_parser().parse_args(
+        ["run", "smoke/launch-and-poll", "--goldens", str(tmp_path)]
+    )
+    assert cli._goldens_dir(args) == tmp_path
+    default = cli.build_parser().parse_args(["run", "smoke/launch-and-poll"])
+    assert cli._goldens_dir(default).name == "goldens"
+
+
 def test_every_subcommand_answers_help_through_main() -> None:
     names = _subcommands(cli.build_parser())
     assert len(names) >= 15, names

@@ -901,6 +901,7 @@ manual counterpart to `tests/runner/tests/test_compose.py` and
 | `compose: services.runner must mount the Connect IQ SDK` | `CIQ_SDK_HOST_PATH` is unset or empty in `tests/compose/.env` |
 | `compose: services.runner.E2E_ARTIFACTS=... is inside the read-only mount` | the artifacts volume was moved back under `/work`; it must be its own mount (`/artifacts`) |
 | `error: no Connect IQ device definitions were found` | the SDK ships no `Devices/` directory and `CIQ_DEVICES_HOST_PATH` is empty; see [docs/sdk.md](docs/sdk.md) |
+| `[Errno 30] Read-only file system: '/work/tests/goldens/...'` on `--update-goldens` | the checkout is mounted read-only in the runner; the capture itself succeeded. Re-run with `--goldens /artifacts/goldens`, or capture on the host. `update_golden()` is a plain copy, so `<artifacts>/<suite>/<scenario>/NN-<name>.png` is byte-for-byte the golden; see [docs/visual-truth.md](docs/visual-truth.md) |
 | `error: no Connect IQ device fonts are usable at ...` | the pack is missing, empty or has no `.cft`/`.ttf` faces; set `CIQ_FONTS_HOST_PATH` to a working installation's `ConnectIQ/Fonts`; the SDK archive does not ship it |
 | `warning: the running entrypoint is … but the harness ships …` | the image predates the checkout: `docker compose build runner`. A stale entrypoint skips new startup steps and makes the failing check name the wrong cause |
 | `Invalid Font Specified` in the console with a watch face on screen | the same missing font pack, on a run started outside the container; run `python -m e2e link-fonts` |
