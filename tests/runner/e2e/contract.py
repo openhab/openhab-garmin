@@ -514,6 +514,43 @@ def run_contract(
 
     cases.append(_run_case("press-sequence", press_sequence))
 
+    def app_data_reset() -> object:
+        """A second launch must not answer from the app's cached sitemap.
+
+        The app persists the last sitemap JSON (`SitemapStore`: `sitemapJson`)
+        under `<prefix>/…/GARMIN/APPS/DATA`, and that cache outlives a scenario:
+        the next launch starts on the previous sitemap and logs
+        `E2E:SITEMAP;result=unchanged` instead of requesting its own. Without
+        this case, a run that leaks the cache looks like a navigation or
+        protocol failure for every scenario after the first.
+        """
+        relaunch = getattr(driver, "relaunch_app", None)
+        if relaunch is None:
+            return (
+                SKIPPED,
+                f"{driver.name} cannot relaunch the app, so storage isolation is "
+                "unproven",
+            )
+        mark = len(driver.events())
+        fresh = relaunch(clear_data=True)
+        events = parse_lines(list(driver.events())[mark:])
+        results = [event.get("result") for event in events if event.event == "SITEMAP"]
+        if not fresh:
+            raise AssertionError(
+                "the relaunched app did not request its sitemap after its storage "
+                f"was cleared (SITEMAP results after the relaunch: {results}).\n"
+                "Either the storage path was not cleared or the app answered from "
+                "another cache; logs/driver.log lists every path that was removed."
+            )
+        return (
+            "the second launch requested its sitemap after the app storage was "
+            f"cleared (SITEMAP results: {results}); no cached "
+            "`result=unchanged` carried over"
+        )
+
+    if driver.supports_events:
+        cases.append(_run_case("app-data-reset", app_data_reset))
+
     def tap() -> object:
         driver.tap(1, 1, 1)
         return (
@@ -570,6 +607,7 @@ def _launch_cases() -> List[str]:
         "input-delivery",
         "press-effect",
         "press-sequence",
+        "app-data-reset",
     ]
     names.extend(f"press[{button.value}]" for button in Button)
     names.extend(["tap", "screenshot", "events"])

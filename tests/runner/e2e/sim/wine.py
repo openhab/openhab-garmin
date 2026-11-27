@@ -264,6 +264,21 @@ MODE_CONNECTION_NAMES: Mapping[str, Tuple[str, ...]] = {
 #: `E2E:` stream only carries what the app chooses to print.
 CIQ_LOG_HINT = "drive_c/users/{user}/Temp/com.garmin.connectiq/GARMIN/APPS/LOGS/CIQ_LOG.YML"
 
+#: The app's own persistent storage, relative to the Wine prefix. The app caches
+#: the last sitemap JSON here (`SitemapStore`: ``sitemapJson``/``sitemapLabel``),
+#: and that cache outlives a scenario: without clearing it, the next scenario
+#: starts on the previous scenario's sitemap, reports
+#: ``E2E:SITEMAP;result=unchanged`` and never requests its own. `LOGS` is
+#: deliberately not touched, because ``CIQ_LOG.YML`` is the crash evidence.
+APP_DATA_HINTS: Tuple[str, ...] = (
+    "drive_c/users/{user}/Temp/com.garmin.connectiq/GARMIN/APPS/DATA",
+    "drive_c/users/{user}/Temp/com.garmin.connectiq/GARMIN/APPS/SETTINGS",
+    "drive_c/users/{user}/Temp/com.garmin.connectiq/GARMIN/Settings",
+)
+
+#: Set to keep the app's storage across launches, for debugging the cache itself.
+ENV_KEEP_APP_DATA = "E2E_WINE_KEEP_APP_DATA"
+
 #: Runtime errors this suite meets, and what each one means. The first two are
 #: false defect classes: a device/PRG mismatch and a device-definition gap.
 CIQ_ERROR_CLASSES: Tuple[Tuple[str, str, str], ...] = (
@@ -1687,6 +1702,7 @@ class WineSimulatorDriver(SimulatorDriver):
         self._write_simulator_ini(device, mode, language_value)
         self._start_simulator()
         self._seed_settings(settings)
+        self.clear_app_data()
         self._launch_app(device)
         self._started = True
 
@@ -3524,6 +3540,97 @@ class WineSimulatorDriver(SimulatorDriver):
         )
 
     # -- application properties -------------------------------------------
+    def _app_data_dirs(self) -> List[Path]:
+        """Existing per-app storage directories in this Wine prefix."""
+        found: List[Path] = []
+        for user in (user for user in self._user_candidates() if user):
+            for hint in APP_DATA_HINTS:
+                path = self.prefix / hint.format(user=user)
+                if path.is_dir():
+                    found.append(path)
+        return found
+
+    def clear_app_data(self) -> List[str]:
+        """Delete the app's cached sitemap and settings before a launch.
+
+        The app persists the last sitemap JSON in its own storage
+        (``SitemapStore``: ``sitemapJson``/``sitemapLabel``) under
+        ``GARMIN/APPS/DATA``. That cache survives a scenario, so without this a
+        scenario inherits the previous scenario's sitemap, logs
+        ``E2E:SITEMAP;result=unchanged`` and never requests its own page — which
+        is exactly how a run looked like a navigation or protocol failure.
+        ``LOGS`` is left alone; ``CIQ_LOG.YML`` is the crash evidence.
+
+        Returns the paths that were removed. ``E2E_WINE_KEEP_APP_DATA=1`` skips
+        the clear, for debugging the cache itself.
+        """
+        if os.environ.get(ENV_KEEP_APP_DATA, "").strip().lower() in (
+            "1",
+            "true",
+            "yes",
+            "on",
+        ):
+            self._record(
+                f"{ENV_KEEP_APP_DATA} is set: keeping the app's cached sitemap "
+                "and settings across launches"
+            )
+            return []
+        removed: List[str] = []
+        for path in self._app_data_dirs():
+            try:
+                shutil.rmtree(path)
+            except OSError as error:
+                self._record(f"warning: could not clear {path}: {error}")
+                continue
+            removed.append(str(path))
+        if removed:
+            self._record(
+                "cleared the app's persistent storage before launch "
+                f"({len(removed)} path(s), LOGS untouched): "
+                + ", ".join(removed)
+            )
+        else:
+            self._record(
+                "no app storage to clear before launch (first run in this prefix)"
+            )
+        return removed
+
+    def relaunch_app(
+        self, *, clear_data: bool = True, timeout_s: float = DEFAULT_READY_TIMEOUT
+    ) -> bool:
+        """Stop the app, optionally clear its storage, and launch it again.
+
+        Used by the contract's isolation case: a second launch must request its
+        sitemap instead of reporting ``result=unchanged`` from the cache.
+        """
+        device = self._device
+        if device is None or self._prg is None:
+            raise DriverError("relaunch_app() needs a started session")
+        self._record(
+            "relaunching the app"
+            + (" with its persistent storage cleared" if clear_data else " keeping its storage")
+        )
+        mark = len(self.events())
+        self._stop_app()
+        if clear_data:
+            self.clear_app_data()
+        time.sleep(1.0)
+        self._launch_app(device, reset_events=False, append_log=True)
+        self._started = True
+        try:
+            self.wait_ready(min(timeout_s, DEFAULT_READY_TIMEOUT))
+        except DriverError as error:
+            self._record(f"relaunched app did not become ready: {error}")
+            return False
+        for event in parse_lines(list(self.events())[mark:]):
+            if event.event == "SITEMAP":
+                self._record(
+                    f"relaunch sitemap result: {event.get('result')} "
+                    f"(code={event.get('code')})"
+                )
+                return event.get("result") != "unchanged"
+        return False
+
     def _seed_settings(self, settings: AppSettings) -> None:
         """Write an explicit properties file only when one is requested.
 

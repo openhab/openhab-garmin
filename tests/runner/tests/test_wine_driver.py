@@ -44,6 +44,7 @@ from e2e.sim.wine import (
     HTTPS_REQUIREMENTS_KEY,
     NIGHT_MODE_KEY,
     ENV_NIGHT_MODE,
+    ENV_KEEP_APP_DATA,
     _night_from_environment,
     night_mode_value,
     ScreenRect,
@@ -2001,6 +2002,10 @@ class _FakeDriver(SimulatorDriver):
         else:
             self._lines.append("E2E:VIEW;category=sitemap;view=ActionMenu;depth=3")
 
+    def relaunch_app(self, *, clear_data: bool = True, timeout_s: float = 90.0) -> bool:
+        self._lines.append("E2E:SITEMAP;result=success;code=200;bytes=1")
+        return True
+
     def press_measured(self, button: Button, count: int = 1, **kwargs: object):
         effect = "" if not self.press_changes_view else "view sitemap/ActionMenu"
         if self.repeat_view:
@@ -2821,6 +2826,75 @@ def test_probe_menus_reports_a_silent_menu_bar_without_raising(
     assert report.steps, "every candidate point is recorded"
     assert "does not take synthetic clicks on its menu bar" in report.verdict()
     assert "restart-in-mode remains the documented capability" in report.verdict()
+
+
+def test_the_app_storage_is_cleared_before_each_launch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The app caches the sitemap; a scenario must not inherit the previous one."""
+    driver = _driver(tmp_path)
+    data = (
+        tmp_path
+        / "prefix/drive_c/users/root/Temp/com.garmin.connectiq/GARMIN/APPS/DATA"
+    )
+    data.mkdir(parents=True)
+    (data / "sitemapJson.bin").write_text("cached", encoding="utf-8")
+    logs = (
+        tmp_path
+        / "prefix/drive_c/users/root/Temp/com.garmin.connectiq/GARMIN/APPS/LOGS"
+    )
+    logs.mkdir(parents=True)
+    (logs / "CIQ_LOG.YML").write_text("keep me", encoding="utf-8")
+    monkeypatch.delenv(ENV_KEEP_APP_DATA, raising=False)
+
+    removed = driver.clear_app_data()
+
+    assert removed, "the cached sitemap directory was removed"
+    assert not data.exists()
+    assert (logs / "CIQ_LOG.YML").read_text(encoding="utf-8") == "keep me"
+    log = _driver_log(driver)
+    assert "cleared the app's persistent storage" in log
+    assert "LOGS untouched" in log
+
+
+def test_the_storage_clear_can_be_switched_off(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    driver = _driver(tmp_path)
+    data = (
+        tmp_path
+        / "prefix/drive_c/users/root/Temp/com.garmin.connectiq/GARMIN/APPS/DATA"
+    )
+    data.mkdir(parents=True)
+    monkeypatch.setenv(ENV_KEEP_APP_DATA, "1")
+
+    assert driver.clear_app_data() == []
+    assert data.is_dir()
+    assert "keeping the app's cached sitemap" in _driver_log(driver)
+
+
+def test_a_relaunch_requires_a_fresh_sitemap_not_the_cache(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    driver = _driver(tmp_path)
+    driver._started = True
+    driver._device = _device("fenix7")
+    driver._prg = tmp_path / "app.prg"
+    monkeypatch.setattr(driver, "_stop_app", lambda: None)
+    monkeypatch.setattr(driver, "clear_app_data", lambda: [])
+    monkeypatch.setattr(driver, "_launch_app", lambda device, **kwargs: None)
+    monkeypatch.setattr(
+        driver,
+        "wait_ready",
+        lambda timeout: driver._events.append(
+            (0.0, "E2E:SITEMAP;result=success;code=200;bytes=1")
+        ),
+    )
+    monkeypatch.setattr("e2e.sim.wine.time.sleep", lambda seconds: None)
+
+    assert driver.relaunch_app() is True
+    log = _driver_log(driver)
+    assert "relaunch sitemap result: success" in log
 
 
 def test_key_override_option_sets_the_driver_environment(
