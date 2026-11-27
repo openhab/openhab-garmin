@@ -36,20 +36,60 @@ steps:
 
   - action: reset_shim
 
-  # `Text` is the first frame on the homepage.
+  # The press must land on the homepage: a click sent while the menu is still
+  # being built is consumed by the view change and never reaches the delegate.
+  - action: wait_for_view
+    description: The homepage menu is on screen before the opening press.
+    category: sitemap
+    view: HomepageMenu
+    timeout_ms: 30000
+
+  # `Text` is the first frame on the homepage. A Frame opens as a submenu, so
+  # wait for its page before paging: the app builds frame children
+  # asynchronously after the page is shown. `expect: input` requires the app's
+  # own event, so a repaint cannot pass for a delivered press.
   - action: press
     button: ENTER
+    expect: input
+    timeout_ms: 6000
+
+  - action: wait_for_event
+    description: The Text frame page is rendered before paging down.
+    event: VIEW
+    fields:
+      category: sitemap
+      view: PageMenu
+    timeout_ms: 30000
 
   - action: screenshot
     name: text-frame
 
-  # "Nested page" is the fifth entry in that frame.
+  # The entries are, in order: Temperature, TV, Window, Last Update, the static
+  # "This text has no item" text, then "Nested page" — so five page-downs from
+  # the first entry. The static text occupies an index even though it cannot be
+  # activated; counting it is what keeps this navigation unambiguous.
+  # Paging is handled inside Menu2 and never reaches the delegate, so this is
+  # measured on the pixels from a settled baseline: the highlight moves.
   - action: press
     button: DOWN
-    count: 4
+    count: 5
+    expect: effect
+    timeout_ms: 6000
 
+  # Opening the nested page must reach the delegate.
   - action: press
     button: ENTER
+    expect: input
+    timeout_ms: 6000
+
+  - action: wait_for_event
+    description: The nested page is open (one level deeper than the frame page).
+    event: VIEW
+    fields:
+      category: sitemap
+      view: PageMenu
+      depth: 3
+    timeout_ms: 15000
 
   - action: screenshot
     name: nested-page

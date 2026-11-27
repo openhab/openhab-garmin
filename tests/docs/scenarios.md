@@ -269,11 +269,28 @@ a run.
     status: 200
 ```
 
-`shim_requests` matches on `method`, `path`, `path_prefix`, `body_contains`,
-`body_equals`, `status`, `reset`, `matched_rule` and `faulted`, and requires an
-explicit `min_count` or `max_count`. A failure prints the expectation, the
-observed status/fault counts and the whole trace, so "the fault was not served"
-and "the request never arrived" are different messages.
+`shim_requests` matches on `method`, `path`, `path_contains`, `path_prefix`,
+`body_contains`, `body_equals`, `status`, `reset`, `matched_rule` and `faulted`,
+and requires an explicit `min_count` or `max_count`. `path_contains` is the
+substring form for a request target including its query string; `path` is exact,
+so it cannot be combined with either of the others. A failure prints the
+expectation, the observed status/fault counts and the whole trace, so "the fault
+was not served" and "the request never arrived" are different messages.
+
+### Command payloads
+
+A REST command is **JSON-wrapped**, not raw: `POST /rest/items/<item>` with
+`Content-Type: application/json` and the body `{"value":"ON"}`
+(`source/main/data/communications/web-requests/command/NativeCommandRequest.mc`).
+openHAB 5.0 and newer accept that; older versions only took raw content, which
+the Garmin SDK cannot send, so "fixing" the app back to a raw body would break
+the command path on the versions the app supports. Scenarios assert the exact
+JSON payload — it is the only thing pinning that contract.
+
+The webhook path is a `GET`, so it has no body: the command travels in the query
+as `action=sendCommand&itemName=<item>&command=<cmd>`
+(`WebhookCommandRequest`). `webhook-command-path` pins the whole query with
+`path_contains` instead of a bare path match.
 
 ### Asserting on an injected fault
 

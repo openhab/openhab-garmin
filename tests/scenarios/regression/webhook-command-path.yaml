@@ -44,7 +44,33 @@ steps:
 
   - action: reset_shim
 
-  # Widgets is the first frame -> Toggle Switch.
+  # The press must land on the homepage, not on the loading view: a click sent
+  # while the menu is still being built is consumed by the view change and never
+  # reaches the delegate. The app-side evidence cannot tell those apart on its
+  # own, so wait for the view first.
+  - action: wait_for_view
+    description: The homepage menu is on screen before the opening press.
+    category: sitemap
+    view: HomepageMenu
+    timeout_ms: 30000
+
+  # Widgets is the first frame -> its first element is the Toggle Switch.
+  # A Frame opens as a submenu, so the element needs a second select.
+  # `expect: input` requires the app's own event, so a repaint cannot pass for a
+  # delivered press; the driver re-issues an unacknowledged press once.
+  - action: press
+    button: ENTER
+    expect: input
+    timeout_ms: 6000
+
+  - action: wait_for_event
+    description: The Widgets frame page is rendered before selecting its element.
+    event: VIEW
+    fields:
+      category: sitemap
+      view: PageMenu
+    timeout_ms: 30000
+
   - action: press
     button: ENTER
 
@@ -54,11 +80,18 @@ steps:
     min_count: 1
     timeout_ms: 15000
 
+  # The webhook is a GET, so its payload is the query string, not a body:
+  # action and itemName are fixed in WebhookCommandRequest, command is appended.
+  # Asserting the query is what pins the documented payload; a bare path match
+  # would only prove that *some* webhook request happened.
   - action: assert
-    description: The command used the webhook GET path, not the REST item path.
+    description: >-
+      The command is carried in the webhook query (action, itemName and command
+      as GET parameters), not as a request body.
     shim_requests:
       method: GET
       path_prefix: /webhook/e2e-webhook
+      path_contains: "action=sendCommand&itemName=E2E_Toggle&command=ON"
       min_count: 1
 
   - action: assert

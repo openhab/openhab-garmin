@@ -841,8 +841,11 @@ Do this once after the stack is up, and again after touching fixtures or the shi
    pressing. Expected: identical content and ordering; Edge devices show the
    Settings entry at the end of the homepage.
 1. **Command path** – open `Widgets` → `Toggle Switch`, press ENTER. Expected:
-   the shim trace gains exactly one `POST /rest/items/E2E_Toggle` with body `ON`
-   (`python -m e2e reset` then re-check with `GET /__shim__/requests`).
+   the shim trace gains exactly one `POST /rest/items/E2E_Toggle` with the
+   JSON-wrapped body `{"value":"ON"}` (`python -m e2e reset` then re-check with
+   `GET /__shim__/requests`). The payload is JSON because the Garmin SDK cannot
+   send raw request content; see
+   [docs/scenarios.md](docs/scenarios.md#command-payloads).
 1. **Fault handling** – install a fault script and confirm the documented error
    class:
 

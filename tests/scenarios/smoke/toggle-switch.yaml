@@ -44,7 +44,32 @@ steps:
 
   - action: reset_shim
 
-  # Widgets is the first frame of garmin_commands.
+  # The press must land on the homepage: a click sent while the menu is still
+  # being built is consumed by the view change and never reaches the delegate.
+  - action: wait_for_view
+    description: The homepage menu is on screen before the opening press.
+    category: sitemap
+    view: HomepageMenu
+    timeout_ms: 30000
+
+  # Widgets is the first frame of garmin_commands: open it, then select its
+  # first element (the toggle). A Frame is a submenu in the app, so one ENTER
+  # only opens the page; the second activates the element. `expect: input`
+  # requires the app's own event, so a repaint cannot pass for a delivered
+  # press; the driver re-issues an unacknowledged press once.
+  - action: press
+    button: ENTER
+    expect: input
+    timeout_ms: 6000
+
+  - action: wait_for_event
+    description: The Widgets frame page is rendered before selecting its element.
+    event: VIEW
+    fields:
+      category: sitemap
+      view: PageMenu
+    timeout_ms: 30000
+
   - action: press
     button: ENTER
 
@@ -54,14 +79,19 @@ steps:
     min_count: 1
     timeout_ms: 15000
 
+  # openHAB 5.0 and newer accept the command JSON-wrapped; the app sends
+  # {"value":"ON"} with Content-Type: application/json (NativeCommandRequest),
+  # because the Garmin SDK cannot send raw request content.
   - action: assert
-    description: Exactly one command is sent, addressed to the selected item.
+    description: >-
+      Exactly one command is sent, addressed to the selected item, as the
+      documented JSON payload {"value":"ON"}.
     shim_requests:
       method: POST
       path_prefix: /rest/items/E2E_Toggle
       min_count: 1
       max_count: 1
-      body_equals: "ON"
+      body_equals: '{"value":"ON"}'
       status: 200
 
   - action: screenshot

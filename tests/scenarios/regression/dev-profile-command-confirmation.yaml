@@ -101,14 +101,17 @@ steps:
     min_count: 1
     timeout_ms: 15000
 
+  # The documented payload is JSON-wrapped (NativeCommandRequest), not raw.
   - action: assert
-    description: Confirming sends exactly one command for the selected mapping.
+    description: >-
+      Confirming sends exactly one command for the selected mapping, as the
+      documented JSON payload {"value":"ON"}.
     shim_requests:
       method: POST
       path_prefix: /rest/items/E2E_GarageDoor
       min_count: 1
       max_count: 1
-      body_equals: "ON"
+      body_equals: '{"value":"ON"}'
       status: 200
 
   - action: assert

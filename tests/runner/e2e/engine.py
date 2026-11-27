@@ -385,6 +385,7 @@ class ScenarioRunner:
                 requests,
                 method=step.get("method"),
                 path=step.get("path"),
+                path_contains=step.get("path_contains"),
                 path_prefix=step.get("path_prefix"),
                 matched_rule=step.get("matched_rule"),
                 faulted=step.get("faulted"),
