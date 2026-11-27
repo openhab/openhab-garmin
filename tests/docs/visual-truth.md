@@ -31,6 +31,27 @@ older SDK (see
 [simulator-driver.md](simulator-driver.md#-1001-on-a-healthy-200)). A `VIEW`
 line means a view was **constructed**, not painted.
 
+Revision note (2026-11-27, capturing a golden inside the runner): the runner
+mounts the checkout **read-only** at `/work`, and `/artifacts` is a separate
+writable volume. `--update-goldens` writes with a plain file copy, so a container
+run that targets `tests/goldens/` fails with `[Errno 30] Read-only file system`
+_after_ the screenshot has been taken and the view verified — the capture is
+valid, only the write is not. Two routes:
+
+```bash
+# in the container: write where it is writable, then copy in from the host
+python -m e2e run <scenario> --driver wine --update-goldens \
+    --goldens /artifacts/goldens
+cp <artifacts>/goldens/<device>/<name>.png tests/goldens/<device>/<name>.png
+```
+
+or run `--update-goldens` on the host, where `tests/goldens` is writable. The
+screenshot in the scenario artifacts
+(`<artifacts>/<suite>/<scenario>/NN-<name>.png`) is byte-for-byte the golden,
+because `update_golden()` is a `shutil.copyfile`; copying that file is an
+equivalent capture, and `unsupported-widget-error.png` in this repository was
+committed that way (sha256 `a4023d7f…`, captured at `8cac8ab`).
+
 Revision note (2026-11-27, window goldens and the state guard): a golden is the
 **whole simulator window**, captured with the pointer parked and with the view
 verified from the trace before the image is written or compared. The first

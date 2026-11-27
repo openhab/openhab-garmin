@@ -1466,7 +1466,17 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--device", help="override the device for every scenario")
     run.add_argument("--driver", choices=DRIVER_NAMES, help="simulator driver (default: wine, or null with --dry-run)")
     run.add_argument("--dry-run", action="store_true", help="no Docker, no SDK, no simulator: exercise scenario wiring only")
-    run.add_argument("--update-goldens", action="store_true", help="replace golden images with the current screenshots")
+    run.add_argument(
+        "--update-goldens",
+        action="store_true",
+        help=(
+            "replace golden images with the current screenshots. Writes under "
+            "--goldens (default tests/goldens), which a container run cannot "
+            "write because the checkout is mounted read-only: pass "
+            "`--goldens /artifacts/goldens` and copy the file in, or capture on "
+            "the host"
+        ),
+    )
     run.add_argument("--skip-events", action="store_true", help="skip assertions that need the console event stream")
     run.add_argument("--prg", help="use an existing PRG instead of building one")
     run.add_argument(
@@ -1495,7 +1505,14 @@ def build_parser() -> argparse.ArgumentParser:
             "under the artifacts directory"
         ),
     )
-    run.add_argument("--goldens", help="goldens directory (default: tests/goldens)")
+    run.add_argument(
+        "--goldens",
+        help=(
+            "goldens directory (default: tests/goldens). Use /artifacts/goldens "
+            "in the runner container: the checkout is read-only, so "
+            "--update-goldens cannot write tests/goldens there"
+        ),
+    )
     add_glance_profile(run)
     run.set_defaults(handler=_cmd_run)
 
