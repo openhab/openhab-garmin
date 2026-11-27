@@ -188,7 +188,7 @@ class SitemapSwitch extends SitemapWidget {
     // 2. The display state from the widget, if present.
     // 3. A matching entry in the item’s state descriptions.
     // 4. A matching entry in the item’s command descriptions.
-    // 5. The raw state itself. If the state is numeric and a unit is defined for the item, the unit is appended.
+    // 5. The raw state itself. If the state is numeric and a unit is defined for the item, the unit is appended. Percentages (Dimmer and Rollershutter items) are formatted without decimal places.
     private function generateSwitchDisplayState() as String {
         var switchDisplayState = null;
 
@@ -232,6 +232,7 @@ class SitemapSwitch extends SitemapWidget {
                     // the maximum number of decimal places, even if they
                     // are zero. Therefore we determine the actual number
                     // of decimal places and format to that precision.
+                    // Percentages are formatted without decimal places.
                     switchDisplayState = SitemapNumeric.formatStateWithUnitShortCustom( numericState, _switchItem.getUnit() );
                 }
             } else {

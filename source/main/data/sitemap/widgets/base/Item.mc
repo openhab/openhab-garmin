@@ -18,6 +18,10 @@ class Item {
     // If state is missing, NULL or UNDEF it will be set to this constant.
     public static const NO_STATE = "NULL";
 
+    // The unit symbol for percentages. Percentages are always displayed
+    // without decimal places, see `SitemapNumeric.formatStateWithUnitShortCustom()`.
+    public static const UNIT_PERCENT = "%";
+
     // See the get accessors for documentation
     private var _name as String;
     private var _type as String;
@@ -62,9 +66,9 @@ class Item {
         // regardless of the JSON. For all other types we
         // use the unit from the JSON if present
         if( _type.equals( "Dimmer" ) ) {
-            _unit = "%";
+            _unit = UNIT_PERCENT;
         } else if( _type.equals( "Rollershutter" ) ) {
-            _unit = "%";
+            _unit = UNIT_PERCENT;
         } else {
             _unit = json.getOptionalString( "unitSymbol" );
         }

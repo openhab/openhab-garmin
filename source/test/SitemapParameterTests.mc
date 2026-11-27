@@ -87,8 +87,8 @@ class SitemapParameterTests {
         ) as SitemapNumeric;
         logger.debug( "slider display state=" + slider.getDisplayState() );
 
-        Test.assertEqualMessage( "45.5%", slider.getDisplayState(),
-            "a Dimmer state keeps its value and takes the % unit" );
+        Test.assertEqualMessage( "46%", slider.getDisplayState(),
+            "a fractional Dimmer state takes the % unit without decimal places" );
         Test.assertEqualMessage( "45.5", slider.formatState( 45.5 ), "formatState uses the step decimals" );
         return true;
     }

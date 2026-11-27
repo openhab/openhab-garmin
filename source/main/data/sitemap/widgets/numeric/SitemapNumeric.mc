@@ -150,7 +150,9 @@ class SitemapNumeric extends SitemapWidget {
     // only the decimal places present in the state value.
     //
     // For example, if the state is 20, it is formatted as 20.
-    // If the state is 20.5, it is formatted as 20.5. 
+    // If the state is 20.5, it is formatted as 20.5.
+    // Percentages are always formatted without decimal places,
+    // see formatStateWithUnitShortCustom().
     //
     // Intended for menu item display, where conserving space
     // is important.
@@ -164,6 +166,16 @@ class SitemapNumeric extends SitemapWidget {
     // Can be used by other classes to ensure formatting consistent
     // with the rules applied by this class.
     public static function formatStateWithUnitShortCustom( state as Float, unit as String ) as String {
+        // Percentages are whole numbers in openHAB, so they are always
+        // displayed without decimal places. This also hides fractional
+        // states, which occur for example when a Group item aggregates
+        // the states of its members (e.g., an average of 42.5 is
+        // displayed as 43%). The value is rounded half up, matching
+        // the state formatting in openHAB.
+        if( unit.equals( Item.UNIT_PERCENT ) ) {
+            return formatStateWithDecimals( CustomMath.round( state, 0 ).toFloat(), 0 ) + unit;
+        }
+
         return formatStateWithDecimals( 
             state, 
             CustomMath.getDecimalPlaces( state, UI_NUMERIC_MAX_DECIMAL_POINTS ) 
@@ -178,9 +190,12 @@ class SitemapNumeric extends SitemapWidget {
     // For example, if step is 0.5, the value 20 is formatted as 20.0.
     //
     // Used for display in the full-screen NumberPicker view.
+    // The full-screen view is not affected by the percentage rule
+    // applied by formatStateWithUnitShortCustom(), because the
+    // displayed values are defined by the step value.
     public function formatStateWithUnitLong( state as Float ) as String {
         var unit = _numericItem.getUnit();
-        if( unit.length() > 0 && ! unit.equals( "%" ) ) {
+        if( unit.length() > 0 && ! unit.equals( Item.UNIT_PERCENT ) ) {
             unit = " " + unit;
         }
         return formatState( state ) + unit;
