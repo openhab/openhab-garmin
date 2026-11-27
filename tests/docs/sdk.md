@@ -46,6 +46,30 @@ archive use different directory layouts, and a contributor may have either.
   all; see [Device definitions](#device-definitions) and
   [Device-scoped jungle](#device-scoped-jungle).
 
+## The entrypoint is in the image, the harness is mounted
+
+`entrypoint.sh` runs from the image, while `tests/runner` is bind-mounted at
+`/work`. Changing the harness therefore does **not** change the entrypoint:
+restarting an existing image runs the old startup logic against the new checks.
+That produced a misleading failure in practice — an image built before
+`link-fonts` existed left the font pack unstaged, and the new `sdk-check`
+reported "no Connect IQ device fonts are usable … does not exist", pointing at
+the fonts while the real cause was the stale image.
+
+After changing `entrypoint.sh`, the `Dockerfile` or anything else baked into the
+runner image:
+
+```bash
+docker compose build runner
+docker compose up -d
+```
+
+To make the mismatch self-evident, `entrypoint.sh` writes the SHA-256 of its own
+bytes to `/run/ciq-entrypoint.sha256` at start. `preflight` compares that with
+the mounted copy and reports `docker.entrypoint` as a failure naming the rebuild
+command, and `sdk-check` warns about it before the font check runs, so a stale
+image is not mistaken for a missing pack.
+
 ## Writable copy at container start
 
 The mount is read-only by design, but the compiler is not: `monkeyc` writes
@@ -262,6 +286,8 @@ the simulator, the device definitions and the font pack, or explains exactly
 which of those is missing. Inside the stack the same commands run from
 `entrypoint.sh` after the SDK has been copied to its writable path; a missing
 font pack stops the container rather than producing a run that renders nothing.
+If the entrypoint reports itself stale, rebuild the image before reading the font
+diagnosis — see [The entrypoint is in the image](#the-entrypoint-is-in-the-image-the-harness-is-mounted).
 
 ## Why the module also knows about the simulator
 

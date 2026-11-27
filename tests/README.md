@@ -64,6 +64,36 @@ Nothing here provisions a VM, changes infrastructure, or ships the Connect IQ SD
 - Python 3.10+ on the host for the unit tests and the CLI (`tests/runner`,
   declared as `requires-python` in `runner/pyproject.toml`; CI uses 3.12).
 
+**Rebuild the image after changing anything baked into it.** `entrypoint.sh` and
+the `Dockerfile` live in the image, while the harness is bind-mounted from the
+checkout. A container recreated from an older image therefore runs the **old**
+entrypoint against the **new** checks, and the failing check names the wrong
+cause — a stale image once reported "no Connect IQ device fonts are usable"
+because the old entrypoint never staged them. After any such change:
+
+```bash
+docker compose build runner
+docker compose up -d
+```
+
+`preflight` compares the running entrypoint's SHA-256 with the checkout's and
+fails with that command when they differ (`docker.entrypoint`), so the mismatch
+is visible in one line instead of through a misleading font error.
+
+### Guest runbook
+
+The dedicated E2E VM keeps the licensed assets outside the checkout:
+
+| What | Where | Wired by |
+| --- | --- | --- |
+| Connect IQ SDK | `/home/ansible/ciq-sdk-9.3.0` | `CIQ_SDK_HOST_PATH` in `tests/compose/.env` |
+| Device font pack | `/home/ansible/.Garmin/ConnectIQ/Fonts` | `CIQ_FONTS_HOST_PATH` in `tests/compose/.env` |
+
+Both variables must be **present and non-empty**: Compose mounts them read-only
+into the runner, and an absent `CIQ_FONTS_HOST_PATH` mounts an empty directory, so
+the container fails with a font message that looks like a missing pack. `preflight`
+reports both (`sdk.fonts-env` names the guest path when the variable is unset).
+
 ## Host preflight
 
 Run this on the host, from `tests/runner`, before the first `docker compose up`:
@@ -79,9 +109,9 @@ confusing failure that would otherwise appear in the middle of a run.
 
 | Group | What it checks |
 | --- | --- |
-| `docker` | `docker` is on `PATH`, the daemon answers with its server version, Docker Compose v2 is at least 2.24 (`compose.host.yaml` uses `!reset`), and the base plus host overlay parse with `docker compose config`. |
+| `docker` | `docker` is on `PATH`, the daemon answers with its server version, Docker Compose v2 is at least 2.24 (`compose.host.yaml` uses `!reset`), the base plus host overlay parse with `docker compose config`, and the running container's `entrypoint.sh` matches the checkout's (a stale image names the rebuild command). |
 | `compose` | The base, dev and host overlays parse through the static loader and the loopback wiring matches `config/network.yaml`. No Docker needed. |
-| `sdk` | `CIQ_SDK_HOST_PATH` (or `CIQ_SDK_ROOT` / `CIQ_SDK_PATH`) points at the SDK, `linux/bin/monkeyc` and `linux/bin/monkeydo` exist for the Linux side, `windows/bin/simulator.exe` exists for the Wine side, `version.txt` matches `config/sdk.version`, and `$HOME/.Garmin/ConnectIQ/Fonts` holds `.cft`/`.ttf` device faces. |
+| `sdk` | `CIQ_SDK_HOST_PATH` (or `CIQ_SDK_ROOT` / `CIQ_SDK_PATH`) points at the SDK, `linux/bin/monkeyc` and `linux/bin/monkeydo` exist for the Linux side, `windows/bin/simulator.exe` exists for the Wine side, `version.txt` matches `config/sdk.version`, `$HOME/.Garmin/ConnectIQ/Fonts` holds `.cft`/`.ttf` device faces, and `CIQ_FONTS_HOST_PATH` is set in `tests/compose/.env` (an absent variable mounts an empty directory and looks like a missing pack). |
 | `pins` | `compose/.env` pins the images in `config/openhab.version`; this reuses the `validate-compose --check-pins` validation rather than duplicating it. |
 | `ports` | The loopback ports in `config/network.yaml` can be bound on `127.0.0.1`. A listener is named with its process when `ss` can determine it. |
 | `layout` | The fixtures, scenarios, config, Compose files and `monkey.jungle` the runner mounts are present, and the artifacts directory is writable. |
@@ -818,6 +848,7 @@ manual counterpart to `tests/runner/tests/test_compose.py` and
 | `compose: services.runner.E2E_ARTIFACTS=... is inside the read-only mount` | the artifacts volume was moved back under `/work`; it must be its own mount (`/artifacts`) |
 | `error: no Connect IQ device definitions were found` | the SDK ships no `Devices/` directory and `CIQ_DEVICES_HOST_PATH` is empty; see [docs/sdk.md](docs/sdk.md) |
 | `error: no Connect IQ device fonts are usable at ...` | the pack is missing, empty or has no `.cft`/`.ttf` faces; set `CIQ_FONTS_HOST_PATH` to a working installation's `ConnectIQ/Fonts`; the SDK archive does not ship it |
+| `warning: the running entrypoint is … but the harness ships …` | the image predates the checkout: `docker compose build runner`. A stale entrypoint skips new startup steps and makes the failing check name the wrong cause |
 | `Invalid Font Specified` in the console with a watch face on screen | the same missing font pack, on a run started outside the container; run `python -m e2e link-fonts` |
 | `UnsatisfiedLinkError: libharfbuzz.so.0` | the runner image is missing the font stack; rebuild it (`docker compose build runner`) |
 | `Read-only file system` while writing into the SDK | the SDK copy in `entrypoint.sh` was bypassed; the mount is read-only on purpose |
