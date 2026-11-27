@@ -40,7 +40,7 @@ from .settings import AppSettings, load_settings
 from .shim import ShimClient, ShimError, ShimRequest
 from .sim import Button, DriverError, SimulatorDriver, create_driver
 from .sdk import SdkError, SdkLayout, require_fonts
-from .trace import EventMatch, TraceLog
+from .trace import EventMatch, TraceLog, parse_lines
 
 Log = Callable[[str], None]
 
@@ -385,9 +385,59 @@ class ScenarioRunner:
                 raise AssertionFailure(
                     f"expected at least {minimum} request(s) matching "
                     f"{self._describe_match(step)} within {timeout_s:.1f}s; "
-                    f"recorded:\n{assertions.format_requests(requests)}"
+                    f"recorded:\n{assertions.format_requests(requests)}\n"
+                    + self._describe_app_state(context)
                 )
             time.sleep(0.25)
+
+    def _describe_app_state(self, context: "_Context") -> str:
+        """The app's own state, for a wait that timed out with no requests.
+
+        "No requests recorded" is compatible with a healthy app that is merely
+        slow and with an app that crashed before its first poll; without this,
+        the second one sends the reader to the fixtures and the network. The
+        last view, any error view and the console tail separate them.
+        """
+        try:
+            events = parse_lines(list(context.driver.events()))
+        except Exception:  # noqa: BLE001 - diagnostics must not mask the failure
+            return "  app state: unavailable"
+        if not events:
+            return "  app state: the app printed nothing at all (see logs/console.log)"
+        last_view = next(
+            (event for event in reversed(events) if event.event == "VIEW"), None
+        )
+        errors = [event for event in events if event.event == "ERRORVIEW"]
+        lines = [
+            "  app state: last view="
+            + (
+                f"{last_view.get('category')}/{last_view.get('view')}"
+                if last_view is not None
+                else "none"
+            )
+        ]
+        if errors:
+            lines.append(
+                "  app state: ERRORVIEW id="
+                + str(errors[-1].get("id"))
+                + " (the app showed an error view, not a working page)"
+            )
+        runtime_errors = []
+        getter = getattr(context.driver, "runtime_errors", None)
+        if callable(getter):
+            try:
+                runtime_errors = list(getter())
+            except Exception:  # noqa: BLE001
+                runtime_errors = []
+        for error in runtime_errors[:3]:
+            label = getattr(error, "label", None) or getattr(error, "kind", "error")
+            lines.append(f"  app state: simulator log reports {label}")
+        tail = [event for event in events[-6:]]
+        lines.append(
+            "  console tail:\n"
+            + "\n".join(f"    {event.raw}" for event in tail)
+        )
+        return "\n".join(lines)
 
     def _do_press(self, step: Step, context: _Context) -> Tuple[str, str, List[str]]:
         button = Button(step.get("button"))

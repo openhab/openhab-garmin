@@ -58,8 +58,9 @@ engine reports event and golden assertions as **skipped**, never passed.
   has no physical buttons, so its press cases are skipped and `tap` covers its
   input.
 - `app-data-reset` relaunches the app with its cached sitemap removed and requires
-  a `SITEMAP` result that is not `unchanged`, so scenario isolation is proven
-  rather than assumed (see "Scenario isolation: the app caches the sitemap").
+  a `SITEMAP` result that is not `unchanged` **and** a non-error view, so a reset
+  that breaks the app cannot pass (see "Scenario isolation: the app caches the
+  sitemap"). `isolation-check` runs the same proof twice back to back.
 - `press-effect` presses ENTER, MENU and DOWN (and taps on touch devices) and
   requires a different view or a screen change in the screen rectangle; a repeat
   of the same view never counts.
@@ -181,7 +182,7 @@ PIDs instead.
 | `events` | implemented | `monkeydo` stdout/stderr with receipt timestamps; `stdbuf` disables its block buffering when available. |
 | `stop` | implemented | Terminates the app and the simulator by PID; leaks nothing into the next scenario. |
 | `restart_in_mode` | implemented (Wine), start-up only | Relaunches the app with another `simulator.ini` (`BleState`/`WifiState`, `nightMode`) and waits until it is ready. Proves start-up mode; never claims a mid-run transition. |
-| `clear_app_data` / `relaunch_app` | implemented | Removes the app's cached sitemap and settings (`APPS/DATA`, `APPS/SETTINGS`, `GARMIN/Settings`) before every launch, and can relaunch with a cleared cache. `LOGS` is untouched. |
+| `clear_app_data` / `relaunch_app` | implemented | Removes **only** the sitemap cache (`APPS/DATA`, `APPS/TEMP`) before every launch — never `APPS/SETTINGS`, `GARMIN/Settings` or `LOGS` — and can relaunch with a cleared cache. |
 | `probe_menus` | implemented (Wine), evidence only | Clicks along the menu bar row, reports every candidate point with its screen delta and any new X window, and screenshots each step. Asserts nothing; `simulator-probe` runs it. |
 | mode (`ble`/`wifi`/`offline`) | partial, start-up only | The startup keys are written and reported; `restart_in_mode()` relaunches into another mode and says in the log that it proves start-up mode, not a mid-run transition. A transition needs the simulator menus, which are probed by `simulator-probe` and still waived (see "Runtime mode and night mode"). |
 | night mode | partial, start-up only | `nightMode` is an ini key: `E2E_WINE_NIGHT_MODE=1` (or a restart with `--night`) starts in night mode. The night theme changing mid-run is a menu action and stays waived. |
@@ -258,16 +259,48 @@ missing element:
 | expected `E2E:ERROR;kind=temporary`, saw `SITEMAP;result=unchanged;code=200` | the injected fault never reached the app |
 | expected `POST /rest/items/E2E_Toggle`, only GETs arrived | the toggle is not on the cached page |
 
-`start()` therefore calls `clear_app_data()` **before** every `monkeydo` launch:
-it removes `GARMIN/APPS/DATA`, `GARMIN/APPS/SETTINGS` and `GARMIN/Settings` in
-the prefix and logs every path it removed. `GARMIN/APPS/LOGS` is deliberately
-left alone — `CIQ_LOG.YML` is the crash evidence. `E2E_WINE_KEEP_APP_DATA=1`
-skips the clear, for debugging the cache itself.
+`start()` therefore calls `clear_app_data()` **before** every `monkeydo` launch,
+and the clear is deliberately narrow:
 
-The contract's **`app-data-reset`** case proves the isolation rather than
-assuming it: it relaunches the app with the storage cleared and requires a
-`SITEMAP` result that is not `unchanged`. A green contract therefore means "this
-scenario got a fresh app", which is what makes a red one mean something.
+| Cleared | Why |
+| --- | --- |
+| `GARMIN/APPS/DATA` | the app's `Storage`, which holds `sitemapJson`/`sitemapLabel` |
+| `GARMIN/APPS/TEMP` | transient simulator state, when it exists |
+
+| Kept | Why |
+| --- | --- |
+| `GARMIN/APPS/SETTINGS` | the app's property table (`<APP>.SET`); removing it kills the app during initialisation |
+| `GARMIN/Settings` | device settings (language, connection state) |
+| `GARMIN/APPS/LOGS` | `CIQ_LOG.YML` is the crash evidence |
+
+An earlier version cleared the settings directories too, and every scenario then
+failed with **zero requests**: `AppSettings.getString` does
+`Properties.getValue( name ) as String` and then `value.equals( "" )`, so a
+missing property store yields `null` and throws `Unexpected Type Error` at
+`AppSettings.mc:128`. The launch still "passed" because an error view counts as a
+non-glance view — a false green — and the failure surfaced later as "no requests
+recorded". Two guards now make that impossible to miss:
+
+- the contract's **`app-data-reset`** case requires a `SITEMAP` result that is not
+  `unchanged` **and** that the app reached a non-error view; an `ERRORVIEW` fails
+  the case with the `APPS/SETTINGS` explanation;
+- `wait_for_request` appends the app's own state to its timeout message — the last
+  view, any `ERRORVIEW` id, simulator-log error classes and the console tail —
+  instead of only "no requests recorded".
+
+`E2E_WINE_KEEP_APP_DATA=1` skips the clear, for debugging the cache itself.
+
+The isolation proof is a command, run with a single PRG twice back to back:
+
+```bash
+python -m e2e isolation-check --prg <built.prg>
+```
+
+It resets the shim before each run, launches the same app twice, prints both
+request sequences, and fails when either is empty, when they differ, or when the
+second run reports `SITEMAP;result=unchanged` (the cache was served). Run it on
+the guest after any change to the reset, because it is the measurement the
+contract case can only approximate.
 
 Each scenario starts with no cached sitemap, so `result=unchanged` cannot leak
 across runs. The shim's trace **is** reset per scenario (`POST /reset` before the
@@ -1029,7 +1062,8 @@ is enough to act on it.
 | `press[<button>] … effect=none` | the press ran but changed nothing measurable. A single press can legitimately do nothing. Reported as evidence (`skipped`); the sequence is the verdict | check the mechanism and verified pointer in `logs/driver.log`; then the order of the presses |
 | `press-sequence … produced no effect` | no press in the sequence had an effect **while the app was still on the glance**, so delivery has not been shown | read the three mechanisms; delivery on this guest is nondeterministic and the launch retries, so a single silent sequence is not conclusive. `--key DOWN=<keysym>` tries another binding. On an open app the case reports `skipped` instead |
 | `the pointer never reached the simulator window` | the click would have gone to the root window or another client, so it was refused | the window moved or is not mapped on this display; re-run, and confirm `xdotool getmouselocation` names the simulator window. This is the failure mode behind every "the mouse is silent" measurement |
-| `app-data-reset … did not request its sitemap` | the relaunch answered from the app's cached sitemap; the storage was not cleared | read the `cleared the app's persistent storage` line for the paths actually removed, and check `E2E_WINE_KEEP_APP_DATA` is not set |
+| `app-data-reset … did not request its sitemap` | the relaunch answered from the app's cached sitemap; the storage was not cleared | read the `cleared the app's sitemap cache` line for the paths actually removed, and check `E2E_WINE_KEEP_APP_DATA` is not set |
+| `app-data-reset … showed an error view` | the reset removed something the app initialises from: `AppSettings` throws on a missing property table | clear **only** `APPS/DATA` and `APPS/TEMP`; `APPS/SETTINGS` and `GARMIN/Settings` must survive. `Unexpected Type Error` at `AppSettings.mc:128` in `CIQ_LOG.YML` confirms it |
 | `the app reported system language …` | the numeric index was written but the app reports another language, so the index is wrong or was ignored | run `python -m e2e language-scan --prg <prg> --write` and check `tests/config/simulator-languages.json` |
 | `language 'pol' has no measured simulator index` | the code is not in the measured map, so the run would be in another language | measure it with `language-scan --write`; until then the run is reported blocked |
 | `the app showed the configuration error view` | the PRG was built without the requested properties | rebuild with `e2e build --settings <fixture>`, or pass a PRG built that way |

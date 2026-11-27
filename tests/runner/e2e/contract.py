@@ -535,6 +535,13 @@ def run_contract(
         fresh = relaunch(clear_data=True)
         events = parse_lines(list(driver.events())[mark:])
         results = [event.get("result") for event in events if event.event == "SITEMAP"]
+        error_views = [event for event in events if event.event == "ERRORVIEW"]
+        working = [
+            event
+            for event in events
+            if event.event == "VIEW"
+            and event.get("category") not in (None, "glance", "error")
+        ]
         if not fresh:
             raise AssertionError(
                 "the relaunched app did not request its sitemap after its storage "
@@ -542,10 +549,28 @@ def run_contract(
                 "Either the storage path was not cleared or the app answered from "
                 "another cache; logs/driver.log lists every path that was removed."
             )
+        if error_views:
+            raise AssertionError(
+                "the app showed an error view after its storage was cleared "
+                f"(ERRORVIEW id={error_views[-1].get('id')}); a launch that lands "
+                "on an error view is not a working app, so this case cannot pass.\n"
+                "The reset must clear only the sitemap cache (GARMIN/APPS/DATA and "
+                "APPS/TEMP). Removing GARMIN/APPS/SETTINGS or GARMIN/Settings "
+                "breaks AppSettings during initialisation "
+                "(`Unexpected Type Error` at AppSettings.mc:128). See "
+                "logs/CIQ_LOG.YML and logs/driver.log."
+            )
+        if not working:
+            raise AssertionError(
+                "the app requested its sitemap but never reached a non-error view "
+                f"after the storage was cleared (SITEMAP results: {results}); the "
+                "reset may have broken the app's state. See logs/CIQ_LOG.YML."
+            )
         return (
-            "the second launch requested its sitemap after the app storage was "
-            f"cleared (SITEMAP results: {results}); no cached "
-            "`result=unchanged` carried over"
+            "the second launch requested its sitemap after the sitemap cache was "
+            f"cleared (SITEMAP results: {results}) and reached "
+            f"{working[-1].get('category')}/{working[-1].get('view')}; no cached "
+            "`result=unchanged` and no error view carried over"
         )
 
     if driver.supports_events:
