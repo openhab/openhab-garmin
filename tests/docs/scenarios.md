@@ -228,22 +228,51 @@ fenix and an Edge are not comparable images. Capture them with
 compared against the screenshot captured earlier in the same scenario.
 
 **The golden is the whole simulator window, and the app's screen is never
-assumed to be centred, square or even inside a known rectangle** — it is not
-always centred, and the latest bike computers crop the top of the device. A
-capture therefore needs no screen rectangle at all. Each capture is taken with
-the pointer parked at a fixed window point (the simulator's status strip prints
-the pointer position), so two captures of the same view differ only by the
-strip's live counters: measured 157 pixels (0.06%) against a 0.2% tolerance,
-whereas a wrong view differs by about 1.6%.
+assumed to be centred, square or even inside a known rectangle.** Devices differ
+in all three ways, and the window capture handles each without a rectangle:
+
+| Device | Screen shape | Art canvas | Declared `display.location` | Layout |
+| --- | --- | --- | --- | --- |
+| `fenix7` | round | 409×560 | 260×260 at (77,146) | bezel all round |
+| `edge540` | rectangle | 382×518 | 246×322 at (69,78) | rectangle with bezel above and below |
+| `edge1050` | rectangle | 752×961 | 480×800 at (136,6) | bezel almost gone at the top |
+| `edge1060` | rectangle | 675×984 | 480×800 at (97,1) | **top cut**: 1 px from the top, no bezel above |
+
+`fenix7` and `edge1060` are captured (`tests/goldens/<device>/homepage.png`), and
+the two prove the rule at its extremes: a round phone-free watch and a top-cut
+rectangle whose display starts one pixel from the top of the art. Each is verified
+with the scenario's device override:
+
+```bash
+python -m e2e run smoke/launch-and-poll --driver wine --device edge1060
+```
+
+`edge1050` (y=6) is **blocked** for a different reason — its `simulator.json`
+declares only `start` and `lap` hit areas, with no `up`/`down`/`enter`, so the
+harness's DOWN, DOWN, SELECT launch sequence cannot open the app on it at all.
+That is a device-definition gap to record, not a golden-design problem;
+`edge1060` declares the navigation keys and works.
+
+`display.location` is a **device-space declaration, not window pixels**, and the
+two differ measurably: `fenix7` declares 260×260 at (77,146) and renders
+309×309 at (53,141) — a ~1.19× scale and an offset that is not a centre fit.
+Nothing may derive a capture rectangle from it. That mismatch is why the earlier
+screen-crop code was wrong, and why the golden is the window.
+
+Each capture is taken with the pointer parked at a fixed window point (the
+simulator's status strip prints the pointer position), so two captures of the
+same view differ only by the strip's live counters: measured 157 pixels (0.06%)
+against a 0.2% tolerance, whereas a wrong view differs by about 1.6%.
 
 Window geometry is **not** pinned. `WindowX`, `WindowY`, `WindowWidth` and
 `WindowHeight` are in `simulator.ini` and were measured ignored on start (a
-409x600 window stayed 409x600 whatever they said), and normalising by trimming
+409×600 window stayed 409×600 whatever they said), and normalising by trimming
 and rescaling does not reconcile simulators: Wine and the native build give
-39.7% RMSE after trim-and-resize. A window-sized golden is therefore valid for
-**one** simulator build; the size check in the comparison reports a changed
-window as an explicit failure, which is the honest outcome of a simulator
-upgrade.
+39.7% RMSE after trim-and-resize. Together those measurements are the reason a
+window golden is valid for **one simulator build**: when the simulator version
+changes and the window size changes with it, the goldens must be **re-captured
+deliberately** — the size check in the comparison is what tells you to, and it
+reports the old and new dimensions explicitly instead of failing obscurely.
 
 A golden must also declare the state it depicts, wait for it to be **painted**,
 and contain rendered content:

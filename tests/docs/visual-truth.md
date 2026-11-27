@@ -43,11 +43,15 @@ a flaky one. The scenario now waits for
 refused when the live view differs, a `stable: true` screenshot waits for the
 paint (a `VIEW` line is emitted on construction, not on paint, and the first
 attempt at this fix still captured the glance icon), and a measured ink floor
-catches an unpainted window. No screen rectangle is assumed: the app's screen is not always centred and
-newer bike computers crop the device's top, so per-device window goldens are the
-unit, and the simulator's window geometry is not pinnable (measured) nor
-normalisable across builds (39.7% RMSE after trim-and-resize). Details in
-[scenarios.md](scenarios.md#the-whole-scenario-budget-must-fit-a-launch).
+catches an unpainted window. No screen rectangle is assumed, and the device table
+in [scenarios.md](scenarios.md) is the evidence: a round watch, a rectangle with
+bezel all round, and a rectangle whose display starts 1 px from the top
+(`edge1060`, captured) are three different layouts the same window capture
+handles. `display.location` is device-space, not window pixels: `fenix7` declares
+260×260 at (77,146) and renders 309×309 at (53,141). The simulator's window
+geometry is not pinnable (measured) nor normalisable across builds (39.7% RMSE
+after trim-and-resize), so a window golden is valid for one simulator build and a
+size change means re-capture deliberately — the size check says so.
 
 Revision note (2026-11-26, fonts resolved): the missing device font pack was the
 whole cause, and it is now verified. With `%APPDATA%\Garmin\ConnectIQ\Fonts`
