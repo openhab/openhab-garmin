@@ -2004,6 +2004,7 @@ class _FakeDriver(SimulatorDriver):
 
     def relaunch_app(self, *, clear_data: bool = True, timeout_s: float = 90.0) -> bool:
         self._lines.append("E2E:SITEMAP;result=success;code=200;bytes=1")
+        self._lines.append("E2E:VIEW;category=sitemap;view=HomepageMenu;depth=1")
         return True
 
     def press_measured(self, button: Button, count: int = 1, **kwargs: object):
@@ -2828,33 +2829,38 @@ def test_probe_menus_reports_a_silent_menu_bar_without_raising(
     assert "restart-in-mode remains the documented capability" in report.verdict()
 
 
-def test_the_app_storage_is_cleared_before_each_launch(
+def test_the_app_storage_clear_is_limited_to_the_sitemap_cache(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The app caches the sitemap; a scenario must not inherit the previous one."""
+    """Only the cache may go: SETTINGS and Settings are what the app initialises from."""
     driver = _driver(tmp_path)
-    data = (
-        tmp_path
-        / "prefix/drive_c/users/root/Temp/com.garmin.connectiq/GARMIN/APPS/DATA"
-    )
-    data.mkdir(parents=True)
+    root = tmp_path / "prefix/drive_c/users/root/Temp/com.garmin.connectiq/GARMIN"
+    data = root / "APPS/DATA"
+    temp = root / "APPS/TEMP"
+    settings = root / "APPS/SETTINGS"
+    device_settings = root / "Settings"
+    logs = root / "APPS/LOGS"
+    for path in (data, temp, settings, device_settings, logs):
+        path.mkdir(parents=True)
     (data / "sitemapJson.bin").write_text("cached", encoding="utf-8")
-    logs = (
-        tmp_path
-        / "prefix/drive_c/users/root/Temp/com.garmin.connectiq/GARMIN/APPS/LOGS"
-    )
-    logs.mkdir(parents=True)
+    (settings / "OPENHAB-GARMIN-FENIX7.SET").write_text("table", encoding="utf-8")
+    (device_settings / "device.ini").write_text("keep", encoding="utf-8")
     (logs / "CIQ_LOG.YML").write_text("keep me", encoding="utf-8")
     monkeypatch.delenv(ENV_KEEP_APP_DATA, raising=False)
 
     removed = driver.clear_app_data()
 
-    assert removed, "the cached sitemap directory was removed"
-    assert not data.exists()
+    assert len(removed) == 2, removed
+    assert not data.exists() and not temp.exists()
+    assert (settings / "OPENHAB-GARMIN-FENIX7.SET").is_file(), "property table survives"
+    assert settings.is_dir(), "APPS/SETTINGS survives"
+    assert device_settings.is_dir(), "device settings survive"
     assert (logs / "CIQ_LOG.YML").read_text(encoding="utf-8") == "keep me"
     log = _driver_log(driver)
-    assert "cleared the app's persistent storage" in log
-    assert "LOGS untouched" in log
+    assert "cleared the app's sitemap cache" in log
+    assert "APPS/SETTINGS, GARMIN/Settings and\nLOGS untouched" in log or (
+        "APPS/SETTINGS, GARMIN/Settings and LOGS untouched" in log.replace("\n", " ")
+    )
 
 
 def test_the_storage_clear_can_be_switched_off(

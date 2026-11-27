@@ -282,6 +282,21 @@ def test_a_scenario_for_the_running_profile_still_runs(
     assert result.steps, "the scenario's steps ran"
 
 
+def test_a_scope_entry_covered_only_by_a_skipped_scenario_is_named_not_counted() -> None:
+    """A dev-only scenario that was skipped must not look like coverage."""
+    report = Report()
+    report.add(_result("smoke/launch-and-poll", "passed", "stable"))
+    report.add(_result("regression/dev-profile-command-confirmation", "skipped", "dev"))
+
+    unverified = report.unverified_scope()
+    assert unverified, "the dev-only entries are named"
+    # `commands.confirmation` (or whatever the dev scenario covers) must be there
+    # and must not be claimed by the passing scenario.
+    assert any("command" in entry or "confirm" in entry for entry in unverified)
+    assert "not exercised by this run" in report.unverified_summary()
+    assert "none" not in report.unverified_summary()
+
+
 def test_the_report_states_which_profiles_a_run_covered() -> None:
     report = Report()
     report.add(_result("smoke/launch-and-poll", "passed", "stable"))

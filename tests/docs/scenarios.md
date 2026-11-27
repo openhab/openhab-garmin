@@ -98,6 +98,20 @@ Every run states what it covered, in the console summary, `report.json`
 therefore means "everything that _can_ run here passed", not "the suite is
 complete"; the two summaries together are the complete result.
 
+**A skipped scenario never counts as coverage.** If a scope entry is covered only
+by scenarios that were skipped in this run, the run says so instead of counting
+it:
+
+```text
+scope entries covered only by skipped scenarios (not exercised by this run):
+commands.confirmation
+```
+
+`report.json` carries the same list as `unverified_scope`, and `summary.md` adds
+it under the profile line. `coverage.md` still describes what the suite covers
+when both profiles have run; the run summary describes what _this_ pass actually
+exercised, and the two must not be confused.
+
 ## Build profiles: the glance and widget modes are not covered
 
 Scenarios are compiled with the `watch-app` profile by default. The app is a

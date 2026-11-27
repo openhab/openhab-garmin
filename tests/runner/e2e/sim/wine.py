@@ -268,12 +268,18 @@ CIQ_LOG_HINT = "drive_c/users/{user}/Temp/com.garmin.connectiq/GARMIN/APPS/LOGS/
 #: the last sitemap JSON here (`SitemapStore`: ``sitemapJson``/``sitemapLabel``),
 #: and that cache outlives a scenario: without clearing it, the next scenario
 #: starts on the previous scenario's sitemap, reports
-#: ``E2E:SITEMAP;result=unchanged`` and never requests its own. `LOGS` is
-#: deliberately not touched, because ``CIQ_LOG.YML`` is the crash evidence.
+#: ``E2E:SITEMAP;result=unchanged`` and never requests its own.
+#:
+#: **Only** the cache is cleared. ``GARMIN/APPS/SETTINGS`` holds the app's
+#: property table (``<APP>.SET``) and ``GARMIN/Settings`` holds device settings;
+#: removing either kills the app during initialisation
+#: (``AppSettings.getString`` dereferences a null property, ``Unexpected Type
+#: Error`` at ``AppSettings.mc:128``), so a launch "passes" on an error view and
+#: no scenario ever polls. ``LOGS`` is also left alone: ``CIQ_LOG.YML`` is the
+#: crash evidence.
 APP_DATA_HINTS: Tuple[str, ...] = (
     "drive_c/users/{user}/Temp/com.garmin.connectiq/GARMIN/APPS/DATA",
-    "drive_c/users/{user}/Temp/com.garmin.connectiq/GARMIN/APPS/SETTINGS",
-    "drive_c/users/{user}/Temp/com.garmin.connectiq/GARMIN/Settings",
+    "drive_c/users/{user}/Temp/com.garmin.connectiq/GARMIN/APPS/TEMP",
 )
 
 #: Set to keep the app's storage across launches, for debugging the cache itself.
@@ -3585,9 +3591,9 @@ class WineSimulatorDriver(SimulatorDriver):
             removed.append(str(path))
         if removed:
             self._record(
-                "cleared the app's persistent storage before launch "
-                f"({len(removed)} path(s), LOGS untouched): "
-                + ", ".join(removed)
+                f"cleared the app's sitemap cache before launch "
+                f"({len(removed)} path(s); APPS/SETTINGS, GARMIN/Settings and "
+                "LOGS untouched): " + ", ".join(removed)
             )
         else:
             self._record(

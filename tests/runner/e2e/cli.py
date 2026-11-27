@@ -512,6 +512,7 @@ def _cmd_run(args: argparse.Namespace) -> int:
 
     written = report.write_artifacts(artifacts)
     print(report.profiles_summary())
+    print(report.unverified_summary())
     for name, path in written.items():
         print(f"{name}: {path}")
 
@@ -531,6 +532,7 @@ def _cmd_run(args: argparse.Namespace) -> int:
                 },
                 "counts": report.counts(),
                 "profiles": report.profiles(),
+                "unverified_scope": report.unverified_scope(),
                 "environment": report.environment_document(),
                 "exit_code": report.exit_code,
                 "results": [result.to_document() for result in report.results],
@@ -1007,6 +1009,103 @@ def _cmd_simulator_probe(args: argparse.Namespace) -> int:
     if args.json:
         _emit_json(document)
     return 0 if (document["menus"].get("opened") or document["modes"]) else 1
+
+
+def _sequence(requests: Sequence[Any]) -> List[str]:
+    """The request trace as ``METHOD path`` lines, without ids or timings."""
+    return [f"{request.method} {request.path}" for request in requests]
+
+
+def _cmd_isolation_check(args: argparse.Namespace) -> int:
+    """Run the same PRG twice and prove the second run does not use the cache.
+
+    The app caches the last sitemap in its own storage, so a scenario that runs
+    after another one must not inherit its sitemap. This launches the same
+    compiled app twice back to back, resets the shim before each run, and
+    requires the two request sequences to be identical and non-empty, with no
+    ``result=unchanged`` in the second run's trace.
+    """
+    if args.driver != "wine":
+        return _fail("isolation-check needs a real simulator; use --driver wine")
+    prg = Path(args.prg)
+    if not prg.is_file():
+        return _fail(f"--prg {prg} is not a file")
+    derived = device_from_prg(prg)
+    device_id = args.device or (derived.id if derived is not None else None)
+    if not device_id:
+        return _fail(f"cannot derive a device from {prg.name}; pass --device <id>")
+    device = find_device(device_id)
+    settings = load_settings(args.settings)
+    layout = load_layout()
+    workdir = _artifacts_dir(args) / "isolation-check"
+    shim = ShimClient(_shim_url(args))
+    sequences: List[List[str]] = []
+    sitemap_results: List[List[str]] = []
+    for run in (1, 2):
+        print(f"== run {run}: launching {prg.name} on {device.id} ==")
+        shim.reset()
+        driver = create_driver(
+            "wine",
+            layout=layout,
+            artifact_dir=workdir / f"run-{run}",
+            log=lambda message: print(f"    {message}"),
+        )
+        try:
+            driver.prepare(prg)
+            driver.start(device, settings, args.mode, language=args.language)
+            driver.wait_ready(args.timeout)
+            events = parse_lines(list(driver.events()))
+            results = [
+                str(event.get("result"))
+                for event in events
+                if event.event == "SITEMAP"
+            ]
+            sitemap_results.append(results)
+            sequences.append(_sequence(shim.requests()))
+        finally:
+            driver.stop()
+        print(f"    sitemap results: {sitemap_results[-1] or ['<none>']}")
+        for line in sequences[-1][:8]:
+            print(f"    request: {line}")
+        if len(sequences[-1]) > 8:
+            print(f"    … {len(sequences[-1]) - 8} more")
+
+    first, second = sequences
+    problems: List[str] = []
+    if not first:
+        problems.append("the first run recorded no requests at all")
+    if not second:
+        problems.append("the second run recorded no requests at all")
+    if first and second and first != second:
+        problems.append(
+            "the two request sequences differ:\n"
+            f"  run 1: {first}\n  run 2: {second}"
+        )
+    if "unchanged" in (sitemap_results[1] if len(sitemap_results) > 1 else []):
+        problems.append(
+            "the second run reported SITEMAP;result=unchanged, so it served the "
+            "first run's cached sitemap instead of requesting its own"
+        )
+
+    if args.json:
+        _emit_json(
+            {
+                "device": device.id,
+                "sequences": sequences,
+                "sitemap_results": sitemap_results,
+                "identical": bool(first) and first == second,
+                "problems": problems,
+            }
+        )
+    if problems:
+        for problem in problems:
+            print(f"FAILED {problem}")
+        return 1
+    print(
+        f"isolation holds: both runs recorded the same {len(first)} request(s) "
+        f"and the second requested its sitemap ({sitemap_results[1]})"
+    )
+    return 0
 
 
 def _cmd_preflight(args: argparse.Namespace) -> int:
@@ -1549,6 +1648,28 @@ def build_parser() -> argparse.ArgumentParser:
     probe.add_argument("--json", action="store_true")
     probe.add_argument("--artifacts")
     probe.set_defaults(handler=_cmd_simulator_probe)
+
+    isolation = subparsers.add_parser(
+        "isolation-check",
+        help="run the same PRG twice and prove the second run is not served from cache",
+        description=(
+            "The app caches the last sitemap in its own storage, so a scenario "
+            "must not inherit the previous one. This launches the same compiled "
+            "app twice back to back, resets the shim before each run, and "
+            "requires identical non-empty request sequences with no "
+            "result=unchanged in the second run. See tests/docs/simulator-driver.md."
+        ),
+    )
+    isolation.add_argument("--driver", choices=DRIVER_NAMES, default="wine")
+    isolation.add_argument("--prg", required=True, help="compiled PRG, same file for both runs")
+    isolation.add_argument("--device", help="device id; defaults to the PRG's name")
+    isolation.add_argument("--mode", default="ble")
+    isolation.add_argument("--language", default="eng")
+    isolation.add_argument("--settings", default="default")
+    isolation.add_argument("--timeout", type=float, default=300.0)
+    isolation.add_argument("--json", action="store_true")
+    isolation.add_argument("--artifacts")
+    isolation.set_defaults(handler=_cmd_isolation_check)
 
     preflight = subparsers.add_parser(
         "preflight",

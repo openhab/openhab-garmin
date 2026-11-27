@@ -186,6 +186,38 @@ class Report:
             )
         return line
 
+    def unverified_scope(self) -> List[str]:
+        """Scope entries this run's *skipped* scenarios were the only witnesses for.
+
+        A skipped scenario must never make coverage look better than it is. If a
+        scope entry is covered only by scenarios that were skipped in this run —
+        typically a `dev`-profile scenario on a `stable` stack — the entry was
+        not exercised by this run, whatever `coverage.md` says about the suite
+        overall. The run summary names them instead of counting them.
+        """
+        from .scenarios import discover_scenarios
+
+        covers = {
+            scenario.scenario_id: set(scenario.covers)
+            for scenario in discover_scenarios()
+        }
+        ran: set = set()
+        skipped: set = set()
+        for result in self.results:
+            entries = covers.get(result.scenario_id, set())
+            (skipped if result.status == SKIPPED else ran).update(entries)
+        return sorted(skipped - ran)
+
+    def unverified_summary(self) -> str:
+        """One line naming scope entries this run could not exercise."""
+        entries = self.unverified_scope()
+        if not entries:
+            return "scope entries covered only by skipped scenarios: none"
+        return (
+            "scope entries covered only by skipped scenarios (not exercised by "
+            f"this run): {', '.join(entries)}"
+        )
+
     @property
     def exit_code(self) -> int:
         counts = self.counts()
@@ -212,6 +244,7 @@ class Report:
             "generated_at": _iso(self.started_at),
             "counts": self.counts(),
             "profiles": self.profiles(),
+            "unverified_scope": self.unverified_scope(),
             "environment": self.environment_document(),
             "results": [result.to_document() for result in self.results],
         }
@@ -370,6 +403,15 @@ class Report:
                 + ", ".join(f"`{name}`" for name in profiles["skipped"])
                 + ". Profiles are exclusive, so a complete pass is one run per "
                 "profile (see [scenarios.md](scenarios.md#openhab-profiles))."
+            )
+
+        unverified = self.unverified_scope()
+        if unverified:
+            lines.append(
+                "Not exercised by this run — covered only by skipped scenarios: "
+                + ", ".join(f"`{entry}`" for entry in unverified)
+                + ". These are not counting as covered here, whatever the suite "
+                "covers overall."
             )
 
         lines += self._environment_markdown()
