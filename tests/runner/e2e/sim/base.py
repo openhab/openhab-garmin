@@ -68,6 +68,25 @@ class SimulatorDriver(abc.ABC):
     #: ``can_provision_language`` is the per-language answer and is what the
     #: engine asks; this flag only says the driver can provision *some* language.
     provisions_language: ClassVar[bool] = True
+    #: True when the driver can relaunch the app into another start-up mode
+    #: (``restart_in_mode``). That proves start-up mode, never a mid-run
+    #: transition; a driver that cannot script the simulator's menus says so.
+    supports_restart_in_mode: ClassVar[bool] = False
+    #: True when the driver can probe the simulator's own menu bar with real
+    #: clicks (``probe_menus``). Probing reports evidence; it asserts nothing.
+    supports_menu_probe: ClassVar[bool] = False
+
+    def restart_in_mode(
+        self, mode: str, *, night: Optional[bool] = None, timeout_s: float = 0.0
+    ) -> bool:
+        """Relaunch the app into another start-up ``mode``, if supported.
+
+        Must not be used to claim a mid-run transition: only the simulator's own
+        menu can change the mode while the app runs.
+        """
+        raise NotImplementedError(
+            f"{self.name} cannot relaunch the app into another start-up mode"
+        )
 
     def can_provision_language(self, language: str) -> bool:
         """True when ``start()`` can put the app into ``language``.

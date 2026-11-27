@@ -18,6 +18,7 @@ import pytest
 
 from e2e import cli
 from e2e import engine
+from e2e import reporting as reporting_module
 from e2e.config import default_device_id, find_device
 from e2e.contract import FAIL, PASS, run_contract, summary
 from e2e.engine import run_scenario
@@ -164,6 +165,133 @@ def test_a_driver_that_provisions_the_language_runs_it(
     )
     assert blocked.status == "skipped"
     assert "language-scan" in blocked.skip_reason
+
+
+def _result(scenario: str, status: str, profile: str):
+    """A minimal ScenarioResult for report aggregation tests."""
+    return reporting_module.ScenarioResult(
+        scenario_id=scenario,
+        name=scenario.split("/")[-1],
+        suite=scenario.split("/")[0],
+        tier="ui",
+        device="fenix7",
+        mode="ble",
+        fixture="default",
+        profile=profile,
+        language="eng",
+        source=scenario,
+        status=status,
+    )
+
+
+class _QuietClient:
+    """An openHAB/shim client that answers readiness without a network."""
+
+    def wait_ready(self, *args, **kwargs) -> None:
+        return None
+
+    def items(self):
+        return []
+
+    def sitemaps(self):
+        return []
+
+    def requests(self):
+        return []
+
+    def reset(self) -> None:
+        return None
+
+    def install_script(self, script) -> int:
+        return 0
+
+    def seed(self, items):
+        return {}
+
+
+class _Report:
+    def __init__(self, profile: str) -> None:
+        self.profile = profile
+
+    def summary(self) -> str:
+        return f"profile {self.profile}"
+
+
+def test_a_scenario_for_another_profile_is_skipped_with_a_reason(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Profiles are exclusive; a `dev` scenario on a `stable` stack is not a failure."""
+    monkeypatch.setattr(engine, "OpenHabClient", lambda url: _QuietClient())
+    monkeypatch.setattr(engine, "ShimClient", lambda url: _QuietClient())
+    monkeypatch.setattr(engine, "create_driver", lambda *a, **k: NullDriver())
+    monkeypatch.setattr(
+        engine.fixtures_module,
+        "detect_profile",
+        lambda openhab, **kwargs: (
+            "stable",
+            {"stable": (0, 0), "dev": (0, 1)},
+        ),
+    )
+    scenario = find_scenario("regression/dev-profile-command-confirmation")
+    result = run_scenario(
+        scenario,
+        find_device(default_device_id()),
+        openhab_url="http://openhab.invalid:8080",
+        shim_url="http://shim.invalid:8080",
+        artifacts_dir=tmp_path / "artifacts",
+        driver_name="null",
+    )
+
+    assert result.status == "skipped"
+    assert "needs the 'dev' openHAB profile" in result.skip_reason
+    assert "serves 'stable'" in result.skip_reason
+    assert "COMPOSE_PROFILES=dev" in result.skip_reason
+    assert "one run per profile" in result.skip_reason
+    assert result.steps == [], "a skipped scenario runs no steps"
+    assert result.profile == "dev"
+
+
+def test_a_scenario_for_the_running_profile_still_runs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(engine, "OpenHabClient", lambda url: _QuietClient())
+    monkeypatch.setattr(engine, "ShimClient", lambda url: _QuietClient())
+    monkeypatch.setattr(engine, "create_driver", lambda *a, **k: NullDriver())
+    monkeypatch.setattr(
+        engine.fixtures_module,
+        "detect_profile",
+        lambda openhab, **kwargs: ("stable", {"stable": (0, 0)}),
+    )
+    monkeypatch.setattr(
+        engine.fixtures_module,
+        "verify",
+        lambda openhab, profile, **kwargs: _Report(profile),
+    )
+    scenario = find_scenario("smoke/launch-and-poll")
+    result = run_scenario(
+        scenario,
+        find_device(default_device_id()),
+        openhab_url="http://openhab.invalid:8080",
+        shim_url="http://shim.invalid:8080",
+        artifacts_dir=tmp_path / "artifacts",
+        driver_name="null",
+    )
+
+    assert result.status != "skipped"
+    assert result.skip_reason == ""
+    assert result.steps, "the scenario's steps ran"
+
+
+def test_the_report_states_which_profiles_a_run_covered() -> None:
+    report = Report()
+    report.add(_result("smoke/launch-and-poll", "passed", "stable"))
+    report.add(_result("regression/dev-profile-command-confirmation", "skipped", "dev"))
+
+    assert report.profiles() == {"covered": ["stable"], "skipped": ["dev"]}
+    assert "profiles covered: stable" in report.profiles_summary()
+    assert "one run per profile" in report.profiles_summary()
+    document = report.to_document() if hasattr(report, "to_document") else None
+    assert document is None or document["profiles"]["skipped"] == ["dev"]
 
 
 def test_language_that_cannot_be_provisioned_is_reported_as_skipped(

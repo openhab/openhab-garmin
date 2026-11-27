@@ -42,6 +42,10 @@ from e2e.sim.wine import (
     ENV_SETTINGS_FILE,
     ENV_STARTUP_TIMEOUT,
     HTTPS_REQUIREMENTS_KEY,
+    NIGHT_MODE_KEY,
+    ENV_NIGHT_MODE,
+    _night_from_environment,
+    night_mode_value,
     ScreenRect,
     SimulatorDefinition,
     SimulatorKey,
@@ -1037,6 +1041,7 @@ def test_mode_and_language_become_ini_updates() -> None:
     assert ble == {
         "LastUsedDevice": "fenix7",
         HTTPS_REQUIREMENTS_KEY: "0",
+        NIGHT_MODE_KEY: "0",
         "Language": "7",
         "BleState": "2",
         "WifiState": "1",
@@ -2686,6 +2691,136 @@ def test_the_device_runtime_version_is_read_from_compiler_json(
     )
     assert read_device_runtime_version(tmp_path / "Devices", "fenix7") == "5.2.0"
     assert read_device_runtime_version(tmp_path / "missing", "fenix7") == ""
+
+
+def test_night_mode_is_written_as_a_numeric_ini_key() -> None:
+    """`nightMode` is read at start like the mode keys, so it is not a switch."""
+    on = ini_updates("fenix7", "ble", None, night=True)
+    off = ini_updates("fenix7", "ble", None, night=False)
+    assert on[NIGHT_MODE_KEY] == "1"
+    assert off[NIGHT_MODE_KEY] == "0"
+    assert night_mode_value(True) == "1"
+
+
+def test_the_night_environment_flag_is_parsed(monkeypatch: pytest.MonkeyPatch) -> None:
+    for value in ("1", "true", "YES", "on"):
+        monkeypatch.setenv(ENV_NIGHT_MODE, value)
+        assert _night_from_environment() is True, value
+    for value in ("", "0", "false", "no"):
+        monkeypatch.setenv(ENV_NIGHT_MODE, value)
+        assert _night_from_environment() is False, value
+    monkeypatch.delenv(ENV_NIGHT_MODE, raising=False)
+    assert _night_from_environment() is False
+
+
+def test_restart_in_mode_rewrites_the_ini_and_relaunches(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Restart proves start-up mode; it must say so and reuse the same PRG."""
+    driver = _driver(tmp_path)
+    driver._started = True
+    driver._device = _device("fenix7")
+    driver._settings = load_settings("default")
+    driver._prg = tmp_path / "app.prg"
+    driver._language_value = "7"
+    driver._mode = "ble"
+    calls: List[str] = []
+    written: List[tuple] = []
+
+    monkeypatch.setattr(driver, "stop", lambda: calls.append("stop"))
+    monkeypatch.setattr(driver, "_start_simulator", lambda: calls.append("simulator"))
+    monkeypatch.setattr(
+        driver, "_seed_settings", lambda settings: calls.append("settings")
+    )
+    monkeypatch.setattr(
+        driver, "_launch_app", lambda device, **kwargs: calls.append("launch")
+    )
+    monkeypatch.setattr(
+        driver,
+        "_write_simulator_ini",
+        lambda device, mode, language: written.append((mode, language)),
+    )
+
+    def ready(timeout: float) -> None:
+        calls.append("ready")
+        driver._events.append((0.0, "E2E:CONNECTION;mode=WIFI"))
+
+    monkeypatch.setattr(driver, "wait_ready", ready)
+
+    assert driver.restart_in_mode("wifi") is True
+    assert written == [("wifi", "7")]
+    assert calls == ["stop", "simulator", "settings", "launch", "ready"]
+    assert driver._mode == "wifi"
+    log = _driver_log(driver)
+    assert "restarting in mode 'wifi' (was 'ble')" in log
+    assert "proves start-up mode, not a mid-run transition" in log
+
+
+def test_restart_in_mode_reports_not_ready_instead_of_raising(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    driver = _driver(tmp_path)
+    driver._started = True
+    driver._device = _device("fenix7")
+    driver._settings = load_settings("default")
+    driver._prg = tmp_path / "app.prg"
+    driver._mode = "ble"
+    monkeypatch.setattr(driver, "stop", lambda: None)
+    monkeypatch.setattr(driver, "_start_simulator", lambda: None)
+    monkeypatch.setattr(driver, "_seed_settings", lambda settings: None)
+    monkeypatch.setattr(driver, "_launch_app", lambda device, **kwargs: None)
+    monkeypatch.setattr(driver, "_write_simulator_ini", lambda *a: None)
+
+    def refuse(timeout: float) -> None:
+        raise DriverError("app-ready: no console output at all")
+
+    monkeypatch.setattr(driver, "wait_ready", refuse)
+
+    assert driver.restart_in_mode("offline") is False
+    assert "did not become ready" in _driver_log(driver)
+
+
+def test_probe_menus_reports_the_popup_it_finds(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    driver = _pressing_driver(tmp_path, monkeypatch)
+    children = [[1], [1], [1, 9]]
+    monkeypatch.setattr(
+        driver, "_children_ids", lambda: children.pop(0) if children else [1, 9]
+    )
+    monkeypatch.setattr(driver, "screenshot", lambda path: Path(path))
+    monkeypatch.setattr(driver, "pixel_difference", lambda a, b: 0)
+    monkeypatch.setattr(driver, "_click_at", lambda *a, **k: None)
+    monkeypatch.setattr(
+        driver, "_geometry_text", lambda window: "120x200 at (+40,+30)"
+    )
+
+    report = driver.probe_menus(timeout_s=5.0)
+
+    assert report.opened is True
+    assert report.popup_window == 9
+    assert report.popup_geometry == "120x200 at (+40,+30)"
+    assert "reachable with synthetic clicks" in report.verdict()
+    log = _driver_log(driver)
+    assert "menu probe: a click on the menu bar opened a popup" in log
+    assert "menu probe step" in log
+
+
+def test_probe_menus_reports_a_silent_menu_bar_without_raising(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    driver = _pressing_driver(tmp_path, monkeypatch)
+    monkeypatch.setattr(driver, "_children_ids", lambda: [1])
+    monkeypatch.setattr(driver, "screenshot", lambda path: Path(path))
+    monkeypatch.setattr(driver, "pixel_difference", lambda a, b: 0)
+    monkeypatch.setattr(driver, "_click_at", lambda *a, **k: None)
+
+    report = driver.probe_menus(timeout_s=5.0)
+
+    assert report.opened is False
+    assert report.steps, "every candidate point is recorded"
+    assert "does not take synthetic clicks on its menu bar" in report.verdict()
+    assert "restart-in-mode remains the documented capability" in report.verdict()
 
 
 def test_key_override_option_sets_the_driver_environment(

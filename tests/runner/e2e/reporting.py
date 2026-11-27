@@ -93,6 +93,9 @@ class ScenarioResult:
     language: str
     source: str
     status: str
+    #: The openHAB fixture profile the scenario needs (``stable`` or ``dev``).
+    #: Profiles are exclusive, so a run covers the profiles its stack serves.
+    profile: str = "stable"
     started_at: float = field(default_factory=time.time)
     duration_ms: float = 0.0
     steps: List[StepResult] = field(default_factory=list)
@@ -116,6 +119,7 @@ class ScenarioResult:
             "device": self.device,
             "mode": self.mode,
             "fixture": self.fixture,
+            "profile": self.profile,
             "language": self.language,
             "source": self.source,
             "status": self.status,
@@ -152,6 +156,36 @@ class Report:
             counts[result.status] = counts.get(result.status, 0) + 1
         return counts
 
+    def profiles(self) -> Dict[str, List[str]]:
+        """Which openHAB profiles this run covered, and which it had to skip.
+
+        Profiles are exclusive — one openHAB serves one fixture tree — so a
+        single ``run --all`` can only cover the profile its stack is running. A
+        ``skipped`` entry here is not a product gap: it names a scenario that
+        needs a stack the run did not have.
+        """
+        covered: List[str] = []
+        skipped: List[str] = []
+        for result in self.results:
+            profile = result.profile or "stable"
+            bucket = skipped if result.status == SKIPPED else covered
+            if profile not in bucket:
+                bucket.append(profile)
+        return {"covered": sorted(covered), "skipped": sorted(skipped)}
+
+    def profiles_summary(self) -> str:
+        """One line for the console summary: what this run could and could not cover."""
+        summary = self.profiles()
+        covered = ", ".join(summary["covered"]) or "none"
+        line = f"profiles covered: {covered}"
+        if summary["skipped"]:
+            line += (
+                f"; scenarios needing another profile were skipped: "
+                f"{', '.join(summary['skipped'])} (a complete pass is one run per "
+                "profile)"
+            )
+        return line
+
     @property
     def exit_code(self) -> int:
         counts = self.counts()
@@ -177,6 +211,7 @@ class Report:
         document = {
             "generated_at": _iso(self.started_at),
             "counts": self.counts(),
+            "profiles": self.profiles(),
             "environment": self.environment_document(),
             "results": [result.to_document() for result in self.results],
         }
@@ -321,6 +356,21 @@ class Report:
         ]
         for status in _FINAL_STATUS:
             lines.append(f"| {status} | {counts.get(status, 0)} |")
+
+        profiles = self.profiles()
+        lines += [
+            "",
+            "Profiles covered: "
+            + (", ".join(f"`{name}`" for name in profiles["covered"]) or "none")
+            + ".",
+        ]
+        if profiles["skipped"]:
+            lines.append(
+                "Scenarios needing another profile were skipped: "
+                + ", ".join(f"`{name}`" for name in profiles["skipped"])
+                + ". Profiles are exclusive, so a complete pass is one run per "
+                "profile (see [scenarios.md](scenarios.md#openhab-profiles))."
+            )
 
         lines += self._environment_markdown()
 

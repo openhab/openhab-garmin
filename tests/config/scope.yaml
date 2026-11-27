@@ -315,23 +315,34 @@ waivers:
       vocabulary cannot drive, and the rendered result needs reviewed goldens.
   - id: sitemap.theme
     reason: >-
-      Changing the simulator's light/dark/night theme is a device UI action
-      that the harness does not drive; the #370 spike explores it outside the
-      suite.
+      Changing the simulator's light/dark/night theme while the app runs is a
+      menu action in the simulator window, and the `wine` driver does not script
+      that menu yet. The menu bar exists (drawn inside the window) but synthetic
+      clicks on it are unproven; `python -m e2e simulator-probe --prg <prg>`
+      runs the experiment. Night mode as a start-up state is available
+      (`E2E_WINE_NIGHT_MODE=1`); only the runtime theme change is waived. See
+      tests/docs/simulator-driver.md#runtime-mode-and-night-mode.
 
   # ---- Communication transitions need a mode switch the driver does not offer
+  # The mode keys are read by simulator.ini at start, so `wine` can prove
+  # "starts in X" (`restart_in_mode`) but not "transitions to X while running".
+  # The simulator's menu bar is the route and is untested, not absent.
   - id: communication.transitions
     reason: >-
-      The driver can start in each mode but cannot switch modes mid-run; the
-      simulator Connection menu is not part of the scenario actions.
+      The `wine` driver can start in each mode and relaunch into another one
+      (restart_in_mode), but a mid-run transition needs the simulator's
+      Simulation/Connection menu, which it does not script. The menu bar exists
+      and is probed by `python -m e2e simulator-probe`; it is untested, not
+      absent. See tests/docs/simulator-driver.md#runtime-mode-and-night-mode.
   - id: communication.transition-indicators
     reason: >-
       Status indicators after a transition need the same mid-run mode switch as
-      communication.transitions.
+      communication.transitions: an indicator that changes while the app runs
+      cannot be produced by a restart, which only exercises the start-up branch.
   - id: communication.transition-data
     reason: >-
-      The mode-start behaviour is covered by wifi-mode and offline-mode, but
-      the transition case needs a mid-run mode switch.
+      The mode-start behaviour is covered by wifi-mode, offline-mode and
+      restart_in_mode, but the transition case needs a mid-run mode switch.
 
   # ---- Settings
   - id: settings.every-setting

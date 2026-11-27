@@ -20,7 +20,7 @@ import re
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, List, Optional, Sequence, Set, Tuple
+from typing import Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 import yaml
 
@@ -77,6 +77,16 @@ class FixtureError(ConfigError):
     """openHAB did not load the fixture tree the harness expected."""
 
 
+class ScenarioSkipped(RuntimeError):
+    """A scenario cannot run against this stack, and that is not a failure.
+
+    Raised before any step runs, so the report says *skipped with a reason*
+    rather than showing a product failure for a configuration mismatch. The
+    canonical case is a scenario that needs the ``dev`` profile while the
+    running openHAB serves ``stable``.
+    """
+
+
 @dataclass(frozen=True)
 class ExpectedFixtures:
     """The sets a profile's staged fixture tree declares."""
@@ -114,6 +124,51 @@ def checkout_fixtures_root() -> Path:
     """``tests/fixtures`` inside the checkout the runner package lives in."""
 
     return tests_root() / "fixtures"
+
+
+def detect_profile(
+    openhab: OpenHabClient,
+    *,
+    expected_path: Optional[Path] = None,
+    wait_s: float = 0.0,
+    interval_s: float = DEFAULT_INTERVAL_S,
+) -> Tuple[Optional[str], Dict[str, Tuple[int, int]]]:
+    """Which openHAB profile is actually running, and how far each one is off.
+
+    Profiles are exclusive — one openHAB at a time — so a full run needs one
+    pass per profile. Without this, a scenario written for ``dev`` fails inside
+    the fixture guard on a ``stable`` stack and looks like a product failure;
+    the engine skips it with this answer instead.
+
+    Returns the profile whose missing sets are zero (preferring an exact match
+    on both items and sitemaps), or ``None`` when no profile matches, plus the
+    ``(missing_items, missing_sitemaps)`` counts per profile for the report.
+    """
+    actual_items = {item.name for item in openhab.items()}
+    actual_sitemaps = set(openhab.sitemaps())
+    best: Optional[str] = None
+    best_score: Optional[Tuple[int, int, int]] = None
+    distances: Dict[str, Tuple[int, int]] = {}
+    for profile in PROFILES:
+        expected = load_expected(profile, expected_path)
+        expected_items = set(expected.items)
+        expected_sitemaps = set(expected.sitemaps)
+        missing_items = len(expected_items - actual_items)
+        missing_sitemaps = len(expected_sitemaps - actual_sitemaps)
+        distances[profile] = (missing_items, missing_sitemaps)
+        # Prefer the profile that is missing nothing *and* has the fewest extra
+        # sets: a `dev` stack is a superset of `stable`, so `stable` alone would
+        # also match it and would win on a missing-only score.
+        extras = len(actual_sitemaps - expected_sitemaps) + len(
+            actual_items - expected_items
+        )
+        score = (missing_items + missing_sitemaps, extras, missing_sitemaps)
+        if best_score is None or score < best_score:
+            best_score = score
+            best = profile
+    if best_score is not None and best_score[0] == 0:
+        return best, distances
+    return None, distances
 
 
 def staged_fixtures_root() -> Path:

@@ -62,9 +62,41 @@ fit a shorter scenario: the retries exist because delivery is intermittent.
 The `openhab.profile` field selects which fixture tree the scenario expects:
 `stable` uses `fixtures/openhab/conf`, `dev` additionally uses the
 `fixtures/openhab/conf-dev` overlay. It is not a URL selector; both profiles
-serve on the URL Compose gives the runner. A scenario whose profile does not
-match the running stack fails the fixture guard with the missing sitemap or item
-named, instead of failing later on a missing page.
+serve on the URL Compose gives the runner.
+
+### openHAB profiles: a complete run is one pass per profile
+
+Profiles are **exclusive**: one openHAB serves one fixture tree, and the `dev`
+overlay is the only place constructs the stable pin cannot parse may live. So no
+single `run --all` can cover every scenario:
+
+```bash
+# pass 1 — the default stack
+python -m e2e run --all
+# pass 2 — the dev overlay
+COMPOSE_PROFILES=dev docker compose -f compose.yaml -f compose.dev.yaml up -d --wait openhab-dev
+python -m e2e run --all
+```
+
+A scenario whose profile does not match the running stack is **skipped with its
+reason**, not failed: the engine asks the running instance which profile it
+serves (missing-set distance to each expected tree, preferring the exact tree, so
+a `dev` stack is not mistaken for `stable`), and reports
+
+```text
+SKIPPED regression/dev-profile-command-confirmation: needs the 'dev' openHAB
+profile, but the running stack serves 'stable' (stable: 0 item(s)/0 sitemap(s)
+missing, dev: 0 item(s)/1 sitemap(s) missing). Profiles are exclusive, so run
+this scenario against the 'dev' stack: set COMPOSE_PROFILES=dev and start
+openhab-dev …
+```
+
+Every run states what it covered, in the console summary, `report.json`
+(`profiles.covered` / `profiles.skipped`) and `summary.md`
+(`profiles covered: stable; scenarios needing another profile were skipped: dev
+(a complete pass is one run per profile)`). A green `run --all` on one stack
+therefore means "everything that _can_ run here passed", not "the suite is
+complete"; the two summaries together are the complete result.
 
 ## Build profiles: the glance and widget modes are not covered
 
@@ -417,6 +449,38 @@ diagnostics.
   device selection, not to a separate sitemap.
 - Every `shim` rule must have a `name`, so the failure message can say which fault
   was active.
+
+## Navigation rules
+
+- **A `Frame` is a submenu.** `MenuItemFactory` turns every `SitemapFrame` (and
+  `SitemapGroup`) into a `ContainerMenuItem`, so on the homepage one select
+  **opens** the frame page and a second select activates its first element.
+  Scenarios that need an element inside a frame therefore press twice, with a
+  `wait_for_event` on `VIEW;view=PageMenu` between them:
+
+  ```yaml
+  - action: press
+    button: ENTER
+  - action: wait_for_event
+    description: The frame page is rendered before selecting its element.
+    event: VIEW
+    fields: {category: sitemap, view: PageMenu}
+    timeout_ms: 30000
+  - action: press
+    button: ENTER
+  ```
+
+- **Count every entry, including static text.** A `Text` with no item and no
+  children still occupies a menu index even though it cannot be activated. When
+  paging by count, count it, and say the order in a comment.
+- **Wait for the page before paging.** The app builds a frame's children
+  asynchronously after the page is shown (see
+  `localisation-error-long-value`), so a `DOWN` sent immediately can run against
+  a half-built menu. Wait for the `PageMenu` view first.
+- **Prefer a dedicated fixture page over a long page plus counting.** A sitemap
+  per scenario boundary (as `garmin_commands` and `garmin_dynamic` do after
+  #400) makes the first element deterministic; growing one page until a scenario
+  needs seven page-downs is how navigation drifts silently.
 
 ## Adding a scenario
 
