@@ -433,7 +433,7 @@ class ScenarioRunner:
             "  app state: events: "
             + ", ".join(f"{name} x{count}" for name, count in counts.items()),
         ]
-        for name in ("SITEMAP", "COMMAND", "ERROR"):
+        for name in ("SITEMAP", "COMMAND", "ERROR", "INPUT", "SELECT"):
             matching = [event for event in events if event.event == name]
             if matching:
                 lines.append(f"  app state: last {name} " + matching[-1].describe())
@@ -462,8 +462,38 @@ class ScenarioRunner:
 
     def _do_press(self, step: Step, context: _Context) -> Tuple[str, str, List[str]]:
         button = Button(step.get("button"))
-        context.driver.press(button, step.get("count", 1))
-        return PASSED, f"{button.value} x{step.get('count', 1)}", []
+        count = step.get("count", 1)
+        expect = step.get("expect")
+        if expect is None:
+            context.driver.press(button, count)
+            return PASSED, f"{button.value} x{count}", []
+        if context.dry_run:
+            return SKIPPED, f"would require {expect!r} from {button.value} x{count}", []
+        measured = getattr(context.driver, "press_measured", None)
+        if measured is None:
+            # An unmeasured expectation is not proof, so this fails instead of
+            # skipping: the scenario states what the press must do.
+            raise AssertionFailure(
+                f"press {button.value}: the scenario requires expect={expect!r}, but "
+                f"the {context.driver.name} driver cannot measure a press. Run the "
+                "scenario on the wine driver, or drop the expectation."
+            )
+        timeout_s = step.get("timeout_ms", 4000) / 1000.0
+        result = measured(button, count, timeout_s=timeout_s)
+        if expect == "effect" and not result.effect:
+            raise AssertionFailure(
+                f"press {button.value} x{count} had no observable effect: "
+                f"{result.describe()}\n"
+                "  Nothing on screen changed and no new view or error view was "
+                "reported, so the press cannot be shown to have reached the app.\n"
+                + self._describe_app_state(context)
+            )
+        if expect == "none" and result.effect:
+            raise AssertionFailure(
+                f"press {button.value} x{count} had an effect, but the scenario "
+                f"requires none: {result.describe()}"
+            )
+        return PASSED, result.describe(), []
 
     def _do_tap(self, step: Step, context: _Context) -> Tuple[str, str, List[str]]:
         count = step.get("count", 1)

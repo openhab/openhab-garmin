@@ -774,3 +774,41 @@ def test_wait_for_view_accepts_the_menu_and_defaults_the_timeout() -> None:
     assert step.params["category"] == "sitemap"
     assert step.params["view"] == "HomepageMenu"
     assert step.params["timeout_ms"] == 30_000
+
+# ---------------------------------------------------------------------------
+# measured presses
+# ---------------------------------------------------------------------------
+
+
+def test_press_accepts_a_measured_expectation() -> None:
+    document = dict(BASE)
+    document["steps"] = [
+        {"action": "launch"},
+        {"action": "press", "button": "ENTER", "expect": "effect"},
+    ]
+    step = _parse(document)[1]
+    assert step.params["expect"] == "effect"
+    assert step.params["timeout_ms"] == 4000
+
+
+def test_press_rejects_an_unknown_expectation() -> None:
+    document = dict(BASE)
+    document["steps"] = [
+        {"action": "launch"},
+        {"action": "press", "button": "ENTER", "expect": "maybe"},
+    ]
+    with pytest.raises(ScenarioError) as error:
+        _parse(document)
+    assert "expect" in str(error.value)
+
+
+def test_press_rejects_a_timeout_without_an_expectation() -> None:
+    """An unmeasured press has nothing to wait for, so the option is a typo."""
+    document = dict(BASE)
+    document["steps"] = [
+        {"action": "launch"},
+        {"action": "press", "button": "ENTER", "timeout_ms": 5000},
+    ]
+    with pytest.raises(ScenarioError) as error:
+        _parse(document)
+    assert "timeout_ms" in str(error.value)

@@ -81,6 +81,9 @@ LAUNCH_SCENARIO_MINIMUM_S = LAUNCH_STEP_WORST_CASE_S + 30  # 300
 OPENHAB_PROFILES = ("stable", "dev")
 BUTTONS = ("START", "UP", "DOWN", "ENTER", "BACK", "MENU")
 COMMAND_TRANSPORTS = ("rest", "shim")
+#: What a ``press`` may require of the screen: ``effect`` (the press must
+#: change something) or ``none`` (it must not). Unset means unmeasured.
+PRESS_EXPECTATIONS = ("effect", "none")
 
 _SLUG = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 _SCREENSHOT_NAME = re.compile(r"^[a-z0-9]+(?:[-_][a-z0-9]+)*$")
@@ -356,13 +359,24 @@ def _step_install_faults(raw: Mapping[str, Any], where: str) -> Dict[str, Any]:
 
 
 def _step_press(raw: Mapping[str, Any], where: str) -> Dict[str, Any]:
-    _reject_unknown(raw, {"action", "button", "count"}, where)
+    _reject_unknown(raw, {"action", "button", "count", "expect", "timeout_ms"}, where)
     if "button" not in raw:
         raise ScenarioError(f"{where}: 'button' is required")
-    return {
+    params: Dict[str, Any] = {
         "button": _enum(raw["button"], f"{where}.button", BUTTONS),
         "count": _int(raw.get("count", 1), f"{where}.count", 1, 100),
     }
+    if "expect" in raw:
+        params["expect"] = _enum(raw["expect"], f"{where}.expect", PRESS_EXPECTATIONS)
+        params["timeout_ms"] = _int(
+            raw.get("timeout_ms", 4000), f"{where}.timeout_ms", 100, 60_000
+        )
+    elif "timeout_ms" in raw:
+        raise ScenarioError(
+            f"{where}.timeout_ms: only meaningful with 'expect'; without it the "
+            "press is not measured, so there is nothing to wait for"
+        )
+    return params
 
 
 def _step_tap(raw: Mapping[str, Any], where: str) -> Dict[str, Any]:

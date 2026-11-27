@@ -120,6 +120,7 @@ class WidgetMenuItem extends StructuredMenuItem {
                 // Pushing an empty CustomMenu leads to rendering issues. Pages
                 // that have content but whose menu items are still being created
                 // keep the existing LoadingMenuItem behavior below.
+                traceSelect( "empty-page" );
                 WarningToastHandler.showInfo( Rez.Strings.EmptyPage );
                 return true;
             }
@@ -145,6 +146,7 @@ class WidgetMenuItem extends StructuredMenuItem {
             // Therefore ensureItems() adds a LoadingMenuItem if no other
             // items are present at this time. See ensureItems() for details.
             page.ensureItems();
+            traceSelect( "pushed" );
             ViewStack.pushView( page, PageMenuDelegate.get(), WatchUi.SLIDE_LEFT );
             return true;
         } else {
@@ -152,14 +154,42 @@ class WidgetMenuItem extends StructuredMenuItem {
             // static Text element, has no action to perform. Return without
             // requiring a connection, since no command can be sent.
             if( _sitemapWidget.getItem() == null ) {
+                // A linked page that never produced a PageMenu cannot be
+                // opened: the decision is traceable, because the alternative is
+                // a select that silently does nothing.
+                traceSelect( linkedPage == null ? "no-action" : "page-not-ready" );
                 return true;
             }
             if( ! ConnectionManager.get().isConnected() ) {
+                traceSelect( "offline" );
                 throw new OfflineCommandException();
             }
+            traceSelect( "command" );
             return false;
         }
     }
+
+
+    /*
+     * Debug-only E2E trace for the outcome of a select on this item.
+     *
+     * Emitted only when a menu item handled a select, so it names what the item
+     * decided: an item that pushes nothing and a press that never arrived
+     * otherwise look identical in the trace. The element type is a protocol
+     * value ("Frame", "Switch", ...), never a translated label. The release
+     * implementation is empty, so neither the type nor the text is present in
+     * release builds.
+     */
+    (:debug)
+    private function traceSelect( result as String ) as Void {
+        E2ETrace.selectionHandled(
+            _sitemapWidget.getType(),
+            result,
+            ViewStack.getDepth()
+        );
+    }
+    (:release)
+    private function traceSelect( result as String ) as Void {}
 
 
     /*

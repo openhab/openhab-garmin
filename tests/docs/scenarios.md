@@ -247,7 +247,7 @@ a run.
 | `reset_shim` | – | clears the request trace only |
 | `install_faults` | `rules` | installs (replaces) fault rules mid-run, same grammar as the top-level `shim.rules`; see [Asserting on an injected fault](#asserting-on-an-injected-fault) |
 | `wait_for_request` | `method`, `path`/`path_prefix`, `matched_rule`, `faulted`, `min_count`, `timeout_ms` | polls the shim trace |
-| `press` | `button` (`START`/`UP`/`DOWN`/`ENTER`/`BACK`/`MENU`), `count` | requires a button-capable device |
+| `press` | `button` (`START`/`UP`/`DOWN`/`ENTER`/`BACK`/`MENU`), `count`, `expect` (`effect`/`none`), `timeout_ms` | requires a button-capable device; `expect` measures the press, see [Measured presses](#measured-presses) |
 | `tap` | `x`, `y`, `count` | requires a touch-capable device |
 | `screenshot` | `name`, `stable`, `interval_ms`, `timeout_ms`, `stable_diff_ratio` | lower-case slug; stored as `NN-name.png`. `stable: true` recaptures until two frames agree, because a `VIEW` line is emitted before the view is painted |
 | `command` | `item`, `value`, `via` (`rest`/`shim`) | `rest` talks to openHAB directly |
@@ -479,6 +479,8 @@ E2E:<EVENT>;field=<value>;field=<value>
 | `CONNECTION` | `mode` (`BLE`/`WIFI_CHECK_PENDING`/`WIFI`/`OFFLINE`) |
 | `SITEMAP` | `result` (`success`/`unchanged`/`error`), `code`, `bytes` |
 | `COMMAND` | `result` (`success`/`error`), `code`, `item`, `value` |
+| `INPUT` | `button` (`select`/`back`/`next-page`/`previous-page`), `view`, `depth` |
+| `SELECT` | `kind` (element type), `result` (`pushed`/`empty-page`/`page-not-ready`/`no-action`/`offline`/`command`/`settings`), `depth` |
 | `ERROR` | `kind` (`temporary`/`critical`/`fatal`), `id`, `code`, `source` (`sitemap`/`command`/`ui`) |
 | `TOAST` | `id` |
 | `ERRORVIEW` | `id`, `code` |
@@ -554,6 +556,52 @@ A `wait_for_request` timeout prints the same event counts and the last
   device selection, not to a separate sitemap.
 - Every `shim` rule must have a `name`, so the failure message can say which fault
   was active.
+
+## Presses and input delivery
+
+A press is only evidence when it reached the app. Three faults look identical in
+a screenshot: the simulator never delivered the press, the app received it
+without the menu delegate being called, and the delegate ran on an item that
+opened nothing.
+
+`press` can therefore measure itself:
+
+```yaml
+- action: press
+  button: ENTER
+  expect: effect   # or: none
+```
+
+### Measured presses
+
+`expect: effect` captures the screen before and after the press and requires a
+new view, an `ERRORVIEW`, or a screen change above the simulator's idle noise
+floor — the `PIXEL_CHANGE_THRESHOLD` machinery the driver contract also uses.
+The measurement is independent of any app-side trace event. `expect: none`
+requires the opposite, for a press that must not do anything; without `expect`
+the press is not measured, which is fine when the next step asserts the effect
+anyway. A press that fails `expect: effect` reports the mechanism the driver
+used and the app's current state, so a dead input path fails where the press
+happens instead of in a later timeout.
+
+Two trace events separate "no input" from "input with no effect":
+
+- `E2E:INPUT;button=<select|back|next-page|previous-page>;view=...;depth=...`
+  is emitted by the menu input delegate, so it only appears when the app
+  received the press. Scrolling between entries is handled inside `Menu2` and
+  never reaches the delegate: a `DOWN` that moves the highlight is observable
+  only as a repaint, which is what `expect: effect` measures. The page buttons
+  are reported as `next-page`/`previous-page` when the highlight runs past the
+  first or last entry.
+- `E2E:SELECT;kind=<element type>;result=<outcome>;depth=...` is emitted when a
+  menu item handled a select, and says what it decided. `INPUT` without
+  `SELECT` means the press arrived but no item handled it; `result=page-not-ready`
+  names a container that had no page to open; `result=empty-page` precedes the
+  "empty page" toast.
+
+`smoke/input-delivery` exercises both on a healthy homepage and fails loudly, so
+an input-path regression names itself. It is a harness probe, not app behaviour:
+run it with `python -m e2e run smoke/input-delivery`.
 
 ## Navigation rules
 

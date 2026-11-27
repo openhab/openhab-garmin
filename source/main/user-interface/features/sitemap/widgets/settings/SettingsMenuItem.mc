@@ -46,7 +46,21 @@ class SettingsMenuItem extends StructuredMenuItem {
 
     // On select, show the settings
     public function onSelect() as Boolean {
+        traceSelect( "settings" );
         SettingsMenuManager.showSettings( WatchUi.SLIDE_LEFT );
         return true;
     }
+
+    /*
+     * Debug-only E2E trace for the select outcome, matching the event every
+     * other menu item emits. It keeps "a select reached an item" distinguishable
+     * from "the press never arrived" for the last entry of the homepage menu.
+     * Release builds contain no text and no call.
+     */
+    (:debug)
+    private function traceSelect( result as String ) as Void {
+        E2ETrace.selectionHandled( "Settings", result, ViewStack.getDepth() );
+    }
+    (:release)
+    private function traceSelect( result as String ) as Void {}
 }

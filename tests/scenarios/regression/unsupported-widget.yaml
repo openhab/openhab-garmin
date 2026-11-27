@@ -2,8 +2,19 @@
 #
 # `Default` is only supported when the item type maps to one of the app's
 # widgets (docs/USAGE.md, "Default"). `E2E_ColorLight` is a `Color` item, which
-# has no mapping, so selecting the element must surface an error rather than a
-# control. `garmin_unsupported.sitemap` keeps this case out of the main fixture.
+# has no mapping. `garmin_unsupported.sitemap` keeps this case out of the main
+# fixture.
+#
+# The error view is expected from the sitemap, not from a press:
+# `MenuItemFactory.getMenuItemType()` throws `JsonParsingException` for the
+# unsupported element while the menu is built, so the app switches to the error
+# view before any input. This scenario therefore presses nothing. It used to
+# press ENTER twice and wait for the error view, which passed either way -- a
+# press with no effect and a press that caused the error are indistinguishable
+# when the error view appears regardless. Removing the presses makes the
+# scenario fail if they ever were load-bearing.
+#
+# A healthy render and the exact error screen are still proven by the golden.
 
 name: unsupported-widget
 description: A Default element on an unsupported item type shows an error.
@@ -23,6 +34,11 @@ timeout_s: 300
 covers:
   - sitemap.element-types
   - sitemap.default-widgets
+manual_checks:
+  - >-
+    The error view is reached without input, from building the menu; the
+    scenario no longer presses a button, so a future change that defers the
+    error to a selection would show up as a failure here.
 
 steps:
   - action: launch
@@ -33,22 +49,14 @@ steps:
     min_count: 1
     timeout_ms: 30000
 
-  - action: screenshot
-    name: unsupported-homepage
-
-  # The page contains a single frame; enter it and select the first element.
-  - action: press
-    button: ENTER
-
-  - action: press
-    button: ENTER
-
-  # Selecting the unsupported element shows the error view; wait for it so the
-  # golden cannot capture the LoadingView it passes through.
+  # The unsupported element is rejected while the sitemap is applied. No press
+  # is needed, and none is sent: a press that cannot be shown to have an effect
+  # must not be part of the proof.
   - action: wait_for_view
     category: error
     timeout_ms: 30000
-    description: The unsupported-element error view is on screen.
+    description: Building the menu from the sitemap raised the error view.
+    depth: 1
 
   - action: screenshot
     name: unsupported-widget-error
@@ -57,7 +65,7 @@ steps:
     stable: true
 
   - action: assert
-    description: An error is shown, and no command is sent for the item.
+    description: No command is sent for the unsupported item.
     shim_requests:
       method: POST
       path_prefix: /rest/items/E2E_ColorLight
@@ -67,7 +75,8 @@ steps:
     golden:
       name: unsupported-widget-error
       max_diff_ratio: 0.002
-      # The selected element is unsupported, so the app shows the error view.
+      # The unsupported element is rejected while the sitemap is applied, so the
+      # app shows the error view and no page is left on the stack.
       expect:
         category: error
       min_ink_components: 40
