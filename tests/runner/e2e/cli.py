@@ -512,6 +512,7 @@ def _cmd_run(args: argparse.Namespace) -> int:
 
     written = report.write_artifacts(artifacts)
     print(report.profiles_summary())
+    print(report.unverified_summary())
     for name, path in written.items():
         print(f"{name}: {path}")
 
@@ -531,6 +532,7 @@ def _cmd_run(args: argparse.Namespace) -> int:
                 },
                 "counts": report.counts(),
                 "profiles": report.profiles(),
+                "unverified_scope": report.unverified_scope(),
                 "environment": report.environment_document(),
                 "exit_code": report.exit_code,
                 "results": [result.to_document() for result in report.results],
