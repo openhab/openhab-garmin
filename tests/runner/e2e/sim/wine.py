@@ -76,6 +76,14 @@ from ..sdk import (
 from ..settings import AppSettings
 from ..trace import TraceEvent, parse_lines
 from .base import Button, DriverError, SimulatorDriver
+from .menus import (
+    MENU_PROBE_STEP,
+    MenuProbeReport,
+    MenuProbeStep,
+    menu_bar_points,
+    new_window_ids,
+    parse_window_ids,
+)
 
 #: Environment variable that may point at an already installed Wine binary.
 WINE_ENV = "E2E_WINE_BINARY"
@@ -236,6 +244,12 @@ MODE_INI_VALUES: Mapping[str, Mapping[str, str]] = {
 HTTPS_REQUIREMENTS_KEY = "UseHttpsRequirements"
 HTTPS_REQUIREMENTS_OFF = "0"
 
+#: Night mode is also a ``simulator.ini`` key, numeric like the rest: ``1`` on,
+#: ``0`` off. It only takes effect at start, so the driver always writes it and
+#: documents the restart as the way to change it (see ``restart_in_mode``).
+NIGHT_MODE_KEY = "nightMode"
+ENV_NIGHT_MODE = "E2E_WINE_NIGHT_MODE"
+
 #: The app starts in BLE and only leaves it after a request fails
 #: (``ConnectionManager``), so a requested mode is consistent with these runtime
 #: modes. The driver reports them; it does not assert them.
@@ -249,6 +263,21 @@ MODE_CONNECTION_NAMES: Mapping[str, Tuple[str, ...]] = {
 #: runtime error (a Monkey C stack, a missing symbol, a bad font) appears: the
 #: `E2E:` stream only carries what the app chooses to print.
 CIQ_LOG_HINT = "drive_c/users/{user}/Temp/com.garmin.connectiq/GARMIN/APPS/LOGS/CIQ_LOG.YML"
+
+#: The app's own persistent storage, relative to the Wine prefix. The app caches
+#: the last sitemap JSON here (`SitemapStore`: ``sitemapJson``/``sitemapLabel``),
+#: and that cache outlives a scenario: without clearing it, the next scenario
+#: starts on the previous scenario's sitemap, reports
+#: ``E2E:SITEMAP;result=unchanged`` and never requests its own. `LOGS` is
+#: deliberately not touched, because ``CIQ_LOG.YML`` is the crash evidence.
+APP_DATA_HINTS: Tuple[str, ...] = (
+    "drive_c/users/{user}/Temp/com.garmin.connectiq/GARMIN/APPS/DATA",
+    "drive_c/users/{user}/Temp/com.garmin.connectiq/GARMIN/APPS/SETTINGS",
+    "drive_c/users/{user}/Temp/com.garmin.connectiq/GARMIN/Settings",
+)
+
+#: Set to keep the app's storage across launches, for debugging the cache itself.
+ENV_KEEP_APP_DATA = "E2E_WINE_KEEP_APP_DATA"
 
 #: Runtime errors this suite meets, and what each one means. The first two are
 #: false defect classes: a device/PRG mismatch and a device-definition gap.
@@ -611,6 +640,11 @@ def xdotool_window_pid_command(window: str) -> List[str]:
 
 def xwininfo_root_command() -> List[str]:
     return ["xwininfo", "-root"]
+
+
+def xwininfo_children_command() -> List[str]:
+    """Child windows of the root, for popup detection."""
+    return ["xwininfo", "-root", "-children"]
 
 
 def xdotool_getwindowfocus_command() -> List[str]:
@@ -1063,19 +1097,25 @@ def read_device_keys(devices_root: Optional[Path], product: str) -> Mapping[str,
 # ---------------------------------------------------------------------------
 
 
-def ini_updates(product: str, mode: str, language_value: Optional[str]) -> Dict[str, str]:
+def ini_updates(
+    product: str, mode: str, language_value: Optional[str], night: bool = False
+) -> Dict[str, str]:
     """Startup keys written before the simulator starts.
 
     ``language_value`` is the numeric ``Language`` index the map measured, or
     ``None`` for the simulator's own default language: the key is then removed
     rather than written, because writing an unmeasured index would silently run
     the app in a language nobody asked for.
+
+    ``night`` is the simulator's night theme (``nightMode=1``). Like the mode it
+    is a start-up key, not a runtime switch, so changing it means a restart.
     """
     if mode not in MODE_INI_VALUES:
         raise DriverError(f"unknown mode {mode!r}; expected one of {sorted(MODE_INI_VALUES)}")
     updates: Dict[str, str] = {
         "LastUsedDevice": product,
         HTTPS_REQUIREMENTS_KEY: HTTPS_REQUIREMENTS_OFF,
+        NIGHT_MODE_KEY: night_mode_value(night),
     }
     if language_value is not None:
         updates["Language"] = str(language_value)
@@ -1086,6 +1126,17 @@ def ini_updates(product: str, mode: str, language_value: Optional[str]) -> Dict[
 def ini_removals(language_value: Optional[str]) -> Tuple[str, ...]:
     """Keys to delete: ``Language`` when the default language is requested."""
     return () if language_value is not None else ("Language",)
+
+
+def _night_from_environment() -> bool:
+    """``E2E_WINE_NIGHT_MODE`` as a boolean (``1``/``true``/``yes``/``on``)."""
+    raw = os.environ.get(ENV_NIGHT_MODE, "").strip().lower()
+    return raw in ("1", "true", "yes", "on")
+
+
+def night_mode_value(night: bool) -> str:
+    """The ``nightMode`` ini value for a boolean."""
+    return "1" if night else "0"
 
 
 @dataclass(frozen=True)
@@ -1390,6 +1441,11 @@ class WineSimulatorDriver(SimulatorDriver):
     name: str = "wine"
     supports_events: bool = True
     supports_screenshots: bool = True
+    #: The driver can relaunch in another start-up mode and probe the menu bar.
+    #: Neither is a mid-run transition: the mode keys are read at start, and the
+    #: menu bar is where a transition would come from (see ``probe_menus``).
+    supports_restart_in_mode: bool = True
+    supports_menu_probe: bool = True
     #: The simulator's ``Language`` setting is a numeric index, not a code, and
     #: the index is measured per code (see ``e2e.languages``). Every code with a
     #: measured index can be provisioned; ``eng`` always can, by removing the key
@@ -1434,6 +1490,8 @@ class WineSimulatorDriver(SimulatorDriver):
         self._app_started_at: Optional[float] = None
         self._mode = "ble"
         self._language = "eng"
+        self._language_value: Optional[str] = None
+        self._night = False
         self._expect_language = True
         self._language_index_map: Optional[Dict[str, int]] = None
         #: The language code the app reported at the last ``wait_ready``.
@@ -1608,7 +1666,14 @@ class WineSimulatorDriver(SimulatorDriver):
         self._settings = settings
         self._mode = mode
         self._language = language
+        self._language_value = language_value
         self._expect_language = expect_language
+        self._night = _night_from_environment()
+        if self._night:
+            self._record(
+                f"{ENV_NIGHT_MODE}=1: the simulator starts in night mode "
+                f"({NIGHT_MODE_KEY}=1)"
+            )
         self.last_language = None
         self._ciq_errors = []
         self._ciq_header = {}
@@ -1637,6 +1702,7 @@ class WineSimulatorDriver(SimulatorDriver):
         self._write_simulator_ini(device, mode, language_value)
         self._start_simulator()
         self._seed_settings(settings)
+        self.clear_app_data()
         self._launch_app(device)
         self._started = True
 
@@ -2169,6 +2235,151 @@ class WineSimulatorDriver(SimulatorDriver):
         remaining = max(1.0, deadline - time.monotonic())
         self.launch(min(remaining, DEFAULT_LAUNCH_TIMEOUT))
         return list(parse_lines(self.events()))
+
+    def restart_in_mode(
+        self,
+        mode: str,
+        *,
+        night: Optional[bool] = None,
+        timeout_s: float = DEFAULT_READY_TIMEOUT,
+    ) -> bool:
+        """Relaunch the app in another start-up mode (and optionally night mode).
+
+        This is the documented capability the harness has without scripting the
+        simulator's menus: the mode keys are written to ``simulator.ini`` before
+        ``simulator.exe`` starts, so a different start-up mode means a restart.
+        It answers "the app starts in Wi-Fi", **not** "the app transitions to
+        Wi-Fi while running"; only the latter exercises the connection-mode
+        indicator and the Wi-Fi sync path, and only the menu bar can do that
+        (see :meth:`probe_menus`).
+
+        The call is deliberately explicit about what it did: it records the old
+        and new mode, the night value, and whether the app came back. It returns
+        ``True`` when the app reported a connection mode after the restart.
+        ``night`` defaults to the current value.
+        """
+        device = self._device
+        settings = self._settings
+        if device is None or settings is None or self._prg is None:
+            raise DriverError("restart_in_mode() needs a started session")
+        if mode not in MODE_INI_VALUES:
+            raise DriverError(
+                f"unknown mode {mode!r}; expected one of {sorted(MODE_INI_VALUES)}"
+            )
+        previous = self._mode
+        previous_night = self._night
+        if night is not None:
+            self._night = bool(night)
+        self._record(
+            f"restarting in mode {mode!r} (was {previous!r}) with "
+            f"{NIGHT_MODE_KEY}={night_mode_value(self._night)}; this proves "
+            "start-up mode, not a mid-run transition"
+        )
+        self.stop()
+        self._mode = mode
+        self._ciq_errors = []
+        self._ciq_header = {}
+        self._ciq_log = None
+        self._write_simulator_ini(device, mode, self._language_value)
+        self._start_simulator()
+        self._seed_settings(settings)
+        self._launch_app(device, reset_events=False, append_log=True)
+        self._started = True
+        try:
+            self.wait_ready(min(timeout_s, DEFAULT_READY_TIMEOUT))
+        except DriverError as error:
+            self._record(f"restart in mode {mode!r} did not become ready: {error}")
+            self._night = previous_night
+            return False
+        modes = [
+            event.get("mode")
+            for event in parse_lines(list(self.events()))
+            if event.event == "CONNECTION"
+        ]
+        self._record(
+            f"restart in mode {mode!r} ready; app reported connections {modes}; "
+            f"night {night_mode_value(self._night)}"
+        )
+        return bool(modes)
+
+    def probe_menus(self, timeout_s: float = 20.0) -> MenuProbeReport:
+        """Walk the simulator's menu bar with real clicks and report what happens.
+
+        The window has a menu bar drawn inside it, so the labels are found by
+        clicking along the bar row and watching for a popup window
+        (``xwininfo -root -children`` gains an id) or a screen change. Every
+        candidate point and its result goes into the report, so a run that finds
+        nothing still says exactly what was tried.
+
+        This is a probe, not a capability claim: it returns the evidence and the
+        caller decides. Nothing is asserted here.
+        """
+        window = self._require_window()
+        geometry = self._geometry(window)
+        report = MenuProbeReport()
+        shots = self.artifact_dir / "menus"
+        shots.mkdir(parents=True, exist_ok=True)
+        before = shots / "menu-before.png"
+        self.screenshot(before)
+        root_before = self._children_ids()
+        deadline = time.monotonic() + max(1.0, timeout_s)
+        for x, y in menu_bar_points(
+            geometry.get("width", 0), geometry.get("height", 0)
+        ):
+            if time.monotonic() >= deadline or report.opened:
+                break
+            point_shot = shots / f"menu-{x}-{y}.png"
+            try:
+                self._click_at(window, x, y, action=f"menu probe ({x},{y})")
+                time.sleep(0.4)
+                self.screenshot(point_shot)
+                root_after = self._children_ids()
+                delta = self.pixel_difference(before, point_shot)
+            except DriverError as error:
+                report.steps.append(
+                    MenuProbeStep(x=x, y=y, note=f"skipped: {error}")
+                )
+                continue
+            fresh = new_window_ids(root_before, root_after)
+            step = MenuProbeStep(
+                x=x,
+                y=y,
+                screen_delta=int(delta or 0),
+                new_windows=tuple(fresh),
+            )
+            report.steps.append(step)
+            if fresh:
+                report.popup_window = fresh[0]
+                report.screenshot = str(point_shot)
+                report.popup_geometry = self._geometry_text(fresh[0])
+                break
+        report.screenshot = report.screenshot or str(shots / "menu-last.png")
+        self._record("menu probe: " + report.verdict())
+        for line in report.lines():
+            self._record(f"menu probe step {line}")
+        return report
+
+    def _children_ids(self) -> List[int]:
+        """Window ids the X server reports as children of the root."""
+        try:
+            completed = self._run(
+                xwininfo_children_command(),
+                check=False,
+                action="xwininfo -root -children",
+            )
+        except DriverError:
+            return []
+        return sorted(parse_window_ids(completed.stdout or ""))
+
+    def _geometry_text(self, window: int) -> str:
+        try:
+            geometry = self._geometry(str(window))
+        except DriverError:
+            return "geometry unknown"
+        return (
+            f"{geometry.get('width', 0)}x{geometry.get('height', 0)} at "
+            f"(+{geometry.get('x', 0)},+{geometry.get('y', 0)})"
+        )
 
     def _record_device_title(self) -> None:
         """Corroborate the requested device from the window title.
@@ -2952,7 +3163,7 @@ class WineSimulatorDriver(SimulatorDriver):
     def _write_simulator_ini(
         self, device: Device, mode: str, language_value: Optional[str]
     ) -> None:
-        updates = ini_updates(device.product, mode, language_value)
+        updates = ini_updates(device.product, mode, language_value, night=self._night)
         existing = next((path for path in self._ini_candidates() if path.is_file()), None)
         created = existing is None
         path = existing or self._ini_candidates()[0]
@@ -3329,6 +3540,97 @@ class WineSimulatorDriver(SimulatorDriver):
         )
 
     # -- application properties -------------------------------------------
+    def _app_data_dirs(self) -> List[Path]:
+        """Existing per-app storage directories in this Wine prefix."""
+        found: List[Path] = []
+        for user in (user for user in self._user_candidates() if user):
+            for hint in APP_DATA_HINTS:
+                path = self.prefix / hint.format(user=user)
+                if path.is_dir():
+                    found.append(path)
+        return found
+
+    def clear_app_data(self) -> List[str]:
+        """Delete the app's cached sitemap and settings before a launch.
+
+        The app persists the last sitemap JSON in its own storage
+        (``SitemapStore``: ``sitemapJson``/``sitemapLabel``) under
+        ``GARMIN/APPS/DATA``. That cache survives a scenario, so without this a
+        scenario inherits the previous scenario's sitemap, logs
+        ``E2E:SITEMAP;result=unchanged`` and never requests its own page — which
+        is exactly how a run looked like a navigation or protocol failure.
+        ``LOGS`` is left alone; ``CIQ_LOG.YML`` is the crash evidence.
+
+        Returns the paths that were removed. ``E2E_WINE_KEEP_APP_DATA=1`` skips
+        the clear, for debugging the cache itself.
+        """
+        if os.environ.get(ENV_KEEP_APP_DATA, "").strip().lower() in (
+            "1",
+            "true",
+            "yes",
+            "on",
+        ):
+            self._record(
+                f"{ENV_KEEP_APP_DATA} is set: keeping the app's cached sitemap "
+                "and settings across launches"
+            )
+            return []
+        removed: List[str] = []
+        for path in self._app_data_dirs():
+            try:
+                shutil.rmtree(path)
+            except OSError as error:
+                self._record(f"warning: could not clear {path}: {error}")
+                continue
+            removed.append(str(path))
+        if removed:
+            self._record(
+                "cleared the app's persistent storage before launch "
+                f"({len(removed)} path(s), LOGS untouched): "
+                + ", ".join(removed)
+            )
+        else:
+            self._record(
+                "no app storage to clear before launch (first run in this prefix)"
+            )
+        return removed
+
+    def relaunch_app(
+        self, *, clear_data: bool = True, timeout_s: float = DEFAULT_READY_TIMEOUT
+    ) -> bool:
+        """Stop the app, optionally clear its storage, and launch it again.
+
+        Used by the contract's isolation case: a second launch must request its
+        sitemap instead of reporting ``result=unchanged`` from the cache.
+        """
+        device = self._device
+        if device is None or self._prg is None:
+            raise DriverError("relaunch_app() needs a started session")
+        self._record(
+            "relaunching the app"
+            + (" with its persistent storage cleared" if clear_data else " keeping its storage")
+        )
+        mark = len(self.events())
+        self._stop_app()
+        if clear_data:
+            self.clear_app_data()
+        time.sleep(1.0)
+        self._launch_app(device, reset_events=False, append_log=True)
+        self._started = True
+        try:
+            self.wait_ready(min(timeout_s, DEFAULT_READY_TIMEOUT))
+        except DriverError as error:
+            self._record(f"relaunched app did not become ready: {error}")
+            return False
+        for event in parse_lines(list(self.events())[mark:]):
+            if event.event == "SITEMAP":
+                self._record(
+                    f"relaunch sitemap result: {event.get('result')} "
+                    f"(code={event.get('code')})"
+                )
+                return event.get("result") != "unchanged"
+        return False
+
     def _seed_settings(self, settings: AppSettings) -> None:
         """Write an explicit properties file only when one is requested.
 

@@ -253,6 +253,14 @@ overlay.
 
 ## Quick start
 
+A complete E2E pass is **one run per openHAB profile**: `stable` (the default
+stack) and `dev` (the overlay with `confirmCmd`). Profiles are exclusive, so
+`run --all` covers only the profile its stack serves and **skips** scenarios
+written for the other one with a reason; the summary prints
+`profiles covered: …` and `report.json` carries `profiles.covered` /
+`profiles.skipped`. See
+[docs/scenarios.md](docs/scenarios.md#openhab-profiles-a-complete-run-is-one-pass-per-profile).
+
 ```bash
 cd tests/compose
 cp .env.example .env
@@ -381,6 +389,7 @@ See [docs/simulator-driver.md](docs/simulator-driver.md#glance-the-build-profile
 | `coverage` | map #140 scope entries to scenarios; `--write` regenerates `docs/coverage.md`, `--check` fails on a gap or a stale document |
 | `contract-test` | exercise a simulator driver against the driver contract; `--prg` adds the cases that need a launched application and its name selects the device (a disagreeing `--device` is refused). `--key BUTTON=KEYSYM` tries a different input key; `--shim-url` adds the shim requests each measured press caused |
 | `language-scan` | measure the simulator's numeric `Language` index per language code on the guest (`--prg`, `--indices 0-24`, `--write`) and record it in `tests/config/simulator-languages.json`; this is what makes a non-English scenario runnable |
+| `simulator-probe` | run the menu-bar experiment (click along the bar, report popups and screen changes) and restart the app into each start-up mode (and night mode). Run it in your own container; a restart disturbs a running suite. See [docs/simulator-driver.md](docs/simulator-driver.md#runtime-mode-and-night-mode) |
 | `preflight` | read-only host check before the stack starts; `--skip` a group and `--json` for automation |
 | `validate-compose` | static Compose validation; `--check-pins` also requires digests |
 | `network-env` | render or verify the generated loopback network block in `compose/.env.example` |

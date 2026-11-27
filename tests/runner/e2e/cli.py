@@ -102,6 +102,7 @@ from .sdk import (
 )
 from .settings import SettingsError, load_settings
 from .shim import ShimClient, ShimError
+from .trace import parse_lines
 from .sim import DRIVER_NAMES, Button, create_driver
 from .sim.wine import ENV_KEY_PREFIX
 from .variants import (
@@ -510,6 +511,7 @@ def _cmd_run(args: argparse.Namespace) -> int:
         print(line)
 
     written = report.write_artifacts(artifacts)
+    print(report.profiles_summary())
     for name, path in written.items():
         print(f"{name}: {path}")
 
@@ -528,6 +530,7 @@ def _cmd_run(args: argparse.Namespace) -> int:
                     "note": profile_note,
                 },
                 "counts": report.counts(),
+                "profiles": report.profiles(),
                 "environment": report.environment_document(),
                 "exit_code": report.exit_code,
                 "results": [result.to_document() for result in report.results],
@@ -915,6 +918,95 @@ def _cmd_language_scan(args: argparse.Namespace) -> int:
     if args.json:
         _emit_json({"measured": document, "rejected": rejected})
     return 0 if document else 1
+
+
+def _cmd_simulator_probe(args: argparse.Namespace) -> int:
+    """Probe the simulator's menu bar, then restart into each start-up mode."""
+    if args.driver != "wine":
+        return _fail("simulator-probe needs a real simulator; use --driver wine")
+    prg = Path(args.prg)
+    if not prg.is_file():
+        return _fail(f"--prg {prg} is not a file")
+    derived = device_from_prg(prg)
+    device_id = args.device or (derived.id if derived is not None else None)
+    if not device_id:
+        return _fail(
+            f"cannot derive a device from {prg.name}; pass --device <id>"
+        )
+    device = find_device(device_id)
+    settings = load_settings(args.settings)
+    workdir = _artifacts_dir(args) / "simulator-probe"
+    driver = create_driver(
+        "wine",
+        layout=load_layout(),
+        artifact_dir=workdir,
+        log=lambda message: print(message),
+    )
+    print(f"device: {device.id} ({device.product})")
+    driver.prepare(prg)
+    driver.start(device, settings, args.mode, language=args.language)
+    print("waiting for the app (settle + launch retries) ...")
+    driver.wait_ready(args.timeout)
+
+    document: Dict[str, Any] = {"device": device.id, "menus": {}, "modes": []}
+    try:
+        if getattr(driver, "supports_menu_probe", False):
+            print("\n== experiment 1: click the menu bar ==")
+            report = driver.probe_menus(args.probe_timeout)
+            for line in report.lines():
+                print(f"  {line}")
+            print(f"  verdict: {report.verdict()}")
+            document["menus"] = {
+                "opened": report.opened,
+                "popup_window": report.popup_window,
+                "popup_geometry": report.popup_geometry,
+                "screenshot": report.screenshot,
+                "steps": [
+                    {
+                        "x": step.x,
+                        "y": step.y,
+                        "delta": step.screen_delta,
+                        "new_windows": list(step.new_windows),
+                        "note": step.note,
+                    }
+                    for step in report.steps
+                ],
+                "verdict": report.verdict(),
+            }
+        else:
+            print("menu probe: not available from this driver")
+
+        if args.skip_restart:
+            print("\n== restart-in-mode: skipped (--skip-restart) ==")
+        elif getattr(driver, "supports_restart_in_mode", False):
+            print("\n== experiment 2: restart in each start-up mode ==")
+            for mode in args.modes.split(","):
+                mode = mode.strip()
+                if not mode:
+                    continue
+                night = True if args.night else None
+                ok = driver.restart_in_mode(
+                    mode, night=night, timeout_s=args.timeout
+                )
+                connections = [
+                    event.describe()
+                    for event in parse_lines(list(driver.events()))
+                    if event.event in ("CONNECTION", "VIEW", "SITEMAP", "ERRORVIEW")
+                ][-4:]
+                print(f"  {mode}: {'ready' if ok else 'not ready'}")
+                for line in connections:
+                    print(f"    {line}")
+                document["modes"].append(
+                    {"mode": mode, "ready": bool(ok), "trace": connections}
+                )
+        else:
+            print("restart-in-mode: not available from this driver")
+    finally:
+        driver.stop()
+
+    if args.json:
+        _emit_json(document)
+    return 0 if (document["menus"].get("opened") or document["modes"]) else 1
 
 
 def _cmd_preflight(args: argparse.Namespace) -> int:
@@ -1421,6 +1513,42 @@ def build_parser() -> argparse.ArgumentParser:
     scan.add_argument("--json", action="store_true")
     scan.add_argument("--artifacts")
     scan.set_defaults(handler=_cmd_language_scan)
+
+    probe = subparsers.add_parser(
+        "simulator-probe",
+        help="probe the simulator menu bar, then restart into each start-up mode",
+        description=(
+            "Experiment runner for the simulator's own controls. Click along the "
+            "menu bar row and report whether a popup opens, then relaunch the app "
+            "in each start-up mode (and night mode). Start-up mode is not a "
+            "mid-run transition; see tests/docs/simulator-driver.md. Run it in "
+            "your own container, because a restart disturbs a running suite."
+        ),
+    )
+    probe.add_argument("--driver", choices=DRIVER_NAMES, default="wine")
+    probe.add_argument("--prg", required=True, help="compiled PRG")
+    probe.add_argument("--device", help="device id; defaults to the PRG's name")
+    probe.add_argument("--mode", default="ble", help="mode the first launch uses")
+    probe.add_argument(
+        "--modes",
+        default="wifi,offline",
+        help="comma-separated modes to restart into (default: wifi,offline)",
+    )
+    probe.add_argument("--language", default="eng", help="language at start")
+    probe.add_argument("--settings", default="default", help="settings fixture")
+    probe.add_argument("--night", action="store_true", help="also set nightMode=1")
+    probe.add_argument(
+        "--probe-timeout", type=float, default=20.0, help="seconds for the menu sweep"
+    )
+    probe.add_argument(
+        "--timeout", type=float, default=300.0, help="seconds per launch"
+    )
+    probe.add_argument(
+        "--skip-restart", action="store_true", help="only probe the menu bar"
+    )
+    probe.add_argument("--json", action="store_true")
+    probe.add_argument("--artifacts")
+    probe.set_defaults(handler=_cmd_simulator_probe)
 
     preflight = subparsers.add_parser(
         "preflight",

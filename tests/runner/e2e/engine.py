@@ -123,6 +123,7 @@ class ScenarioRunner:
             device=self.device.id,
             mode=scenario.mode,
             fixture=scenario.fixture,
+            profile=scenario.openhab.profile,
             language=scenario.language,
             source=str(scenario.source),
             status=ERRORED,
@@ -193,6 +194,10 @@ class ScenarioRunner:
         except AssertionFailure as error:
             result.status = FAILED
             result.failures.append(str(error))
+        except fixtures_module.ScenarioSkipped as error:
+            result.status = SKIPPED
+            result.skip_reason = str(error)
+            self.log(f"SKIPPED {scenario.scenario_id}: {result.skip_reason}")
         except (DriverError, OpenHabError, ShimError, ConfigError) as error:
             result.status = FAILED
             result.failures.append(f"{type(error).__name__}: {error}")
@@ -257,6 +262,29 @@ class ScenarioRunner:
 
         self.openhab.wait_ready()
         self.shim.wait_ready()
+
+        # Profiles are exclusive: one openHAB serves one fixture tree. A
+        # scenario written for `dev` cannot run on a `stable` stack, and failing
+        # it in the guard would read as a product failure. Detect what is
+        # running and skip with the reason instead; the run summary reports
+        # which profiles it covered, so "complete" means one pass per profile.
+        if not self.dry_run:
+            running, distances = fixtures_module.detect_profile(self.openhab)
+            wanted = scenario.openhab.profile
+            if running != wanted:
+                detail = ", ".join(
+                    f"{name}: {missed[0]} item(s)/{missed[1]} sitemap(s) missing"
+                    for name, missed in sorted(distances.items())
+                )
+                raise fixtures_module.ScenarioSkipped(
+                    f"needs the {wanted!r} openHAB profile, but the running stack "
+                    f"serves {running or 'no known profile'!r} ({detail}). Profiles "
+                    "are exclusive, so run this scenario against the "
+                    f"{wanted!r} stack: set COMPOSE_PROFILES={wanted} and start "
+                    f"openhab-{wanted}, then `python -m e2e run {scenario.scenario_id}`. "
+                    "A complete pass is one run per profile; see "
+                    "tests/docs/scenarios.md."
+                )
 
         # Refuse to run against an instance that dropped the fixture models.
         # HTTP 200 on /rest/ proves nothing; the sets are what the scenario

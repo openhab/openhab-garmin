@@ -57,6 +57,9 @@ engine reports event and golden assertions as **skipped**, never passed.
   `press-effect` judges input on the open app. A touch-only device (e.g. `venu2`)
   has no physical buttons, so its press cases are skipped and `tap` covers its
   input.
+- `app-data-reset` relaunches the app with its cached sitemap removed and requires
+  a `SITEMAP` result that is not `unchanged`, so scenario isolation is proven
+  rather than assumed (see "Scenario isolation: the app caches the sitemap").
 - `press-effect` presses ENTER, MENU and DOWN (and taps on touch devices) and
   requires a different view or a screen change in the screen rectangle; a repeat
   of the same view never counts.
@@ -161,6 +164,8 @@ PIDs instead.
 | `E2E_WINE_SETTINGS_FILE` | escape hatch: write this application-properties file before launch; the default path writes nothing because properties come from the build |
 | `E2E_WINE_SCREEN_RECT` | `x,y,width,height` of the watch screen inside the window; pin it when taps miss |
 | `E2E_WINE_KEY_<BUTTON>` | X keysym for one button, e.g. `E2E_WINE_KEY_ENTER=Return`; `--key BUTTON=KEYSYM` is the CLI spelling |
+| `E2E_WINE_NIGHT_MODE` | `1` starts the simulator in night mode (`nightMode=1`); start-up only, so a change means a restart |
+| `E2E_WINE_KEEP_APP_DATA` | `1` keeps the app's cached sitemap and settings across launches, for debugging the cache; the default clears them before every launch |
 
 ## Per-method status
 
@@ -175,7 +180,11 @@ PIDs instead.
 | `screenshot` | implemented | Captures the simulator window. Fails when the capture is not a usable PNG instead of returning a blank image. |
 | `events` | implemented | `monkeydo` stdout/stderr with receipt timestamps; `stdbuf` disables its block buffering when available. |
 | `stop` | implemented | Terminates the app and the simulator by PID; leaks nothing into the next scenario. |
-| mode (`ble`/`wifi`/`offline`) | partial | The startup keys are written and reported. The app always starts in `BLE` and only leaves it after a request fails, so the driver does not claim a runtime mode; the scenario's request-count assertions cover the transition. |
+| `restart_in_mode` | implemented (Wine), start-up only | Relaunches the app with another `simulator.ini` (`BleState`/`WifiState`, `nightMode`) and waits until it is ready. Proves start-up mode; never claims a mid-run transition. |
+| `clear_app_data` / `relaunch_app` | implemented | Removes the app's cached sitemap and settings (`APPS/DATA`, `APPS/SETTINGS`, `GARMIN/Settings`) before every launch, and can relaunch with a cleared cache. `LOGS` is untouched. |
+| `probe_menus` | implemented (Wine), evidence only | Clicks along the menu bar row, reports every candidate point with its screen delta and any new X window, and screenshots each step. Asserts nothing; `simulator-probe` runs it. |
+| mode (`ble`/`wifi`/`offline`) | partial, start-up only | The startup keys are written and reported; `restart_in_mode()` relaunches into another mode and says in the log that it proves start-up mode, not a mid-run transition. A transition needs the simulator menus, which are probed by `simulator-probe` and still waived (see "Runtime mode and night mode"). |
+| night mode | partial, start-up only | `nightMode` is an ini key: `E2E_WINE_NIGHT_MODE=1` (or a restart with `--night`) starts in night mode. The night theme changing mid-run is a menu action and stays waived. |
 | language (`eng`/`deu`/...) | implemented, per code | `eng` removes the `Language` key (simulator default); every other code writes the **numeric** index from `tests/config/simulator-languages.json` and the reported `E2E:LANGUAGE` must match or the run fails. A code with no measured index raises in `start()` and is reported blocked; `python -m e2e language-scan --write` measures it. |
 | app properties | implemented, verified at build | Compiled into the PRG through a `settings.xml` resource override; `e2e build` asserts the defaults `monkeyc` emitted, and `wait_ready` rejects a `UI:CONFIG` error view. See below. |
 
@@ -224,6 +233,48 @@ with a property **key table only** — no values. Dropping an
 no value reaches the `.SET`. The `.SET` binary format is undocumented, so the
 driver neither writes nor parses it.
 
+## Scenario isolation: the app caches the sitemap
+
+The app persists the last sitemap in its **own** storage
+(`source/main/data/storage/SitemapStore.mc`):
+
+```monkeyc
+private static const STORAGE_JSON  as String = "sitemapJson";
+private static const STORAGE_LABEL as String = "sitemapLabel";
+```
+
+That storage lives under
+`<prefix>/drive_c/users/<user>/Temp/com.garmin.connectiq/GARMIN/APPS/DATA` and
+outlives a scenario, because the simulator process is new but the Wine prefix is
+not. Without clearing it, the second scenario starts on the **first** scenario's
+sitemap and logs `E2E:SITEMAP;result=unchanged;code=200` instead of requesting
+its own page — which looks exactly like a navigation bug, a protocol failure or a
+missing element:
+
+| Symptom in a run | What it really was |
+| --- | --- |
+| expected `GET /rest/sitemaps/garmin_unsupported`, polled `garmin_commands` | the previous scenario's cached sitemap |
+| expected `garmin_e2e`, polled `garmin_commands` | same |
+| expected `E2E:ERROR;kind=temporary`, saw `SITEMAP;result=unchanged;code=200` | the injected fault never reached the app |
+| expected `POST /rest/items/E2E_Toggle`, only GETs arrived | the toggle is not on the cached page |
+
+`start()` therefore calls `clear_app_data()` **before** every `monkeydo` launch:
+it removes `GARMIN/APPS/DATA`, `GARMIN/APPS/SETTINGS` and `GARMIN/Settings` in
+the prefix and logs every path it removed. `GARMIN/APPS/LOGS` is deliberately
+left alone — `CIQ_LOG.YML` is the crash evidence. `E2E_WINE_KEEP_APP_DATA=1`
+skips the clear, for debugging the cache itself.
+
+The contract's **`app-data-reset`** case proves the isolation rather than
+assuming it: it relaunches the app with the storage cleared and requires a
+`SITEMAP` result that is not `unchanged`. A green contract therefore means "this
+scenario got a fresh app", which is what makes a red one mean something.
+
+Each scenario starts with no cached sitemap, so `result=unchanged` cannot leak
+across runs. The shim's trace **is** reset per scenario (`POST /reset` before the
+launch); its request **ids** keep climbing across the whole run, so an id like
+`#137` in a failure message is a sequence number, not evidence that an earlier
+scenario's request was counted.
+
 ## Mode and language
 
 `simulator.ini` is rewritten before the simulator starts, in the simulator's own
@@ -242,6 +293,12 @@ format:
 | `ble` | `BleState=2`, `WifiState=1` |
 | `wifi` | `BleState=1`, `WifiState=2` |
 | `offline` | `BleState=1`, `WifiState=0` |
+
+Night mode is the same kind of start-up key: `nightMode=0` normally, `nightMode=1`
+when `E2E_WINE_NIGHT_MODE` is set or a restart asks for it. **All four keys are
+read at start**, so they prove "the app starts in X" and never "the app
+transitions to X while running"; the distinction matters and is spelled out in
+"Runtime mode and night mode".
 
 The states are numbers, not booleans. The operator's Windows simulator writes
 `BleState=2` for a connected phone; the other values follow
@@ -520,6 +577,77 @@ One distinction that matters when reading a run: `E2E:VIEW;category=sitemap;view
 means the view was **constructed**, not painted. The trace can assert structure
 today; it cannot yet assert that anything appeared, because the paint path is
 where the font failure lives.
+
+## Runtime mode and night mode
+
+`mode` and `nightMode` are `simulator.ini` keys, so the harness can test that
+the app **starts** in BLE, Wi-Fi, Offline and night mode, and nothing else. A
+**mid-run transition** — the connection-mode indicator changing, the Wi-Fi-only
+sitemap update, the night theme — needs the simulator's own menus, because the
+app never re-reads the ini.
+
+### The menu bar exists; the accelerators do not
+
+Correction to an earlier note in this repository: the simulator **has** a menu
+bar. It is drawn _inside_ the window (`File`, `Settings`, `Simulation`,
+`Data Fields`, `adb Connection`, `Help`) — the first row of the committed golden
+is that text. The `alt+f`/`alt+s` experiments proved only that the keyboard
+accelerators do nothing; they did **not** prove the menus are unreachable. Treat
+the menus as **untested, not absent**.
+
+### What the harness provides now
+
+`python -m e2e simulator-probe --prg <built.prg>` runs the menu experiment and
+the mode restarts in one go, in **your own container** (a restart disturbs a
+running suite):
+
+```bash
+python -m e2e simulator-probe --prg artifacts/build/openhab-garmin-fenix7.prg \
+    --modes wifi,offline --night
+```
+
+It does three things and prints the evidence for each:
+
+1. **Menu sweep** (`driver.probe_menus`): clicks along the menu bar row every
+   24 px, and after each click looks for a **new X window** (`xwininfo -root
+   -children`) and for a screen change (`compare -metric AE`). Every candidate
+   point is logged with its delta and any new window ids, plus a screenshot per
+   step; `artifacts/simulator-probe/menus/` holds them.
+1. **Restart in each start-up mode** (`driver.restart_in_mode`): stops the app
+   and simulator, rewrites the ini with the new `BleState`/`WifiState` (and
+   `nightMode`), relaunches and waits until the app is ready; it prints the last
+   `CONNECTION`/`VIEW`/`SITEMAP` lines as evidence.
+1. `--skip-restart` runs only the menu sweep.
+
+`restart_in_mode` is honest about what it proves, in the log line
+`restarting in mode 'wifi' (was 'ble') … this proves start-up mode, not a
+mid-run transition`.
+
+### The experiments and what each would settle
+
+| # | Experiment | Run | If it works | If it does not |
+| --- | --- | --- | --- | --- |
+| 1 | click the menu bar | `simulator-probe --skip-restart` | a popup window id and geometry in the report; screenshot in `artifacts/…/menus/` | the report says which points were clicked and that nothing changed |
+| 2 | drive a transition | after 1 opens a popup: screenshot the popup, then click `Simulation → Connection → Wi-Fi` and back | `E2E:CONNECTION;mode=…` changes **mid-run**, converting the waived entries into covered ones | menus open but do not act, or the popup is in-window and not scriptable |
+| 3 | native Linux simulator | the official Linux `simulator` from the same SDK, `xdotool` + `xwininfo` | GTK menus are ordinary X windows, so the driver would gain the capability under the Linux driver | Wine-only limitation becomes a Linux-only limitation, and the docs must name the driver |
+| 4 | restart fallback | `simulator-probe --modes wifi,offline --night` | start-up mode and night mode are asserted and documented as **start-up** coverage | a startup mode that does not reach the app is a driver bug to fix |
+
+Nothing in this repository has been re-classified by these experiments yet: the
+waivers for `communication.transitions`, `communication.transition-indicators`,
+`communication.transition-data`, `lifecycle.connection-return` and
+`sitemap.theme` stay in place until an experiment proves the capability. When one
+does, the waiver is replaced by a scenario **and** the coverage entry names the
+driver that can do it (`wine` or `linux`), because a capability that exists only
+on one of them is not a suite-wide claim.
+
+### Start-up mode is not a transition
+
+- "The app **starts** in Wi-Fi" is covered by `restart_in_mode` and by the
+  existing `mode: wifi` scenarios. It exercises the start-up branch.
+- "The app **transitions** to Wi-Fi while running" exercises the connection-mode
+  indicator, the Wi-Fi sync path and the sitemap update after the switch. Only
+  the simulator menus can produce it, and it stays waived until one of the
+  experiments above succeeds.
 
 ## Window size is per device
 
@@ -901,6 +1029,7 @@ is enough to act on it.
 | `press[<button>] … effect=none` | the press ran but changed nothing measurable. A single press can legitimately do nothing. Reported as evidence (`skipped`); the sequence is the verdict | check the mechanism and verified pointer in `logs/driver.log`; then the order of the presses |
 | `press-sequence … produced no effect` | no press in the sequence had an effect **while the app was still on the glance**, so delivery has not been shown | read the three mechanisms; delivery on this guest is nondeterministic and the launch retries, so a single silent sequence is not conclusive. `--key DOWN=<keysym>` tries another binding. On an open app the case reports `skipped` instead |
 | `the pointer never reached the simulator window` | the click would have gone to the root window or another client, so it was refused | the window moved or is not mapped on this display; re-run, and confirm `xdotool getmouselocation` names the simulator window. This is the failure mode behind every "the mouse is silent" measurement |
+| `app-data-reset … did not request its sitemap` | the relaunch answered from the app's cached sitemap; the storage was not cleared | read the `cleared the app's persistent storage` line for the paths actually removed, and check `E2E_WINE_KEEP_APP_DATA` is not set |
 | `the app reported system language …` | the numeric index was written but the app reports another language, so the index is wrong or was ignored | run `python -m e2e language-scan --prg <prg> --write` and check `tests/config/simulator-languages.json` |
 | `language 'pol' has no measured simulator index` | the code is not in the measured map, so the run would be in another language | measure it with `language-scan --write`; until then the run is reported blocked |
 | `the app showed the configuration error view` | the PRG was built without the requested properties | rebuild with `e2e build --settings <fixture>`, or pass a PRG built that way |
