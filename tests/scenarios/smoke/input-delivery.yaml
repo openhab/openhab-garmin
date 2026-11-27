@@ -10,8 +10,8 @@
 #
 # The scenario separates them, in that order:
 #
-# - `expect: effect` measures the press on the pixels alone, so it needs no
-#   app-side seam: DOWN moves the highlight and ENTER opens a page, and a press
+# - `expect: effect` measures DOWN on the pixels from a settled baseline, so the
+#   probe needs no app-side seam for it: DOWN moves the highlight and a press
 #   that changes nothing fails here instead of timing out in a later step.
 # - `E2E:INPUT` is emitted by the menu input delegate, so it proves the press
 #   reached the app and not just the simulator.
@@ -66,9 +66,11 @@ steps:
     timeout_ms: 6000
 
   # The second entry is another Frame, so ENTER must open a page either way.
+  # `expect: input` requires the app's own evidence: a changed screen alone is
+  # also what the app's painting produces.
   - action: press
     button: ENTER
-    expect: effect
+    expect: input
     timeout_ms: 6000
 
   - action: wait_for_event

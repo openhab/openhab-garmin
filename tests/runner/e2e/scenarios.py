@@ -81,9 +81,10 @@ LAUNCH_SCENARIO_MINIMUM_S = LAUNCH_STEP_WORST_CASE_S + 30  # 300
 OPENHAB_PROFILES = ("stable", "dev")
 BUTTONS = ("START", "UP", "DOWN", "ENTER", "BACK", "MENU")
 COMMAND_TRANSPORTS = ("rest", "shim")
-#: What a ``press`` may require of the screen: ``effect`` (the press must
-#: change something) or ``none`` (it must not). Unset means unmeasured.
-PRESS_EXPECTATIONS = ("effect", "none")
+#: What a ``press`` may require: ``input`` (the app reported the press through
+#: an INPUT/SELECT/COMMAND event), ``effect`` (that, or a screen change from a
+#: settled baseline) or ``none`` (nothing at all). Unset means unmeasured.
+PRESS_EXPECTATIONS = ("input", "effect", "none")
 
 _SLUG = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 _SCREENSHOT_NAME = re.compile(r"^[a-z0-9]+(?:[-_][a-z0-9]+)*$")

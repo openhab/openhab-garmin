@@ -780,14 +780,15 @@ def test_wait_for_view_accepts_the_menu_and_defaults_the_timeout() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_press_accepts_a_measured_expectation() -> None:
+@pytest.mark.parametrize("expectation", ["input", "effect", "none"])
+def test_press_accepts_a_measured_expectation(expectation: str) -> None:
     document = dict(BASE)
     document["steps"] = [
         {"action": "launch"},
-        {"action": "press", "button": "ENTER", "expect": "effect"},
+        {"action": "press", "button": "ENTER", "expect": expectation},
     ]
     step = _parse(document)[1]
-    assert step.params["expect"] == "effect"
+    assert step.params["expect"] == expectation
     assert step.params["timeout_ms"] == 4000
 
 

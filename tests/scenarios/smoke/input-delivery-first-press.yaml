@@ -7,19 +7,23 @@
 # lost", not the navigation app-side.
 #
 # This scenario reproduces that order exactly: launch, wait for the homepage,
-# then ENTER as the first press. The driver re-issues a press that had no
-# effect (at most once), and records each attempt with its mechanism, its
-# effect and the `INPUT`/`SELECT` events it produced. The step's own message
-# therefore names the answer:
+# then ENTER as the first press. It requires `expect: input`, so only the app's
+# own event counts: a repaint is not delivery. The driver re-issues a press the
+# app did not acknowledge (at most once) and records each attempt with its
+# mechanism, its effect, whether the baseline had settled and the app events it
+# produced. The step's own message therefore names the answer:
 #
-#   attempt 1: mouse (simulator window ... at (378,180)); effect=none;
-#              INPUT 0, SELECT 0        -> the click never reached the app
-#   attempt 2: ...; effect=view sitemap/PageMenu; INPUT 1, SELECT 1
+#   attempt 1: mouse (... at (378,180)); effect=none; settled=True; no app event
+#                                       -> the click never reached the app
+#   attempt 2: ...; effect=view sitemap/PageMenu and app INPUT 1, SELECT 1;
+#              settled=True; INPUT x1, SELECT x1
 #                                       -> the first click was lost, not the app
 #
-# If both attempts report no effect, the press does not reach this view at all.
-# If an attempt reports `INPUT 1, SELECT 0`, the app received the select and the
-# item did not handle it -- a different fix entirely.
+# If both attempts report no app event, the press does not reach this view.
+# If an attempt reports `app INPUT 1` without `SELECT 1`, the app received the
+# select and the item did not handle it -- a different fix entirely.
+#
+# Run it alone: `python -m e2e run smoke/input-delivery-first-press`.
 #
 # Run it alone: `python -m e2e run smoke/input-delivery-first-press`.
 
@@ -55,12 +59,12 @@ steps:
     view: HomepageMenu
     timeout_ms: 60000
 
-  # The first in-app input, exactly as the command scenarios send it. A press
-  # that has no effect is re-issued once by the driver and each attempt is
-  # recorded, so a lost first click is reported instead of blamed on the app.
+  # The first in-app input, exactly as the command scenarios send it. `input`
+  # requires the app's own evidence and the driver re-issues an unacknowledged
+  # press once, recording every attempt.
   - action: press
     button: ENTER
-    expect: effect
+    expect: input
     timeout_ms: 6000
 
   - action: wait_for_event
