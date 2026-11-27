@@ -269,7 +269,8 @@ def _step_reset_shim(raw: Mapping[str, Any], where: str) -> Dict[str, Any]:
 
 
 def _request_match(raw: Mapping[str, Any], where: str, require_path: bool = True) -> Dict[str, Any]:
-    allowed = {"method", "path", "path_prefix", "body_contains", "body_equals", "status", "reset"}
+    allowed = {"method", "path", "path_prefix", "body_contains", "body_equals",
+               "status", "reset", "matched_rule", "faulted"}
     _reject_unknown(raw, allowed, where)
     params: Dict[str, Any] = {}
     if "method" in raw:
@@ -289,6 +290,10 @@ def _request_match(raw: Mapping[str, Any], where: str, require_path: bool = True
         params["status"] = _int(raw["status"], f"{where}.status", 0, 599)
     if "reset" in raw:
         params["reset"] = _bool(raw["reset"], f"{where}.reset")
+    if "matched_rule" in raw:
+        params["matched_rule"] = _match_text(raw["matched_rule"], f"{where}.matched_rule")
+    if "faulted" in raw:
+        params["faulted"] = _bool(raw["faulted"], f"{where}.faulted")
     if require_path and not any(key in params for key in ("path", "path_prefix")):
         raise ScenarioError(f"{where}: needs 'path' or 'path_prefix'")
     return params
@@ -296,7 +301,7 @@ def _request_match(raw: Mapping[str, Any], where: str, require_path: bool = True
 
 def _step_wait_for_request(raw: Mapping[str, Any], where: str) -> Dict[str, Any]:
     _reject_unknown(raw, {"action", "description", "method", "path", "path_prefix",
-                          "min_count", "timeout_ms"}, where)
+                          "min_count", "timeout_ms", "matched_rule", "faulted"}, where)
     params: Dict[str, Any] = {
         "min_count": _int(raw.get("min_count", 1), f"{where}.min_count", 1)
     }
@@ -313,7 +318,38 @@ def _step_wait_for_request(raw: Mapping[str, Any], where: str) -> Dict[str, Any]
         raise ScenarioError(f"{where}: set either 'path' or 'path_prefix', not both")
     if not any(key in params for key in ("path", "path_prefix")):
         raise ScenarioError(f"{where}: needs 'path' or 'path_prefix'")
+    if "matched_rule" in raw:
+        params["matched_rule"] = _match_text(raw["matched_rule"], f"{where}.matched_rule")
+    if "faulted" in raw:
+        params["faulted"] = _bool(raw["faulted"], f"{where}.faulted")
     params["timeout_ms"] = _int(raw.get("timeout_ms", 30_000), f"{where}.timeout_ms", 1, 600_000)
+    if "description" in raw:
+        params["description"] = _string(raw["description"], f"{where}.description")
+    return params
+
+
+def _step_install_faults(raw: Mapping[str, Any], where: str) -> Dict[str, Any]:
+    """Install fault rules in the middle of a scenario.
+
+    The top-level ``shim`` block is installed before the app launches, so every
+    poll sees the fault. Some behaviour only exists once the app holds a fresh
+    sitemap -- a temporary error that stays a toast instead of escalating to the
+    full-screen error view -- and that cannot be arranged with a pre-launch
+    script. Installing the rules after a healthy poll is the only way to test
+    the documented delayed escalation honestly.
+    """
+    _reject_unknown(raw, {"action", "rules", "description"}, where)
+    raw_rules = raw.get("rules")
+    if not isinstance(raw_rules, list) or not raw_rules:
+        raise ScenarioError(
+            f"{where}.rules: expected a non-empty list of fault rules "
+            "(the same grammar as the top-level 'shim.rules')"
+        )
+    try:
+        rules = parse_script({"version": 1, "rules": raw_rules})
+    except ShimScriptError as error:
+        raise ScenarioError(f"{where}.rules: {error}") from None
+    params: Dict[str, Any] = {"rules": tuple(rule.to_document() for rule in rules)}
     if "description" in raw:
         params["description"] = _string(raw["description"], f"{where}.description")
     return params
@@ -434,12 +470,13 @@ def _assertion_params(raw: Mapping[str, Any], where: str) -> Dict[str, Any]:
         spec_where = f"{where}.shim_requests"
         spec = _require_mapping(raw["shim_requests"], spec_where)
         _reject_unknown(spec, {"method", "path", "path_prefix", "body_contains",
-                               "body_equals", "status", "reset", "min_count",
-                               "max_count"}, spec_where)
+                               "body_equals", "status", "reset", "matched_rule",
+                               "faulted", "min_count", "max_count"}, spec_where)
         built: Dict[str, Any] = _request_match(
             {key: value for key, value in spec.items()
              if key in {"method", "path", "path_prefix", "body_contains",
-                        "body_equals", "status", "reset"}},
+                        "body_equals", "status", "reset", "matched_rule",
+                        "faulted"}},
             spec_where,
             require_path=False,
         )
@@ -558,6 +595,7 @@ _STEP_HANDLERS = {
     "stop": _step_stop,
     "wait": _step_wait,
     "reset_shim": _step_reset_shim,
+    "install_faults": _step_install_faults,
     "wait_for_request": _step_wait_for_request,
     "press": _step_press,
     "tap": _step_tap,

@@ -245,7 +245,8 @@ a run.
 | `stop` | – | stops the simulator, keeps artifacts |
 | `wait` | `ms` | clamped to the remaining scenario budget |
 | `reset_shim` | – | clears the request trace only |
-| `wait_for_request` | `method`, `path`/`path_prefix`, `min_count`, `timeout_ms` | polls the shim trace |
+| `install_faults` | `rules` | installs (replaces) fault rules mid-run, same grammar as the top-level `shim.rules`; see [Asserting on an injected fault](#asserting-on-an-injected-fault) |
+| `wait_for_request` | `method`, `path`/`path_prefix`, `matched_rule`, `faulted`, `min_count`, `timeout_ms` | polls the shim trace |
 | `press` | `button` (`START`/`UP`/`DOWN`/`ENTER`/`BACK`/`MENU`), `count` | requires a button-capable device |
 | `tap` | `x`, `y`, `count` | requires a touch-capable device |
 | `screenshot` | `name`, `stable`, `interval_ms`, `timeout_ms`, `stable_diff_ratio` | lower-case slug; stored as `NN-name.png`. `stable: true` recaptures until two frames agree, because a `VIEW` line is emitted before the view is painted |
@@ -269,8 +270,32 @@ a run.
 ```
 
 `shim_requests` matches on `method`, `path`, `path_prefix`, `body_contains`,
-`body_equals`, `status` and `reset`, and requires an explicit `min_count` or
-`max_count`.
+`body_equals`, `status`, `reset`, `matched_rule` and `faulted`, and requires an
+explicit `min_count` or `max_count`. A failure prints the expectation, the
+observed status/fault counts and the whole trace, so "the fault was not served"
+and "the request never arrived" are different messages.
+
+### Asserting on an injected fault
+
+A recorded request carries what the app **sent** and what the shim **served**,
+and nothing else. `body_equals`/`body_contains` apply to the request body, which
+is empty for a `GET` poll; the served body is never recorded. A scenario that
+means "the shim answered with the malformed body" must therefore assert on the
+fault that produced it:
+
+```yaml
+- action: assert
+  description: The shim served the truncated body instead of openHAB.
+  shim_requests:
+    method: GET
+    path_prefix: /rest/sitemaps/garmin_e2e
+    min_count: 2
+    status: 200            # what the shim answered with
+    matched_rule: truncated # the rule that replaced the upstream response
+```
+
+`faulted: true`/`false` asks the same question without naming a rule, and is the
+right check for "this poll reached openHAB unmodified".
 
 ```yaml
 - action: assert
@@ -423,6 +448,23 @@ dismissed later. Use it when "it never happened" is the point, and
 emitted when the app shows _and_ when it updates the error view, and never when
 it dismisses it, so it cannot answer the current-state question on its own.
 
+### Faults after a warm-up
+
+The escalation rule is measured against the age of the last successful response
+(`SitemapStore.isSitemapFresh`, `STATE_EXPIRATION_TIME = 10 s`), not against a
+failure counter. Two consequences:
+
+- A **cold start has no stored sitemap**, so the first failed poll is already
+  stale and goes straight to the full-screen error view. A scenario that wants
+  to observe a _temporary_ toast must let the app complete one successful poll
+  first: warm up with `wait_for_event` on `SITEMAP;result=success`, then
+  `install_faults`.
+- A scenario that asserts the **critical** error view can keep the pre-launch
+  `shim` block; the fault then hits the first poll.
+
+`regression/empty-response` and `regression/http-503-recovery` warm up first;
+`regression/malformed-json` does not, and says so at the top of the file.
+
 ## Trace events
 
 The app emits, in debug builds only, one line per event:
@@ -471,6 +513,37 @@ split as `current_view_category()`/`is_showing_error_view()` against
 
 `contains` remains available for a raw substring, but it is discouraged outside
 diagnostics.
+
+### What `SITEMAP;result=unchanged` does and does not say
+
+`result=unchanged` is emitted only after a complete sitemap JSON was received,
+parsed and compared equal to the stored one. Its `code=200` is a **literal in
+the trace format**, not the HTTP status of that response, and `bytes` is the
+app's memory estimate for the parsed JSON, not the size on the wire. A trace
+line reading `SITEMAP;result=unchanged;code=200;bytes=27168` therefore does not
+prove the app received a 200 or a 27 KiB body; a rejected or failed response is
+traced as `SITEMAP;result=error` plus an `ERROR` event instead.
+
+### Reading a failed wait
+
+A `wait_for_event`/`wait_for_view` failure prints the per-event counts, the last
+events of the class it was waiting for (with the values a near-miss field
+actually carried) and the last few events overall:
+
+```text
+no trace event matching event=ERROR kind=temporary within 30.0s
+  trace: SITEMAP x11, VIEW x1, ERROR x1
+  last ERROR event(s):
+    E2E:ERROR;kind=critical;id=communication.sitemap;code=503;source=sitemap
+  ERROR.kind seen: critical (expected 'temporary')
+  last events:
+    ...
+```
+
+That is the difference between "the app never emitted an `ERROR`" and "it
+emitted a different kind", which a tail of the last dozen lines cannot show.
+A `wait_for_request` timeout prints the same event counts and the last
+`SITEMAP`/`COMMAND`/`ERROR` event next to the app's current view.
 
 ## Determinism rules
 

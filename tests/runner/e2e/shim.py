@@ -24,13 +24,21 @@ class ShimError(RuntimeError):
 
 @dataclass(frozen=True)
 class ShimRequest:
-    """One request recorded by the shim."""
+    """One request recorded by the shim.
+
+    ``request_body`` is what the app **sent** (a command payload, empty for a
+    GET). What the shim **served** is ``status`` and ``response_bytes``; which
+    scripted fault produced it is ``matched_rule``. The served body itself is
+    never recorded, so a scenario proves a fault was applied with
+    ``matched_rule``/``faulted``, not with ``body_equals``.
+    """
 
     seq: int
     method: str
     path: str
-    body: str = ""
+    request_body: str = ""
     status: int = 0
+    response_bytes: int = 0
     reset: bool = False
     matched_rule: Optional[str] = None
     delay_ms: int = 0
@@ -38,14 +46,26 @@ class ShimRequest:
     error: Optional[str] = None
     headers: Mapping[str, str] = field(default_factory=dict)
 
+    @property
+    def faulted(self) -> bool:
+        """True when a scripted fault replaced the upstream response."""
+        return self.matched_rule is not None or self.reset
+
     @classmethod
     def from_document(cls, document: Mapping[str, Any]) -> "ShimRequest":
+        if "request_body" not in document and "body" in document:
+            raise ShimError(
+                "the shim records a 'body' key, which this runner no longer reads: "
+                "the shim image predates the request_body rename. Rebuild the stack "
+                "so runner and shim are the same version."
+            )
         return cls(
             seq=int(document.get("seq", 0)),
             method=str(document.get("method", "")),
             path=str(document.get("path", "")),
-            body=str(document.get("body", "")),
+            request_body=str(document.get("request_body", "")),
             status=int(document.get("status", 0)),
+            response_bytes=int(document.get("response_bytes", 0)),
             reset=bool(document.get("reset", False)),
             matched_rule=document.get("matched_rule"),
             delay_ms=int(document.get("delay_ms", 0)),
@@ -55,9 +75,12 @@ class ShimRequest:
         )
 
     def describe(self) -> str:
-        outcome = "reset" if self.reset else f"{self.status}"
-        rule = f" [{self.matched_rule}]" if self.matched_rule else ""
-        body = f" body={self.body!r}" if self.body else ""
+        if self.reset:
+            outcome = "connection reset"
+        else:
+            outcome = f"{self.status}, {self.response_bytes}B served"
+        rule = f" fault={self.matched_rule}" if self.matched_rule else ""
+        body = f" sent={self.request_body!r}" if self.request_body else ""
         return f"#{self.seq} {self.method} {self.path} -> {outcome}{rule}{body}"
 
 

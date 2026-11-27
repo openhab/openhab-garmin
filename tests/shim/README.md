@@ -28,16 +28,33 @@ A recorded request looks like:
   "seq": 3,
   "method": "GET",
   "path": "/rest/sitemaps/garmin_e2e",
-  "body": "",
+  "request_body": "",
   "headers": {"accept": "application/json"},
   "matched_rule": "unavailable",
   "status": 503,
+  "response_bytes": 19,
   "delay_ms": 0,
   "duration_ms": 1.2,
   "reset": false,
   "error": null
 }
 ```
+
+**Only the request is recorded, never the response body.** The fields split
+into two groups, and mixing them up is how a fault scenario can look green while
+testing nothing:
+
+| Group | Fields | Meaning |
+| --- | --- | --- |
+| what the app sent | `request_body`, `headers` | a command payload; empty for a `GET` |
+| what the shim answered | `status`, `response_bytes`, `matched_rule`, `reset` | the scripted fault's status and length, or the upstream response's |
+
+So "did the app receive the malformed body?" is answered by
+`matched_rule: "truncated"` (the named fault was applied) and
+`response_bytes`, **not** by a body comparison: `request_body` is what the app
+sent, and a `GET` poll sends nothing. Assertions use `matched_rule` or
+`faulted` for that reason (see
+[scenarios.md](../docs/scenarios.md#asserting-on-an-injected-fault)).
 
 `Authorization` is recorded as `<redacted>`; nothing secret is persisted.
 
@@ -87,7 +104,8 @@ unit tests (`tests/runner/tests/test_shim_faults.py`).
 ## Scenario scripts
 
 Scenarios author the same rules in YAML; the runner normalises them to the JSON
-document above and installs it before the app launches:
+document above. The top-level block is installed **before the app launches**, so
+every poll sees the fault:
 
 ```yaml
 shim:
@@ -101,6 +119,12 @@ shim:
         status: 503
         body: Service Unavailable
 ```
+
+A scenario that needs a healthy poll first -- for example to reach the
+temporary-error path, which only exists while the app holds a fresh sitemap --
+installs the same rules mid-run with the `install_faults` step instead. It
+replaces any previously installed script, and its failure messages name the
+rules it installed.
 
 ## Body generation
 

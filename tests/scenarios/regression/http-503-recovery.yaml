@@ -5,6 +5,14 @@
 # (docs/USAGE.md, "How the App Handles Errors"). Three failures with a 1 s poll
 # interval must therefore stay in the toast phase, and the app must return to
 # the sitemap by itself once the shim starts proxying again.
+#
+# The faults are installed *after* one successful poll on purpose. The
+# escalation threshold is the age of the last successful response
+# (SitemapStore.isSitemapFresh, STATE_EXPIRATION_TIME = 10 s). A cold start has
+# no stored sitemap at all -- the driver clears the app's data before every
+# launch -- so the very first failure is already "stale" and goes straight to
+# the full-screen error view. The temporary-toast path only exists while a
+# fresh sitemap is held, which is why the rule is installed mid-run.
 
 name: http-503-recovery
 description: Three 503 polls produce a toast, then the app recovers without a restart.
@@ -31,19 +39,31 @@ manual_checks:
     This proves a three-poll sitemap outage stays temporary; it does not prove
     loss and recovery of the phone, Wi-Fi or the local network.
 
-shim:
-  rules:
-    - name: unavailable
-      match:
-        method: GET
-        path_prefix: /rest/sitemaps/garmin_e2e
-      times: 3
-      response:
-        status: 503
-        body: Service Unavailable
-
 steps:
   - action: launch
+
+  # Warm-up: poll openHAB once so the app holds a fresh sitemap, which is the
+  # state in which a failure is a temporary error rather than a critical one.
+  - action: wait_for_event
+    description: The fault-free first poll cached the sitemap.
+    event: SITEMAP
+    fields:
+      result: success
+    timeout_ms: 60000
+
+  - action: reset_shim
+
+  - action: install_faults
+    description: The next three polls are answered by the shim with 503.
+    rules:
+      - name: unavailable
+        match:
+          method: GET
+          path_prefix: /rest/sitemaps/garmin_e2e
+        times: 3
+        response:
+          status: 503
+          body: Service Unavailable
 
   - action: wait_for_request
     method: GET
@@ -51,13 +71,19 @@ steps:
     min_count: 3
     timeout_ms: 30000
 
+  # The recorder stores the request, never the response body, so the proof that
+  # the scripted fault was served is the rule name on the request and the status
+  # the shim answered with -- not a body comparison.
   - action: assert
-    description: All three scripted failures were served by the shim.
+    description: >-
+      All three scripted failures were served by the shim: status 503 with the
+      'unavailable' rule applied.
     shim_requests:
       method: GET
       path_prefix: /rest/sitemaps/garmin_e2e
       min_count: 3
       status: 503
+      matched_rule: unavailable
 
   - action: wait_for_event
     description: The app classifies the failed polls as temporary, not critical.
@@ -77,12 +103,13 @@ steps:
     timeout_ms: 45000
 
   - action: assert
-    description: A later poll is served from openHAB with 200.
+    description: A later poll is served from openHAB with 200 and no fault applied.
     shim_requests:
       method: GET
       path_prefix: /rest/sitemaps/garmin_e2e
       min_count: 1
       status: 200
+      faulted: false
 
   - action: assert
     description: The outage never escalated to the full-screen error view.
