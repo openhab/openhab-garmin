@@ -239,39 +239,48 @@ def test_the_stub_draws_nothing() -> None:
     assert "FONT_" not in GLANCE_STUB
 
 
-def test_coverage_marks_the_glance_entries_blocked() -> None:
-    scope = load_scope()
-    blocked = {entry.id: entry for entry in scope.blocked}
+def test_coverage_records_the_glance_as_not_yet_verified() -> None:
+    """Waived with a reason, not blocked by a defect.
 
-    assert blocked["lifecycle.glance-widget"].issue == 396
-    assert "watch-app" in blocked["lifecycle.glance-widget"].reason
-    assert "setGlance" in blocked["lifecycle.glance-widget"].reason
-    assert blocked["devices.capabilities"].issue == 396
+    The two justifications that once blocked these entries are disproven: the
+    draw crash was the empty device font pack, and the app opens from the
+    glance with DOWN then SELECT, so the `setGlance` latch is retired. The
+    entries must stay unverified without resurrecting either claim.
+    """
+    scope = load_scope()
+    waived = {waiver.id: waiver for waiver in scope.waivers}
+
+    assert "lifecycle.glance-widget" in waived
+    assert "devices.capabilities" in waived
+
+    reason = waived["lifecycle.glance-widget"].reason
+    assert "Not yet verified" in reason
+    assert "watch-app" in reason
+    assert "--with-glance" in reason
+    assert "setGlance" not in reason, "the latch hypothesis is retired"
+    assert "Invalid Font Specified` in" not in reason, "the crash reason is retired"
 
     report = build_report()
     assert report.problems == ()
-    assert {entry.entry.id for entry in report.blocked} == {
-        "lifecycle.glance-widget",
-        "devices.capabilities",
-    }
+    assert report.blocked == ()
 
 
-def test_the_documents_keep_claiming_the_exclusion() -> None:
+def test_the_documents_describe_the_glance_as_unverified() -> None:
     coverage = (_tests_root() / "docs" / "coverage.md").read_text(encoding="utf-8")
-    assert "Blocked by a tracked issue" in coverage
     assert "`lifecycle.glance-widget`" in coverage
-    assert "#396" in coverage
+    assert "Not yet verified" in coverage
     assert "watch-app" in coverage
+    assert "--with-glance" in coverage
 
     for name in ("scenarios.md", "simulator-driver.md"):
         text = (_tests_root() / "docs" / name).read_text(encoding="utf-8")
         assert "without-glance" in text, name
         assert "watch-app" in text, name
         assert "--with-glance" in text, name
-        assert "#396" in text, name
+        assert "not yet" in text.lower(), name
 
     readme = (_tests_root() / "README.md").read_text(encoding="utf-8")
     assert "without-glance" in readme
     assert "watch-app" in readme
     assert "--with-glance" in readme
-    assert "#396" in readme
+    assert "not yet verified" in readme.lower()

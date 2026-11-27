@@ -368,15 +368,17 @@ Two cases seen on the guest, recorded so neither is filed as an app bug:
 
 The app is a **widget**, and a widget that the simulator shows as part of the
 glance page is started **in glance mode** (32 KB budget) until it is selected.
-This simulator does not select it, so `getInitialView()` never runs and no
-request is made. On top of that, the app's real glance crashes the simulator on
-its first draw (`Invalid Font Specified`, #396). Three profiles exist:
+The driver selects it with DOWN then SELECT, which opens the app and runs
+`getInitialView()`; the earlier "the simulator never selects it" reading was a
+wrong key sequence, and the `AppLifecycle.setGlance()` latch hypothesis is
+retired. The real glance view is still not exercised by default, because E2E
+builds compile the `watch-app` profile. Three profiles exist:
 
 | Profile | What it does | What it proves |
 | --- | --- | --- |
-| `watch-app` (default) | Stubs the glance view **and** writes `<artifacts>/build/manifest-watch-app.xml` with `type="watch-app"`, pointing the generated jungle's `project.manifest` at it | The right app type for a direct launch. Today the app's own glance latch (#396) still keeps it on the glance page, so the initial view does not run; this is the profile to keep and it should start working unchanged once the latch is released. Widget and glance modes are **not** covered. |
-| `without-glance` | Stubs the glance view, keeps the widget manifest | Compiles, but the simulator still starts the widget in glance mode. |
-| `with-glance` | Compiles the app's own glance view | Nothing green: the simulator crashes on the first glance draw (#396). |
+| `watch-app` (default) | Stubs the glance view **and** writes `<artifacts>/build/manifest-watch-app.xml` with `type="watch-app"`, pointing the generated jungle's `project.manifest` at it | The right app type for a direct launch, which the driver performs with DOWN then SELECT. The glance view is stubbed, so widget and glance modes are **not covered**. |
+| `without-glance` | Stubs the glance view, keeps the widget manifest | Compiles, and the widget still starts in glance mode. |
+| `with-glance` | Compiles the app's own glance view | Not yet measured. The `Invalid Font Specified` crash this profile used to hit was the empty device font pack, which the runner now stages; whether the real glance renders with the pack in place is the open question, not a known defect. |
 
 `watch-app` is the only valid plain-app type in `monkeybrains.jar`
 (`AppTypeManager`: `audio-content-provider-app`, `background`, `datafield`,
@@ -393,16 +395,17 @@ edited: the copy lives in the build output.
   which are annotated `(:glance)` too. The build then fails with
   `Cannot find entry point class '$.OHApp'`.
 - A green `watch-app` run says **nothing** about the widget or glance modes.
-  Those scope entries are marked **blocked** in
-  [coverage.md](coverage.md#summary) with a link to #396, not waived.
-- Re-enable the app's own glance when #396 is answered:
+  Those scope entries are **not yet verified** in
+  [coverage.md](coverage.md#summary): waived with that reason, not blocked by a
+  defect.
+- Capture the app's own glance before claiming anything about it:
 
   ```bash
-  python -m e2e run smoke/launch-and-poll --with-glance
-  python -m e2e build --device fenix847mm --with-glance
+  python -m e2e build --device fenix7 --with-glance
+  python -m e2e run <glance-scenario> --with-glance --update-goldens
   ```
 
-  If it still crashes there, the evidence belongs in #396; do not "fix" the
+  If it still fails to draw, record what happens there; do not "fix" the
   glance to make the suite green.
 
 The earlier `GlanceViewDelegate` idea is recorded here so it is not retried:
