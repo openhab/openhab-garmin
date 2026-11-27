@@ -582,7 +582,7 @@ opened nothing.
 
 `expect: input` requires the app's own evidence that it handled the press: an
 `INPUT`, `SELECT` or `COMMAND` trace event. `expect: effect` accepts that **or**
-a screen change measured from a *settled* baseline (`SETTLE_DIFF_RATIO`); an
+a screen change measured from a _settled_ baseline (`SETTLE_DIFF_RATIO`); an
 unsettled screen is not a baseline, so a press that lands while the app is still
 painting proves nothing. A view change alone is not delivery either — the app
 arriving on a page changes the view — which is why `input` exists and why the
