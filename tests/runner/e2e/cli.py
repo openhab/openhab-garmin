@@ -1667,8 +1667,7 @@ def build_parser() -> argparse.ArgumentParser:
     isolation.add_argument("--language", default="eng")
     isolation.add_argument("--settings", default="default")
     isolation.add_argument("--timeout", type=float, default=300.0)
-    isolation.add_argument("--json", action="store_true")
-    isolation.add_argument("--artifacts")
+    add_common(isolation)
     isolation.set_defaults(handler=_cmd_isolation_check)
 
     preflight = subparsers.add_parser(
