@@ -455,9 +455,9 @@ class ScenarioRunner:
         if not context.driver.supports_events or context.trace is None:
             return SKIPPED, f"{context.driver.name} driver has no console event stream", []
         fields = {
-            field: step[field]
+            field: step.params[field]
             for field in ("category", "view", "depth")
-            if field in step
+            if field in step.params
         }
         match = EventMatch(event="VIEW", fields=fields)
         timeout_s = min(step.get("timeout_ms", 30_000) / 1000.0, context.remaining())

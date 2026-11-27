@@ -543,3 +543,49 @@ def test_the_content_guard_is_absent_without_imagemagick(monkeypatch) -> None:
 
     monkeypatch.setattr("e2e.assertions.shutil.which", lambda name: None)
     assert screen_content_problem(Path("x.png"), 40) is None
+
+# ---------------------------------------------------------------------------
+# wait_for_view dispatch
+# ---------------------------------------------------------------------------
+
+def test_wait_for_view_returns_when_the_menu_appears(tmp_path: Path) -> None:
+    from e2e.scenarios import Step
+
+    runner, context = _runner_with_view(tmp_path, GLANCE, MENU)
+    context.skip_events = False
+    context.remaining = lambda: 5.0
+    step = Step(index=1, action="wait_for_view",
+                params={"category": "sitemap", "view": "HomepageMenu"})
+    status, message, _artifacts = runner._do_wait_for_view(step, context)
+    assert status == "passed"
+    assert "HomepageMenu" in message
+
+
+def test_wait_for_view_fails_when_the_menu_never_appears(tmp_path: Path) -> None:
+    from e2e.scenarios import Step
+
+    runner, context = _runner_with_view(tmp_path, GLANCE)
+    context.skip_events = False
+    context.remaining = lambda: 0.0
+    step = Step(index=1, action="wait_for_view",
+                params={"category": "sitemap", "view": "HomepageMenu"})
+    with pytest.raises(engine.AssertionFailure) as error:
+        runner._do_wait_for_view(step, context)
+    assert "did not show a view" in str(error.value)
+
+
+def test_wait_for_view_is_skipped_without_an_event_stream(tmp_path: Path) -> None:
+    from e2e.scenarios import Step
+    from e2e.sim.null import NullDriver
+
+    runner = engine.ScenarioRunner.__new__(engine.ScenarioRunner)
+
+    class _Ctx:
+        trace = None
+        driver = NullDriver()
+        skip_events = False
+
+    step = Step(index=1, action="wait_for_view", params={"category": "sitemap"})
+    status, message, _artifacts = runner._do_wait_for_view(step, _Ctx())
+    assert status == "skipped"
+    assert "no console event stream" in message
