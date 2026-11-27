@@ -319,18 +319,62 @@ def write_resource_override(
     return target
 
 
+def _variable_values(lines: Sequence[str]) -> dict:
+    """``variable -> value`` for the bare ``name=value`` lines in a jungle.
+
+    ``_ASSIGNMENT`` matches any ``key = value`` line, including
+    ``<device>.resourcePath``, so a variable is a key without a dot.
+    """
+    values: dict = {}
+    for line in lines:
+        match = _ASSIGNMENT.match(line)
+        if match is None:
+            continue
+        key = match.group("prefix").split("=", 1)[0].strip()
+        if "." in key:
+            continue
+        values[key] = match.group("value").strip()
+    return values
+
+
+def _entry_carries_res_base(entry: str, values: Mapping[str, str], depth: int = 0) -> bool:
+    """True when ``entry`` reaches ``$(resBase)`` directly or through variables.
+
+    Devices do not always list ``$(resBase)`` themselves: an Edge lists
+    ``$(resEdgeShort)``, which is defined as ``$(resBase);resources/edge/...``.
+    Comparing the raw entry text therefore misses them.
+    """
+    if "$(resBase)" in entry:
+        return True
+    if depth > 8:
+        return False
+    for name in _VARIABLE_REFERENCE.findall(entry):
+        if name in values and _entry_carries_res_base(values[name], values, depth + 1):
+            return True
+    return False
+
+
 def _inject_resource_override(
     lines: Sequence[str],
     device: str,
     override: Path,
 ) -> List[str]:
-    """Insert ``override`` immediately after ``$(resBase)`` for ``device``.
+    """Insert ``override`` after the ``resourcePath`` entry carrying ``$(resBase)``.
 
-    ``resources/base`` (or ``resources/settings`` after the localisation move) carries the app's ``settings.xml``; the override has to
-    come after it in ``resourcePath`` so its ``<property>`` defaults win, and
-    before the launcher-icon directories so their resources are unaffected.
+    ``resources/base`` (or ``resources/settings`` after the localisation move)
+    carries the app's ``settings.xml``; the override has to come after it in
+    ``resourcePath`` so its ``<property>`` defaults win, and before the
+    launcher-icon directories so their resources are unaffected.
+
+    The entry is matched through variable references, not by text: an Edge
+    declares ``$(resEdgeShort)``, which expands to ``$(resBase);resources/edge/...``.
+    Inserting at the front there put the override before the very settings it
+    overrides, so the app compiled empty property defaults and the build failed
+    its own settings assertion - for ``edge540`` only, which is why CI (which
+    never applies an override) did not catch it.
     """
     key = f"{device}.resourcePath"
+    values = _variable_values(lines)
     for index, line in enumerate(lines):
         match = _ASSIGNMENT.match(line)
         if match is None:
@@ -339,11 +383,17 @@ def _inject_resource_override(
             continue
         entries = [entry.strip() for entry in match.group("value").split(";")]
         position = next(
-            (index_ for index_, entry in enumerate(entries) if entry.startswith("$(resBase)")),
+            (
+                index_
+                for index_, entry in enumerate(entries)
+                if _entry_carries_res_base(entry, values)
+            ),
             None,
         )
         if position is None:
-            entries.insert(0, str(override))
+            # Nothing here carries settings.xml, so the only safe place is last:
+            # writing it first would let any later resource directory win.
+            entries.append(str(override))
         else:
             entries.insert(position + 1, str(override))
         rewritten = f"{match.group('prefix')}{';'.join(entries)}{match.group('trailing')}"

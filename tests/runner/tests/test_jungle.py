@@ -429,3 +429,48 @@ def test_build_maps_a_qualifier_failure_to_guidance(
     assert "--device" in message
     assert "tests/docs/sdk.md" in message
     assert "exit 1" not in message, "the raw compiler dump must not survive"
+
+
+def test_settings_override_follows_a_variable_that_carries_resbase(tmp_path: Path) -> None:
+    """An Edge lists ``$(resEdgeShort)``, which expands to ``$(resBase);...``.
+
+    Inserting the override at the front there put it before the settings it has
+    to override, so edge540 compiled empty property defaults and the build failed
+    its own assertion. The injection must follow the entry that *reaches*
+    ``$(resBase)``, directly or through a variable.
+    """
+    settings = load_settings("default")
+    output = tmp_path / "out" / "edge540.jungle"
+    generated = generate_device_jungle(JUNGLE, "edge540", output, settings=settings)
+
+    assert generated.resource_override is not None
+    override = generated.resource_override
+    entries = [entry.strip() for entry in _properties(generated.path)[
+        "edge540.resourcePath"
+    ].split(";")]
+    assert entries[0] == "$(resEdgeShort)", "the device's own variable stays first"
+    assert entries[1] == str(override), (
+        "the override must follow the entry that reaches resBase"
+    )
+    assert entries.index(str(override)) < len(entries) - 1, (
+        "and still come before the launcher-icon directory"
+    )
+
+
+def test_settings_override_is_appended_when_nothing_carries_resbase(tmp_path: Path) -> None:
+    """With no settings directory in the path, last is the only safe position."""
+    source = tmp_path / "custom.jungle"
+    source.write_text(
+        "base.resourcePath=resources/base\n"
+        "custom.resourcePath=resources/icons\n"
+        "custom.sourcePath=source\n",
+        encoding="utf-8",
+    )
+    settings = load_settings("default")
+    generated = generate_device_jungle(
+        source, "custom", tmp_path / "out" / "custom.jungle", settings=settings
+    )
+    entries = [entry.strip() for entry in _properties(generated.path)[
+        "custom.resourcePath"
+    ].split(";")]
+    assert entries[-1] == str(generated.resource_override)
