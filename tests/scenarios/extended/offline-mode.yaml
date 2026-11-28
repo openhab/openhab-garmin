@@ -1,8 +1,17 @@
 # Extended: offline mode.
 #
-# With neither BLE nor Wi-Fi available the app must start from the cached
-# sitemap, send nothing, and offer commands only as an offline error. The shim
-# trace must stay empty for the whole run.
+# The intent: with neither BLE nor Wi-Fi available the app must start from the
+# cached sitemap, send nothing, and offer commands only as an offline error.
+#
+# CAVEAT (#430): the driver clears the app's sitemap cache before every launch
+# (`clear_app_data()`), so no cache survives from an earlier scenario and the
+# app cannot actually start from one. Offline with no cache it raises
+# `OfflineWithoutSitemapException` and shows the `S:OFFLINE` error view, where
+# both assertions below still hold: nothing is requested and nothing is posted.
+# The scenario therefore proves "offline sends nothing" but **not** the cached
+# sitemap or the offline command toast; those need cache seeding or a mid-run
+# mode switch, which the harness does not have (see #430 and
+# `localisation-toast-offline-command`).
 
 name: offline-mode
 description: Offline mode uses the cached sitemap and never contacts the server.
@@ -27,6 +36,12 @@ manual_checks:
   - >-
     The Wi-Fi toggle-choice and releaseOnly command semantics are not
     exercised; only the offline no-command path is.
+  - >-
+    The cached sitemap is **not** exercised: the driver clears app storage
+    before every launch, so the app starts offline with no sitemap and shows
+    the S:OFFLINE error view. The zero-request assertions hold in that state
+    too, so a green run must not be read as "the cached sitemap was reused"
+    (#430).
 
 steps:
   - action: launch

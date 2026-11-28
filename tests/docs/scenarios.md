@@ -47,6 +47,15 @@ missing request rather than a configuration mismatch. The build cache key is the
 **composed** settings, so two scenarios sharing a fixture but not a sitemap
 cannot share a PRG.
 
+`settings.url_0` is the one exception: a scenario may set it to the empty string
+to run the app **unconfigured** (`AppSettings.getString` throws
+`ConfigException`, the app shows `ERRORVIEW id=UI:CONFIG`). The empty value is
+carried through to the compiled `settings.xml` default as an explicit `""`; the
+build asserts that, because an absent property would return `null` and crash
+instead (#417). Any other explicit `url_0` is rejected: the app must only ever
+call the shim. Assert the state with `shim_requests: {max_count: 0}`, since an
+error view alone does not prove the app had no endpoint.
+
 Unknown devices, tiers, modes, languages, suites, actions, step keys, settings
 property ids and shim rule keys are all rejected at load time with the file, the
 key and the reason.
@@ -602,6 +611,14 @@ emitted a different kind", which a tail of the last dozen lines cannot show.
 A `wait_for_request` timeout prints the same event counts and the last
 `SITEMAP`/`COMMAND`/`ERROR` event next to the app's current view.
 
+A failed view wait also prints the step's own description, the app's current
+view, the last `INPUT` and the last `SELECT` (kind, result, depth), because the
+focused row is not in the trace: a wrong press count, a press that never landed
+and a `BACK` that did not pop are otherwise indistinguishable. Every failed step
+also leaves `failure-step-<n>.png` in its artifact directory — the screen at the
+moment of failure, captured best effort and never allowed to replace the
+failure. Both are for human review; neither is an assertion.
+
 ## Determinism rules
 
 - Prefer trace assertions over screenshots; use goldens only to prove rendering.
@@ -729,6 +746,24 @@ They are harness probes, not app behaviour:
   per scenario boundary (as `garmin_commands` and `garmin_dynamic` do after
   #400) makes the first element deterministic; growing one page until a scenario
   needs seven page-downs is how navigation drifts silently.
+
+### Navigating by press count is not verifiable today
+
+A scenario that pages by count (`localisation-glyphs`, `localisation-sitemap`)
+assumes a fixed row order and that every press lands. Nothing in the trace can
+confirm either: `SELECT` is emitted only when an item handles a select, and it
+names the element type, not the row; scrolling inside `Menu2` emits nothing.
+A wrong count, a lost press and a `BACK` that did not pop therefore look the
+same, and a "press until it works" retry is not safe because the retry would
+`ENTER` on the rows in between (which can send commands).
+
+The fix is a debug-only `E2E:FOCUS` event carrying the focused row's view,
+index, kind and encoded label, emitted from the item draw path only when the
+focus changes; scenarios would then scroll until the label matches, bounded,
+and report the rows they passed. It is specified in #431 and not implemented.
+Until it is, a failure in those two scenarios is a navigation assumption, not
+proven app behaviour: read the last `INPUT`/`SELECT` line, the app view line and
+the `failure-step-<n>.png` screenshot the engine now captures when a step fails.
 
 ## Adding a scenario
 

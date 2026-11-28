@@ -42,6 +42,13 @@ manual_checks:
   - >-
     Glyph rendering is review-only: there is no OCR or region-hash assertion,
     so the captured PNGs must be inspected for missing glyphs and fallback boxes.
+  - >-
+    The DOWN/UP counts assume the homepage order Switches, Player, Nested,
+    Empty, which the sitemap fixes but the trace cannot confirm: it reports no
+    focused row, so a press that lands on the wrong entry is only visible as the
+    wrong view. If this scenario fails on a device other than fenix7, read the
+    failure's last INPUT/SELECT line and the failure screenshot before treating
+    it as an app defect (#430).
 
 settings:
   sitemap_0: garmin_localisation
@@ -93,7 +100,9 @@ steps:
     button: ENTER
 
   - action: wait_for_event
-    description: The Player view renders the localised input hints.
+    description: >-
+      Selecting the Player frame (the second homepage entry, after Switches)
+      opens PlayerView with the localised input hints.
     event: VIEW
     fields:
       category: sitemap

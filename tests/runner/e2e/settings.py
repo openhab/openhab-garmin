@@ -15,6 +15,11 @@ than the shim the runner resets and inspects: in the bridge profile it resolves
 to ``http://shim:8080`` and in the host profile to
 ``http://127.0.0.1:8081``. Outside a stack (dry runs, unit tests) it falls back
 to the loopback URL derived from ``tests/config/network.yaml``.
+
+A scenario may deliberately override ``url_0`` with the empty string to run the
+app unconfigured (``AppSettings.getString`` throws, the app shows
+``ERRORVIEW id=UI:CONFIG``); see :func:`scenario_settings`. No other override
+is accepted, because the app must only ever call the shim.
 """
 
 from __future__ import annotations
@@ -186,14 +191,31 @@ def scenario_settings(
       different sitemap into the PRG than the scenario waits for, and the run
       fails looking for a request the app will never make.
     - ``url_0`` comes from the harness's shim URL, so a scenario cannot compile
-      an endpoint the runner is not inspecting.
+      an endpoint the runner is not inspecting. The one exception is an
+      explicit ``url_0: ""``, which is how a scenario asks for the app's
+      *unconfigured* state: ``AppSettings.getString`` throws a
+      ``ConfigException`` for an empty value and the app shows ``UI:CONFIG``.
+      It has to stay empty rather than be dropped — an absent key returns
+      ``null`` and crashes instead (see #417) — so the empty string is carried
+      through to the compiled ``settings.xml`` default.
 
     Composing here means the build cache key, the compiled PRG and the driver
     all see the same values.
     """
     overrides: Dict[str, Any] = dict(scenario.settings or {})
     overrides["sitemap_0"] = scenario.openhab.sitemap
-    overrides["url_0"] = shim_url if shim_url.endswith("/") else f"{shim_url}/"
+    if "url_0" in (scenario.settings or {}):
+        if overrides["url_0"] != "":
+            raise SettingsError(
+                f"{scenario.scenario_id}: settings.url_0 may only be set to the "
+                f"empty string (the unconfigured error view), got "
+                f"{overrides['url_0']!r}. Omit url_0 to run against the shim; "
+                "the app must not point at an endpoint the runner does not "
+                "inspect."
+            )
+        overrides["url_0"] = ""
+    else:
+        overrides["url_0"] = shim_url if shim_url.endswith("/") else f"{shim_url}/"
     return load_settings(scenario.fixture, directory).with_overrides(overrides)
 
 

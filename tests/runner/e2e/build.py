@@ -284,10 +284,36 @@ def verify_compiled_settings(
         )
     values = read_compiled_settings(path)
     problems = []
+    hint = (
+        "The resource override did not win over resources/base. Check the "
+        "generated jungle's <device>.resourcePath order."
+    )
     for name in ASSERTED_PROPERTIES:
         requested = settings.properties.get(name)
         if name not in values:
-            problems.append(f"{name}: missing from {path.name}")
+            if str(requested) == "":
+                # The unconfigured scenarios compile an explicit empty default.
+                # An absent property is a different runtime state: Properties
+                # .getValue returns null and the app crashes instead of raising
+                # ConfigException, so an empty string must survive as a
+                # present-but-empty default.
+                problems.append(
+                    f"{name}: missing from {path.name}, but the build requested an "
+                    "explicit empty string (the unconfigured error view). An absent "
+                    "property returns null from Properties.getValue and crashes "
+                    "instead of raising ConfigException (#417); empty must be "
+                    "present as \"\" in the compiled defaults."
+                )
+                hint = (
+                    "Either the override did not apply, or monkeyc omits "
+                    "properties whose default is empty. The second case cannot "
+                    "be worked around in the harness: an omitted property "
+                    "crashes (#417) instead of raising ConfigException, so "
+                    "record the unconfigured error view as unverified until "
+                    "monkeyc's behaviour is measured on the guest."
+                )
+            else:
+                problems.append(f"{name}: missing from {path.name}")
         elif str(values[name]) != str(requested):
             problems.append(
                 f"{name}: compiled {values[name]!r} but the build requested {requested!r}"
@@ -297,8 +323,7 @@ def verify_compiled_settings(
             "the compiled app properties do not match the build settings:\n  "
             + "\n  ".join(problems)
             + f"\nsettings source: {path}\n"
-            "The resource override did not win over resources/base. Check the "
-            "generated jungle's <device>.resourcePath order."
+            + hint
         )
     return path, values
 

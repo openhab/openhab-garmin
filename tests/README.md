@@ -680,6 +680,13 @@ always addresses the shim the runner resets and inspects: `http://shim:8080` on
 the bridge profile and `http://127.0.0.1:8081` on the host overlay. Outside a
 stack it falls back to the loopback URL from `config/network.yaml`.
 
+A scenario may override `url_0` with `""` to test the app **unconfigured**: the
+composed settings carry the empty string into the compiled `settings.xml`
+default, so `AppSettings.getString` throws `ConfigException` and the app shows
+`ERRORVIEW id=UI:CONFIG`. The empty value must stay an explicit `""` (an absent
+key would crash, #417), which the build asserts. Any other `url_0` override is
+rejected so the app can never point outside the shim.
+
 ## Deployment profiles and networking
 
 The stack has one deployment axis (which openHAB runs) and one networking axis
