@@ -921,6 +921,41 @@ def test_focus_reports_a_press_that_produced_no_focus_event(tmp_path: Path) -> N
     assert context.driver.presses == [("DOWN", 1)]
 
 
+def test_focus_names_focus_seen_for_another_menu(tmp_path: Path) -> None:
+    # The app is reporting focus, just not for the menu this step expects: that
+    # is a push/pop timing problem, not a dormant focus API.
+    runner, context = _focus_context(
+        tmp_path,
+        [_focus_line("Audio", index=0, kind="Switch", view="PageMenu", depth=2)],
+    )
+    with pytest.raises(engine.AssertionFailure) as error:
+        runner._do_focus(
+            _focus_step(view="HomepageMenu", label="Player", timeout_ms=100), context
+        )
+    message = str(error.value)
+    assert "no FOCUS event for view=HomepageMenu" in message
+    assert "reported focus elsewhere" in message
+    assert "focus seen per view: PageMenu x1" in message
+    assert "focus in PageMenu: E2E:FOCUS;view=PageMenu" in message
+
+
+def test_focus_says_when_only_the_baseline_was_never_left(tmp_path: Path) -> None:
+    # Only index 0 was ever reported: the platform is not reporting movement, so
+    # no press could be aimed. That is a different defect from "no focus at all".
+    runner, context = _focus_context(
+        tmp_path,
+        [_focus_line("Switches", index=0)],
+    )
+    with pytest.raises(engine.AssertionFailure) as error:
+        runner._do_focus(
+            _focus_step(view="HomepageMenu", label="Empty", max_presses=1, timeout_ms=100),
+            context,
+        )
+    message = str(error.value)
+    assert "focus movement: only E2E:FOCUS;view=HomepageMenu;depth=1;index=0" in message
+    assert "isFocused() is dormant on some devices" in message
+
+
 def test_focus_is_skipped_in_a_dry_run(tmp_path: Path) -> None:
     runner, context = _focus_context(tmp_path, [], dry_run=True)
     status, message, _artifacts = runner._do_focus(

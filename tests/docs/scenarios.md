@@ -582,6 +582,13 @@ from 0 (the homepage's settings entry included, because a reader can see it);
 the sitemap label and is empty for those entries, because the trace never
 carries translated chrome.
 
+While no entry reports itself as focused — `isFocused()` is faulty on some Edge
+devices (#267) and is unset for the first frame after a push — the first entry
+reports `index=0`, the entry the native menu focuses when a page is shown. The
+guess is never made while the platform reports a focused entry, so a device with
+a working `isFocused()` sees no difference; a device that never reports movement
+can only ever name that baseline, which the `focus` step reports explicitly.
+
 ```text
 E2E:FOCUS;view=HomepageMenu;depth=1;index=1;kind=Frame;label=Player
 ```
@@ -809,13 +816,33 @@ could not focus view=HomepageMenu label=Empty: 2 DOWN press(es) ran out
     E2E:FOCUS;view=HomepageMenu;depth=1;index=0;kind=Frame;label=Switches
     E2E:FOCUS;view=HomepageMenu;depth=1;index=1;kind=Frame;label=Player
     E2E:FOCUS;view=HomepageMenu;depth=1;index=2;kind=Frame;label=Nested
+  focus seen per view: HomepageMenu x3
   elements seen: Frame(Switches), Frame(Player), Frame(Nested)
 ```
+
+The failure separates the three causes that a single "no FOCUS" line would
+collapse: the app reported nothing at all, it reported focus **for another
+menu** (`focus history: no FOCUS event for view=HomepageMenu; the app reported
+focus elsewhere` plus one line per other view), and it reported **only the entry
+that was already focused** (`focus movement: only … was ever reported for this
+view`), which means the platform is not reporting movement.
 
 A press that produced no `FOCUS` at all is reported as such: the guest loses
 the first click after a view appears, so the scroll key is re-issued, but only
 within `max_presses` and never with `ENTER`. A skipped row fails the step
 instead of selecting the wrong element later.
+
+#### The baseline entry
+
+`isFocused()` is faulty on some Edge devices (#267) and is unset for the first
+frame after a page is pushed. While **no** entry reports itself as focused, the
+first entry reports index 0, which is the entry the native menu focuses when a
+page is shown; the guess is never made while the platform reports a focused
+entry, and the repeat rule suppresses it, so a device with a working
+`isFocused()` sees no difference. That gives every page a starting point. It
+cannot invent a position for a scrolled menu: if a device never reports
+movement, the `focus` step fails with the "only … was ever reported" line
+rather than pressing on a guess.
 
 `focus` needs the console event stream. With `--skip-events` or a driver that
 has none it **fails** rather than skipping, because skipping would leave the

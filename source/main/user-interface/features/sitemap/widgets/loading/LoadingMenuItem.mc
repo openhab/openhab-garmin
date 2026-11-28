@@ -20,4 +20,13 @@ class LoadingMenuItem extends StructuredMenuItem {
     public function focusTraceKind() as String {
         return "Loading";
     }
+
+    /*
+     * Debug-only: the loading entry stands in for content that is still being
+     * built, so it is never reported as the focused element.
+     */
+    (:debug)
+    public function focusTraceIsPlaceholder() as Boolean {
+        return true;
+    }
 }

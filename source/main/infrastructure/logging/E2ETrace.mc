@@ -77,6 +77,12 @@ import Toybox.System;
  *       delegate; this is the only event that names the row a press landed on,
  *       which is what lets a scenario address an element by label instead of
  *       by a hard-coded press count.
+ *       Baseline: while no entry reports itself as focused (isFocused() is
+ *       faulty on some Edge devices, and is unset for the first frame after a
+ *       page is pushed), the first entry reports index 0, which is the entry
+ *       the native menu focuses when a page is shown. The guess is never made
+ *       while the platform reports a focused entry, and it is suppressed by the
+ *       repeat rule, so a device with a working isFocused() sees no difference.
  *
  *   E2E:ERROR;kind=<kind>;id=<id>;code=<code>;source=<source>
  *       kind:   temporary | critical | fatal

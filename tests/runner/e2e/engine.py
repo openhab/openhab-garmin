@@ -610,7 +610,7 @@ class ScenarioRunner:
                 raise AssertionFailure(
                     f"focus {expected}: the app reported no focused element{scope} "
                     f"within {timeout_s:.1f}s, so no press was placed\n"
-                    + self._focus_history(context)
+                    + self._focus_history(context, view)
                 )
 
         presses = 0
@@ -627,7 +627,7 @@ class ScenarioRunner:
                         else ""
                     )
                     + "\n"
-                    + self._focus_history(context)
+                    + self._focus_history(context, view)
                     + self._activation_hint(context)
                 )
             mark = len(trace.of_event("FOCUS"))
@@ -698,24 +698,65 @@ class ScenarioRunner:
                 return None
             time.sleep(0.25)
 
-    def _focus_history(self, context: "_Context") -> str:
-        """The rows the highlight passed through, for a failed navigation."""
+    def _focus_history(self, context: "_Context", view: Optional[str] = None) -> str:
+        """What the app reported as focused, for a failed navigation.
+
+        Distinguishes the three failures that a single "no FOCUS" line would
+        collapse: the app reported nothing at all, it reported focus for another
+        menu (a push or pop that has not painted yet), and it reported only the
+        entry that was already focused (the platform is not reporting movement).
+        """
         if context.trace is None:
             return "  focus history: unavailable"
-        history = context.trace.focus_history()
-        if not history:
+        events = context.trace.of_event("FOCUS")
+        if not events:
             return "  focus history: the app emitted no FOCUS event at all"
-        lines = [f"  focus history ({len(history)} entries, oldest first):"]
-        lines.extend(f"    {line}" for line in history)
-        seen: List[str] = []
-        for event in context.trace.of_event("FOCUS"):
+
+        per_view: Dict[str, List[TraceEvent]] = {}
+        for event in events:
+            per_view.setdefault(str(event.get("view")), []).append(event)
+
+        lines: List[str] = []
+        if view is not None and view not in per_view:
+            lines.append(
+                f"  focus history: no FOCUS event for view={view}; the app "
+                "reported focus elsewhere"
+            )
+        else:
+            lines.append(
+                f"  focus history ({min(len(events), 12)} entries, oldest first):"
+            )
+        lines.extend(f"    {line}" for line in context.trace.focus_history())
+        lines.append(
+            "  focus seen per view: "
+            + ", ".join(f"{name} x{len(seen)}" for name, seen in per_view.items())
+        )
+
+        if view is not None:
+            mine = per_view.get(view, [])
+            positions = {(event.get("index"), event.get("label")) for event in mine}
+            if len(positions) == 1:
+                lines.append(
+                    f"  focus movement: only {mine[0].describe()} was ever "
+                    "reported for this view, so the platform did not report a "
+                    "focus change (isFocused() is dormant on some devices); no "
+                    "press can be aimed without it"
+                )
+            others = {
+                name: seen for name, seen in per_view.items() if name != view
+            }
+            for name, seen in others.items():
+                lines.append(f"  focus in {name}: {seen[-1].describe()}")
+
+        seen_elements: List[str] = []
+        for event in events:
             kind = str(event.get("kind"))
             label = event.get("label")
             text = f"{kind}({label})" if label else kind
-            if text not in seen:
-                seen.append(text)
-        if seen:
-            lines.append("  elements seen: " + ", ".join(seen))
+            if text not in seen_elements:
+                seen_elements.append(text)
+        if seen_elements:
+            lines.append("  elements seen: " + ", ".join(seen_elements))
         return "\n".join(lines)
 
     def _do_screenshot(self, step: Step, context: _Context) -> Tuple[str, str, List[str]]:
@@ -1028,13 +1069,13 @@ class ScenarioRunner:
                         f"expected the focused element to match {expected}, but the "
                         "app has emitted no FOCUS event, so nothing is known to be "
                         "focused\n"
-                        + self._focus_history(context)
+                        + self._focus_history(context, focus_spec.get("view"))
                     )
                 if not match.matches(event):
                     raise AssertionFailure(
                         f"expected the focused element to match {expected}, but the "
                         f"focused element is {event.describe()}\n"
-                        + self._focus_history(context)
+                        + self._focus_history(context, focus_spec.get("view"))
                     )
                 notes.append(f"focus: {event.describe()}")
                 evaluated = True
