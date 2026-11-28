@@ -58,6 +58,26 @@ import Toybox.System;
  *       Without it, "the item opened nothing" is indistinguishable from "the
  *       press never arrived".
  *
+ *   E2E:FOCUS;view=<view>;depth=<n>;index=<n>;kind=<kind>;label=<label>
+ *       view:  stable name of the menu that owns the focused entry
+ *       depth: app view-stack depth
+ *       index: position of the entry in that menu, counted from 0
+ *       kind:  sitemap element type (Frame, Group, Switch, Text, ...) for a
+ *              sitemap entry; Settings, Loading or MenuItem for the entries
+ *              the app adds itself
+ *       label: the entry's sitemap label, percent-encoded like COMMAND.item.
+ *              Empty for an entry whose label is translated chrome: the trace
+ *              never carries translated free text.
+ *       Emitted when the focused entry changes, i.e. after a highlight moved
+ *       and when a page is pushed or popped, because the entry that becomes
+ *       focused is then drawn for the first time. A repeat of the same
+ *       (view, depth, index, kind, label) is suppressed, so a polling app's
+ *       repaints do not turn the trace into a per-frame flood. Scrolling
+ *       between entries is handled inside Menu2 and never reaches the input
+ *       delegate; this is the only event that names the row a press landed on,
+ *       which is what lets a scenario address an element by label instead of
+ *       by a hard-coded press count.
+ *
  *   E2E:ERROR;kind=<kind>;id=<id>;code=<code>;source=<source>
  *       kind:   temporary | critical | fatal
  *       id:     stable exception identifier, e.g. communication.sitemap
@@ -85,9 +105,10 @@ import Toybox.System;
  * neither print nor retain any E2E data.
  *
  * E2E is test-only instrumentation: events must never contain credentials,
- * full URLs with authentication data, or translated free text. Item names and
- * command values are the only server-sourced values and are required by the
- * command event schema.
+ * full URLs with authentication data, or translated free text. Item names,
+ * command values and sitemap labels are the only server-sourced values, and
+ * they are required by the event schemas that carry them; chrome text is never
+ * reported, which is why FOCUS leaves the label empty for a non-sitemap entry.
  */
 (:glance)
 class E2ETrace {
@@ -191,6 +212,67 @@ class E2ETrace {
     (:release)
     public static function selectionHandled( kind as String, result as String, depth as Number ) as Void {}
 
+    /******* FOCUS *******/
+
+    /*
+     * The last FOCUS line emitted, so a menu that repaints on every poll does
+     * not flood the console with the entry that is already focused.
+     *
+     * The state is kept here rather than in the menu on purpose: a page that
+     * is pushed or popped must emit again even when it returns to the entry it
+     * showed before, and only a single value shared by all menus compares that
+     * across views. It is compiled only in debug builds.
+     */
+    (:debug)
+    private static var _lastFocus as String?;
+
+    (:debug)
+    public static function focusedItem(
+        viewName as String,
+        depth as Number,
+        index as Number,
+        kind as String,
+        label as String
+    ) as Void {
+        var event = focusEvent( viewName, depth, index, kind, label );
+        var last = _lastFocus;
+        if( last != null && last.equals( event ) ) {
+            return;
+        }
+        _lastFocus = event;
+        emit( event );
+    }
+    (:release)
+    public static function focusedItem(
+        viewName as String,
+        depth as Number,
+        index as Number,
+        kind as String,
+        label as String
+    ) as Void {}
+
+    /*
+     * The FOCUS line body, without the "E2E:" prefix.
+     *
+     * Kept separate from the emitter so the wire format — field order and the
+     * encoding of the server-sourced kind and label — can be pinned by a unit
+     * test: the E2E scenarios parse this exact shape.
+     */
+    (:debug)
+    public static function focusEvent(
+        viewName as String,
+        depth as Number,
+        index as Number,
+        kind as String,
+        label as String
+    ) as String {
+        return "FOCUS;view=" + viewName
+               + ";depth=" + depth.toString()
+               + ";index=" + index.toString()
+               + ";kind=" + encode( kind )
+               + ";label=" + encode( label );
+    }
+
     /******* ERROR HANDLING *******/
 
     (:debug)
@@ -248,7 +330,10 @@ class E2ETrace {
 
     /******* HELPERS *******/
 
-    // Percent-encodes the characters that would break the line format.
+    // Percent-encodes the characters that would break the line format: the
+    // field separator, the escape character itself, and the characters that
+    // cannot be read on one line. Values keep their human-readable form, so a
+    // scenario may assert either form.
     (:debug)
     private static function encode( value as String ) as String {
         var encoded = "";
@@ -260,6 +345,8 @@ class E2ETrace {
                 encoded += "%7C";
             } else if( c.equals( "%" ) ) {
                 encoded += "%25";
+            } else if( c.equals( ";" ) ) {
+                encoded += "%3B";
             } else if( c.equals( "\n" ) ) {
                 encoded += "%0A";
             } else if( c.equals( "\r" ) ) {

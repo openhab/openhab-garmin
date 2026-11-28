@@ -11,6 +11,11 @@
 # `PlayerNext`/`PlayerPrevious`). The settings and error glyph surfaces are
 # captured by the settings and error scenarios.
 #
+# Rows are addressed by their focused label (`E2E:FOCUS`), not by a press
+# count: the same DOWN count lands on a different row when a device's layout
+# scrolls differently, which is what failed on edge540 (#430). Only DOWN/UP is
+# re-issued, and only after the app reported where the highlight is.
+#
 # IMPORTANT: screenshot text is NOT machine-asserted. The harness has no OCR or
 # region-hash assertion, so the PNGs are declared as review artifacts. See
 # tests/docs/localisation.md for the review procedure and the exact characters
@@ -43,12 +48,10 @@ manual_checks:
     Glyph rendering is review-only: there is no OCR or region-hash assertion,
     so the captured PNGs must be inspected for missing glyphs and fallback boxes.
   - >-
-    The DOWN/UP counts assume the homepage order Switches, Player, Nested,
-    Empty, which the sitemap fixes but the trace cannot confirm: it reports no
-    focused row, so a press that lands on the wrong entry is only visible as the
-    wrong view. If this scenario fails on a device other than fenix7, read the
-    failure's last INPUT/SELECT line and the failure screenshot before treating
-    it as an app defect (#430).
+    Each `focus` step proves the app reported the wanted label as focused,
+    within a bounded number of DOWN/UP presses, and names the rows it passed
+    when it cannot. That makes a wrong-row failure impossible to confuse with a
+    missing glyph; what remains review-only is how the glyphs actually render.
 
 settings:
   sitemap_0: garmin_localisation
@@ -74,11 +77,14 @@ steps:
   - action: screenshot
     name: glyphs-homepage
 
-  # Empty is the fourth frame (index 3). Selecting it shows the localised
-  # EmptyPage toast and keeps the homepage visible.
-  - action: press
-    button: DOWN
-    count: 3
+  # Selecting the Empty frame shows the localised EmptyPage toast and keeps the
+  # homepage visible. Its position is not assumed: the step scrolls until the
+  # app reports the Empty label as focused.
+  - action: focus
+    description: Move the highlight onto the Empty frame before selecting it.
+    view: HomepageMenu
+    label: Empty
+    max_presses: 5
 
   - action: press
     button: ENTER
@@ -88,21 +94,32 @@ steps:
     event: TOAST
     timeout_ms: 15000
 
+  # The toast is an info toast: it must not move the highlight, or the UP below
+  # would start from an unknown row.
+  - action: assert
+    description: The toast did not move the highlight off the Empty frame.
+    focus: {view: HomepageMenu, label: Empty}
+
   - action: screenshot
     name: glyphs-empty-page
 
-  # Player is index 1; two UP presses from Empty reach it.
-  - action: press
+  # The toast keeps the homepage (and its highlight) in place, so the Player
+  # frame is reached upwards. The direction is the scenario's choice; the step
+  # still verifies each row it lands on.
+  - action: focus
+    description: Move the highlight up onto the Player frame.
+    view: HomepageMenu
+    label: Player
     button: UP
-    count: 2
+    max_presses: 5
 
   - action: press
     button: ENTER
 
   - action: wait_for_event
     description: >-
-      Selecting the Player frame (the second homepage entry, after Switches)
-      opens PlayerView with the localised input hints.
+      Selecting the Player frame opens PlayerView with the localised input
+      hints.
     event: VIEW
     fields:
       category: sitemap

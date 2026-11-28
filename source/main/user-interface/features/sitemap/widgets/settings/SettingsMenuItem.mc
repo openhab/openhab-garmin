@@ -52,6 +52,16 @@ class SettingsMenuItem extends StructuredMenuItem {
     }
 
     /*
+     * Debug-only E2E focus trace kind, matching the kind SELECT reports for this
+     * entry. Its label is translated chrome, so the base class keeps the label
+     * empty and the trace carries no translated text.
+     */
+    (:debug)
+    public function focusTraceKind() as String {
+        return "Settings";
+    }
+
+    /*
      * Debug-only E2E trace for the select outcome, matching the event every
      * other menu item emits. It keeps "a select reached an item" distinguishable
      * from "the press never arrived" for the last entry of the homepage menu.

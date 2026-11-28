@@ -253,6 +253,25 @@ class BaseMenu extends CustomMenu {
         return _itemCount;
     }
 
+    /*
+     * Debug-only: the position of an entry in this menu, or -1 when the entry is
+     * not part of it.
+     *
+     * The real item count is used rather than getItemCount(), because a subclass
+     * hides the entries it appends (HomepageMenu hides its settings entry from
+     * getItemCount()). Positions are therefore the ones a reader sees on screen,
+     * which is what E2E:FOCUS reports.
+     */
+    (:debug)
+    public function traceIndexOf( item as BaseMenuItem ) as Number {
+        for( var i = 0; i < _itemCount; i++ ) {
+            if( getItem( i ) == item ) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
     // The settings menu needs a function to focus the first or last item,
     // to support switching between the homepage menu and the parallel settings menu.
     public function focusFirst() as Void {

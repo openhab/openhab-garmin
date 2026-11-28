@@ -401,6 +401,61 @@ def test_press_requires_a_known_button(tmp_path: Path) -> None:
         load_scenario(_write(tmp_path, document))
 
 
+def test_focus_needs_something_that_identifies_the_element(tmp_path: Path) -> None:
+    document = _with(
+        steps=[{"action": "launch"}, {"action": "focus", "view": "HomepageMenu"}]
+    )
+    with pytest.raises(ScenarioError) as error:
+        load_scenario(_write(tmp_path, document))
+    assert "which element to focus" in str(error.value)
+
+
+def test_focus_rejects_a_button_that_does_not_scroll(tmp_path: Path) -> None:
+    # ENTER (or START/MENU/BACK) would act on, or leave, the row instead of
+    # walking to it; a bounded retry must never select speculatively.
+    for button in ("ENTER", "START", "MENU", "BACK"):
+        document = _with(
+            steps=[
+                {"action": "launch"},
+                {"action": "focus", "label": "Player", "button": button},
+            ]
+        )
+        with pytest.raises(ScenarioError) as error:
+            load_scenario(_write(tmp_path, document))
+        assert "must be one of DOWN, UP" in str(error.value)
+
+
+def test_focus_validate_defaults_and_types(tmp_path: Path) -> None:
+    document = _with(
+        steps=[{"action": "launch"}, {"action": "focus", "label": "Player", "index": 1}]
+    )
+    step = load_scenario(_write(tmp_path, document)).steps[1]
+    assert step.get("label") == "Player"
+    assert step.get("index") == "1"
+    assert step.get("button") == "DOWN"
+    assert step.get("max_presses") == 5
+    assert step.get("timeout_ms") == 3000
+
+
+def test_focus_is_bounded(tmp_path: Path) -> None:
+    for max_presses in (21, -1):
+        document = _with(
+            steps=[
+                {"action": "launch"},
+                {"action": "focus", "label": "Player", "max_presses": max_presses},
+            ]
+        )
+        with pytest.raises(ScenarioError):
+            load_scenario(_write(tmp_path, document))
+
+
+def test_focus_makes_the_scenario_require_trace_events(tmp_path: Path) -> None:
+    document = _with(
+        steps=[{"action": "launch"}, {"action": "focus", "label": "Player"}]
+    )
+    assert load_scenario(_write(tmp_path, document)).requires_trace_events
+
+
 def test_wait_requires_ms(tmp_path: Path) -> None:
     document = _with(steps=[{"action": "launch"}, {"action": "wait"}])
     with pytest.raises(ScenarioError) as error:
@@ -477,6 +532,38 @@ def test_assert_needs_a_condition(tmp_path: Path) -> None:
     with pytest.raises(ScenarioError) as error:
         load_scenario(_write(tmp_path, document))
     assert "needs 'shim_requests'" in str(error.value)
+
+
+def test_assert_focus_is_a_condition(tmp_path: Path) -> None:
+    document = _with(
+        steps=[
+            {"action": "launch"},
+            {"action": "assert", "focus": {"view": "HomepageMenu", "label": "Player"}},
+        ]
+    )
+    step = load_scenario(_write(tmp_path, document)).steps[1]
+    assert step.get("focus") == {"view": "HomepageMenu", "label": "Player"}
+
+
+def test_assert_focus_needs_a_field(tmp_path: Path) -> None:
+    document = _with(
+        steps=[{"action": "launch"}, {"action": "assert", "focus": {}}]
+    )
+    with pytest.raises(ScenarioError) as error:
+        load_scenario(_write(tmp_path, document))
+    assert "which element must be focused" in str(error.value)
+
+
+def test_assert_focus_rejects_a_field_focus_never_carries(tmp_path: Path) -> None:
+    document = _with(
+        steps=[
+            {"action": "launch"},
+            {"action": "assert", "focus": {"category": "sitemap"}},
+        ]
+    )
+    with pytest.raises(ScenarioError) as error:
+        load_scenario(_write(tmp_path, document))
+    assert "category" in str(error.value)
 
 
 def test_assert_never_error_view_is_a_history_condition(tmp_path: Path) -> None:

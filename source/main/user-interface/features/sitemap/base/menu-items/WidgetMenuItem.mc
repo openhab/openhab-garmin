@@ -81,6 +81,21 @@ class WidgetMenuItem extends StructuredMenuItem {
     }
 
 
+    /*
+     * Debug-only E2E focus trace data: the sitemap element type is the same
+     * kind SELECT reports, and the label is the server-sourced sitemap label
+     * (never translated chrome). Release builds contain neither.
+     */
+    (:debug)
+    public function focusTraceKind() as String {
+        return _sitemapWidget.getType();
+    }
+    (:debug)
+    public function focusTraceLabel() as String {
+        return _sitemapWidget.getLabel();
+    }
+
+
     // Returns true if the widget is linked to a page (sub menu)
     public function hasPage() as Boolean {
         return _page != null;

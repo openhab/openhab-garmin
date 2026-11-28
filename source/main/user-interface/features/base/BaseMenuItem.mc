@@ -64,9 +64,74 @@ class BaseMenuItem extends CustomMenuItem {
 
             onUpdate( dc );
 
+            traceFocus();
+
         } catch( ex ) {
             ExceptionHandler.handleBackgroundException( ex );
         }
+    }
+
+    /*
+     * Debug-only E2E trace of the focused menu entry.
+     *
+     * This runs after the entry has painted, which is when isFocused() is
+     * valid, and only for the focused entry: that is the one entry a repaint
+     * always draws, so the event cannot be missed while the highlight is
+     * scrolled out of view. The scroll itself is handled inside Menu2 and never
+     * reaches the input delegate, so this is the only place that can name the
+     * row a press landed on. E2ETrace drops repeats, so sampling every draw does
+     * not become a per-frame flood.
+     *
+     * The index is looked up in the menu that is currently shown rather than
+     * stored on the item, so a deleteItem() that shifts the entries cannot leave
+     * a stale position behind. An item that is drawn while its menu is not the
+     * current view emits nothing.
+     *
+     * The release implementation is empty, so no label, no index and no view
+     * name are computed in release builds.
+     */
+    (:debug)
+    private function traceFocus() as Void {
+        if( ! isFocused() ) {
+            return;
+        }
+        var view = ViewStack.getCurrentView()[0];
+        if( ! ( view instanceof BaseMenu ) ) {
+            return;
+        }
+        var index = ( view as BaseMenu ).traceIndexOf( self );
+        if( index < 0 ) {
+            return;
+        }
+        E2ETrace.focusedItem(
+            ViewStack.currentViewName(),
+            ViewStack.getDepth(),
+            index,
+            focusTraceKind(),
+            focusTraceLabel()
+        );
+    }
+    (:release)
+    private function traceFocus() as Void {}
+
+    /*
+     * Debug-only: the stable protocol name reported in E2E:FOCUS. Sitemap
+     * entries report their element type; the remaining entries are the ones the
+     * app adds itself.
+     */
+    (:debug)
+    public function focusTraceKind() as String {
+        return "MenuItem";
+    }
+
+    /*
+     * Debug-only: the label reported in E2E:FOCUS. Empty by default, because an
+     * entry that is not a sitemap element carries translated chrome, and the
+     * E2E trace never reports translated free text.
+     */
+    (:debug)
+    public function focusTraceLabel() as String {
+        return "";
     }
 
     // Returns the theme to apply when drawing.

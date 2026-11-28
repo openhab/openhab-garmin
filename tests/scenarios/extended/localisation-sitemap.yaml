@@ -6,8 +6,12 @@
 # are the rendering evidence; the locale itself is machine-asserted through
 # the LANGUAGE trace event, so a run cannot silently fall back to English.
 #
-# The dedicated `garmin_localisation` sitemap keeps the menu small enough that
-# the number of DOWN presses is stable. See tests/docs/localisation.md.
+# Rows are addressed by their focused label (`E2E:FOCUS`), not by a press
+# count: the same DOWN count lands on a different row when a device's layout
+# scrolls differently, which is what failed on edge540 (#430). A `focus` step
+# re-issues only DOWN/UP, and only after the app reported where the highlight
+# is, so it can never select a row nobody looked at. See
+# tests/docs/scenarios.md ("Addressing an element").
 
 name: localisation-sitemap
 description: A normal sitemap page and a control view render in the requested language.
@@ -40,11 +44,10 @@ manual_checks:
     assertion. This covers the screens the scenario visits, not a
     string-by-string inventory, and glance/widget strings are not visited.
   - >-
-    The press sequence assumes the homepage order Switches, Player, Nested,
-    Empty and that BACK returns from a frame page. The trace has no focus
-    event, so which row a DOWN lands on cannot be asserted; a failure here is
-    only diagnosable from the last INPUT/SELECT line and the failure screenshot
-    (#430).
+    The row order itself is not asserted for its own sake: each `focus` step
+    proves the app reported the wanted label as focused, in at most
+    `max_presses` DOWN/UP presses, and names the rows it passed when it cannot.
+    What remains review-only is whether the rendered label looks right.
 
 settings:
   sitemap_0: garmin_localisation
@@ -72,6 +75,12 @@ steps:
     name: localisation-homepage
 
   # Switches is the first frame: control labels and states.
+  - action: focus
+    description: Move the highlight onto the Switches frame before selecting it.
+    view: HomepageMenu
+    label: Switches
+    max_presses: 5
+
   - action: press
     button: ENTER
 
@@ -89,18 +98,21 @@ steps:
   - action: press
     button: BACK
 
-  # Player is the second frame; its full-screen view renders the localised
-  # Play/Pause/Next/Previous labels.
-  - action: press
-    button: DOWN
+  # Player's full-screen view renders the localised Play/Pause/Next/Previous
+  # labels. The homepage is re-entered from BACK, so its focus is whatever row
+  # was selected before; DOWN is issued only until the app reports Player.
+  - action: focus
+    description: Move the highlight back onto the Player frame.
+    view: HomepageMenu
+    label: Player
+    max_presses: 5
 
   - action: press
     button: ENTER
 
   - action: wait_for_event
     description: >-
-      Back on the homepage, selecting the Player frame (the second entry, after
-      Switches) opens PlayerView.
+      Back on the homepage, selecting the Player frame opens PlayerView.
     event: VIEW
     fields:
       category: sitemap

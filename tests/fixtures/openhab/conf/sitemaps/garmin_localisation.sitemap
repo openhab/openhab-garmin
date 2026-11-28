@@ -1,7 +1,9 @@
 // Localisation fixture for the E2E harness.
 //
-// The localisation scenarios need a small, stable menu so the number of DOWN
-// presses does not depend on the full `garmin_e2e` sitemap. The homepage is:
+// The localisation scenarios need a small, stable menu. The order below is
+// what the scenarios assert by label through `E2E:FOCUS`; they no longer count
+// presses, so a device that scrolls differently cannot land on the wrong row.
+// The homepage is:
 //
 //   0 Switches     1 Player     2 Nested     3 Empty
 //

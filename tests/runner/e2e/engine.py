@@ -40,7 +40,7 @@ from .settings import AppSettings, load_settings, scenario_settings
 from .shim import ShimClient, ShimError, ShimRequest
 from .sim import Button, DriverError, SimulatorDriver, create_driver
 from .sdk import SdkError, SdkLayout, require_fonts
-from .trace import EventMatch, TraceLog, parse_lines
+from .trace import EventMatch, TraceEvent, TraceLog, parse_lines
 
 Log = Callable[[str], None]
 
@@ -245,6 +245,11 @@ class ScenarioRunner:
                 raise ConfigError(
                     f"{scenario.scenario_id}: step {step.index} taps the screen but device "
                     f"{self.device.id} has input {self.device.input!r}"
+                )
+            if step.action == "focus" and not self.device.supports_buttons:
+                raise ConfigError(
+                    f"{scenario.scenario_id}: step {step.index} scrolls the highlight "
+                    f"but device {self.device.id} has input {self.device.input!r}"
                 )
 
     def _prepare_stack(self) -> AppSettings:
@@ -468,7 +473,7 @@ class ScenarioRunner:
             "  app state: events: "
             + ", ".join(f"{name} x{count}" for name, count in counts.items()),
         ]
-        for name in ("SITEMAP", "COMMAND", "ERROR", "INPUT", "SELECT"):
+        for name in ("SITEMAP", "COMMAND", "ERROR", "INPUT", "SELECT", "FOCUS"):
             matching = [event for event in events if event.event == name]
             if matching:
                 lines.append(f"  app state: last {name} " + matching[-1].describe())
@@ -531,7 +536,7 @@ class ScenarioRunner:
                 "  A changed screen is not delivery: the app's own painting changes "
                 "it too, which is how an ENTER sent while the homepage was still "
                 "being built looked like a successful press. Only an "
-                "INPUT/SELECT/COMMAND event proves the app handled it.\n"
+                "INPUT/SELECT/COMMAND/FOCUS event proves the app handled it.\n"
                 + state
             )
         if expect == "effect" and not result.effect:
@@ -553,6 +558,165 @@ class ScenarioRunner:
         count = step.get("count", 1)
         context.driver.tap(step.get("x"), step.get("y"), count)
         return PASSED, f"({step.get('x')},{step.get('y')}) x{count}", []
+
+    # -- focus ------------------------------------------------------------
+    def _do_focus(self, step: Step, context: _Context) -> Tuple[str, str, List[str]]:
+        """Scroll to the element the app reports as focused.
+
+        Addresses an element by label (or kind/position) instead of by a press
+        count, which only holds on one device: after ``BACK`` the same DOWN
+        count lands on a different row when the layout scrolls differently, and
+        every failure then looks identical.
+
+        Safety rules, in order of importance:
+
+        - Nothing is pressed until the app has reported which row is focused for
+          the expected menu, so a press is never placed on an unknown row.
+        - Only ``DOWN``/``UP`` are re-issued (the step schema rejects anything
+          else): a retry must never select the rows in between, because a select
+          can send a command.
+        - The number of presses is bounded, and a failure names the element that
+          was expected and the rows actually seen.
+        """
+        expected = self._describe_focus(step)
+        if context.dry_run:
+            return SKIPPED, f"would focus {expected}", []
+        if context.skip_events:
+            raise AssertionFailure(
+                f"focus {expected}: --skip-events leaves the focused element "
+                "unobservable, and this step must know it before it presses "
+                "anything. Run without --skip-events."
+            )
+        if not context.driver.supports_events or context.trace is None:
+            raise AssertionFailure(
+                f"focus {expected}: the {context.driver.name} driver has no console "
+                "event stream, so the focused element cannot be observed. A step "
+                "must never press on a row it cannot see."
+            )
+
+        match = EventMatch(event="FOCUS", fields=self._focus_match_fields(step))
+        button = Button(step.get("button", "DOWN"))
+        max_presses = step.get("max_presses", 5)
+        timeout_s = min(step.get("timeout_ms", 3000) / 1000.0, context.remaining())
+        view = step.get("view")
+        trace = context.trace
+
+        trace.poll()
+        current = self._current_focus(trace, view)
+        if current is None:
+            current = self._wait_for_focus(trace, view, timeout_s, 0)
+            if current is None:
+                scope = f" for view={view}" if view is not None else ""
+                raise AssertionFailure(
+                    f"focus {expected}: the app reported no focused element{scope} "
+                    f"within {timeout_s:.1f}s, so no press was placed\n"
+                    + self._focus_history(context)
+                )
+
+        presses = 0
+        silent = 0
+        while not match.matches(current):
+            if presses >= max_presses:
+                raise AssertionFailure(
+                    f"could not focus {expected}: {max_presses} {button.value} "
+                    f"press(es) ran out"
+                    + (
+                        f"; {silent} of them produced no FOCUS event, so the press "
+                        "may not have been delivered"
+                        if silent
+                        else ""
+                    )
+                    + "\n"
+                    + self._focus_history(context)
+                    + self._activation_hint(context)
+                )
+            mark = len(trace.of_event("FOCUS"))
+            context.driver.press(button, 1)
+            presses += 1
+            updated = self._wait_for_focus(
+                trace, view, min(timeout_s, context.remaining()), mark
+            )
+            if updated is None:
+                # The scroll key produced no focus change. The guest loses the
+                # first click after a view appears, so the next iteration
+                # re-issues the same scroll key. The loop is bounded and the
+                # history shows every row that was focused, so a skipped row
+                # fails here instead of selecting the wrong element later.
+                silent += 1
+            else:
+                current = updated
+
+        return PASSED, f"{current.describe()} after {presses} press(es)", []
+
+    @staticmethod
+    def _focus_match_fields(step: Step) -> Dict[str, str]:
+        # Canonical steps already carry strings; str() keeps the comparison
+        # right for a position written as a number.
+        return {
+            field: str(step.params[field])
+            for field in ("view", "kind", "label", "index")
+            if field in step.params
+        }
+
+    @staticmethod
+    def _describe_focus(step: Step) -> str:
+        fields = ScenarioRunner._focus_match_fields(step)
+        return " ".join(f"{key}={value}" for key, value in fields.items()) or (
+            "<any focused element>"
+        )
+
+    @staticmethod
+    def _current_focus(trace: TraceLog, view: Optional[str]) -> Optional[TraceEvent]:
+        """The newest FOCUS event, if it describes the expected menu.
+
+        A page that was just pushed or popped has not painted yet, so the newest
+        FOCUS event may still belong to the other menu. That is reported as "the
+        focus here is not known yet" rather than as a stale match.
+        """
+        event = trace.current_focus_event()
+        if event is None:
+            return None
+        if view is not None and event.get("view") != view:
+            return None
+        return event
+
+    @staticmethod
+    def _wait_for_focus(
+        trace: TraceLog,
+        view: Optional[str],
+        timeout_s: float,
+        mark: int,
+    ) -> Optional[TraceEvent]:
+        """The newest FOCUS event for ``view`` at or after ``mark``, else None."""
+        deadline = time.monotonic() + timeout_s
+        while True:
+            trace.poll()
+            for event in reversed(trace.of_event("FOCUS")[mark:]):
+                if view is None or event.get("view") == view:
+                    return event
+            if time.monotonic() >= deadline:
+                return None
+            time.sleep(0.25)
+
+    def _focus_history(self, context: "_Context") -> str:
+        """The rows the highlight passed through, for a failed navigation."""
+        if context.trace is None:
+            return "  focus history: unavailable"
+        history = context.trace.focus_history()
+        if not history:
+            return "  focus history: the app emitted no FOCUS event at all"
+        lines = [f"  focus history ({len(history)} entries, oldest first):"]
+        lines.extend(f"    {line}" for line in history)
+        seen: List[str] = []
+        for event in context.trace.of_event("FOCUS"):
+            kind = str(event.get("kind"))
+            label = event.get("label")
+            text = f"{kind}({label})" if label else kind
+            if text not in seen:
+                seen.append(text)
+        if seen:
+            lines.append("  elements seen: " + ", ".join(seen))
+        return "\n".join(lines)
 
     def _do_screenshot(self, step: Step, context: _Context) -> Tuple[str, str, List[str]]:
         name = step.get("name")
@@ -635,9 +799,10 @@ class ScenarioRunner:
         and it never says which row is focused. So "the expected view never
         opened" has three causes that look identical in the event stream: a
         press that never arrived, a press that moved the highlight onto another
-        row, or a select that pushed something else. The last ``INPUT`` and
-        ``SELECT`` lines separate them, and naming the row the step expected is
-        the scenario author's job (the step description is printed above).
+        row, or a select that pushed something else. The last ``INPUT``,
+        ``FOCUS`` and ``SELECT`` lines separate them: ``FOCUS`` names the row
+        that was selected from, and naming the row the step expected is the
+        scenario author's job (the step description is printed above).
         """
         if context.trace is None:
             return ""
@@ -650,6 +815,11 @@ class ScenarioRunner:
         lines.append(
             "  app view now: "
             + (view.describe() if view is not None else "no VIEW event yet")
+        )
+        focus = context.trace.current_focus_event()
+        lines.append(
+            "  focused row now: "
+            + (focus.describe() if focus is not None else "no FOCUS event yet")
         )
         inputs = context.trace.of_event("INPUT")
         selects = context.trace.of_event("SELECT")
@@ -665,9 +835,7 @@ class ScenarioRunner:
             lines.append(
                 f"  activation: the app handled the last select as kind="
                 f"{last.get('kind')} (result={last.get('result')}, "
-                f"depth={last.get('depth')}). The focused row itself is not in the "
-                "trace, so a wrong press count and a press that never landed look "
-                "the same here; see tests/docs/scenarios.md."
+                f"depth={last.get('depth')}) from the row reported above."
             )
         else:
             lines.append(
@@ -844,6 +1012,31 @@ class ScenarioRunner:
                         + context.trace.failure_report()
                     )
                 notes.append(f"no_error_view: ok (current view: {category or 'unknown'})")
+                evaluated = True
+
+        focus_spec = step.get("focus")
+        if focus_spec is not None:
+            if not context.driver.supports_events or context.trace is None:
+                notes.append("focus: skipped (driver has no console event stream)")
+            else:
+                context.trace.poll()
+                expected = " ".join(f"{key}={value}" for key, value in focus_spec.items())
+                event = context.trace.current_focus_event()
+                match = EventMatch(event="FOCUS", fields=focus_spec)
+                if event is None:
+                    raise AssertionFailure(
+                        f"expected the focused element to match {expected}, but the "
+                        "app has emitted no FOCUS event, so nothing is known to be "
+                        "focused\n"
+                        + self._focus_history(context)
+                    )
+                if not match.matches(event):
+                    raise AssertionFailure(
+                        f"expected the focused element to match {expected}, but the "
+                        f"focused element is {event.describe()}\n"
+                        + self._focus_history(context)
+                    )
+                notes.append(f"focus: {event.describe()}")
                 evaluated = True
 
         # The historical reading: an error view that appeared at any point,

@@ -740,6 +740,267 @@ def test_wait_for_view_is_skipped_without_an_event_stream(tmp_path: Path) -> Non
     assert status == "skipped"
     assert "no console event stream" in message
 
+
+# ---------------------------------------------------------------------------
+# focus: address a row by label instead of by a press count
+# ---------------------------------------------------------------------------
+
+def _focus_line(label, index=0, kind="Frame", view="HomepageMenu", depth=1) -> str:
+    return f"E2E:FOCUS;view={view};depth={depth};index={index};kind={kind};label={label}"
+
+
+class _ScriptedFocusDriver(NullDriver):
+    """A null driver that answers each scroll press with scripted trace lines."""
+
+    name = "scripted-focus"
+    supports_events = True
+
+    def __init__(self, lines, after_press=()) -> None:
+        super().__init__()
+        self.lines = list(lines)
+        self._after_press = [list(batch) for batch in after_press]
+        self.presses: List[tuple] = []
+
+    def events(self):
+        return list(self.lines)
+
+    def press(self, button, count=1):
+        self.presses.append((button.value, count))
+        if self._after_press:
+            self.lines.extend(self._after_press.pop(0))
+
+
+def _focus_context(tmp_path: Path, lines, after_press=(), **overrides):
+    """A runner and a context whose driver answers presses with FOCUS lines."""
+    from e2e.trace import TraceLog
+
+    runner = engine.ScenarioRunner.__new__(engine.ScenarioRunner)
+    runner.log = lambda message: None
+    driver = _ScriptedFocusDriver(lines, after_press)
+    trace = TraceLog(driver.events)
+    trace.poll()
+
+    class _Ctx:
+        pass
+
+    context = _Ctx()
+    context.trace = trace
+    context.driver = driver
+    context.skip_events = False
+    context.dry_run = False
+    context.remaining = lambda: 1.0
+    for key, value in overrides.items():
+        setattr(context, key, value)
+    return runner, context
+
+
+def _focus_step(**params):
+    from e2e.scenarios import Step
+
+    return Step(index=1, action="focus", params=params)
+
+
+def test_focus_does_not_press_when_the_row_is_already_focused(tmp_path: Path) -> None:
+    runner, context = _focus_context(tmp_path, [_focus_line("Player", index=1)])
+    status, message, _artifacts = runner._do_focus(
+        _focus_step(view="HomepageMenu", label="Player"), context
+    )
+    assert status == "passed"
+    assert "label=Player" in message
+    assert context.driver.presses == []
+
+
+def test_focus_scrolls_until_the_label_matches(tmp_path: Path) -> None:
+    runner, context = _focus_context(
+        tmp_path,
+        [_focus_line("Switches", index=0)],
+        after_press=[
+            [_focus_line("Player", index=1)],
+        ],
+    )
+    status, message, _artifacts = runner._do_focus(
+        _focus_step(view="HomepageMenu", label="Player"), context
+    )
+    assert status == "passed"
+    assert "label=Player" in message
+    assert "after 1 press" in message
+    # Only a scroll key is ever re-issued, and only one press was needed.
+    assert context.driver.presses == [("DOWN", 1)]
+
+
+def test_focus_can_scroll_up(tmp_path: Path) -> None:
+    runner, context = _focus_context(
+        tmp_path,
+        [_focus_line("Empty", index=3)],
+        after_press=[[_focus_line("Player", index=1)]],
+    )
+    status, _message, _artifacts = runner._do_focus(
+        _focus_step(view="HomepageMenu", label="Player", button="UP"), context
+    )
+    assert status == "passed"
+    assert context.driver.presses == [("UP", 1)]
+
+
+def test_focus_matches_by_kind_and_position_too(tmp_path: Path) -> None:
+    runner, context = _focus_context(
+        tmp_path, [_focus_line("Switches", index=3, kind="Switch")]
+    )
+    status, _message, _artifacts = runner._do_focus(
+        _focus_step(view="HomepageMenu", kind="Switch", index=3), context
+    )
+    assert status == "passed"
+    assert context.driver.presses == []
+
+
+def test_focus_fails_with_the_rows_it_actually_saw(tmp_path: Path) -> None:
+    runner, context = _focus_context(
+        tmp_path,
+        [_focus_line("Switches", index=0)],
+        after_press=[
+            [_focus_line("Player", index=1)],
+            [_focus_line("Nested", index=2)],
+        ],
+    )
+    with pytest.raises(engine.AssertionFailure) as error:
+        runner._do_focus(
+            _focus_step(
+                view="HomepageMenu", label="Empty", max_presses=2, timeout_ms=100
+            ),
+            context,
+        )
+    message = str(error.value)
+    # The expectation, and every row that was walked past, are named.
+    assert "could not focus view=HomepageMenu label=Empty" in message
+    assert "2 DOWN press(es) ran out" in message
+    assert "label=Switches" in message
+    assert "label=Player" in message
+    assert "label=Nested" in message
+    assert "elements seen: Frame(Switches), Frame(Player), Frame(Nested)" in message
+
+
+def test_focus_fails_when_the_app_never_reports_a_row(tmp_path: Path) -> None:
+    runner, context = _focus_context(
+        tmp_path, ["E2E:VIEW;category=sitemap;view=HomepageMenu;depth=1"]
+    )
+    with pytest.raises(engine.AssertionFailure) as error:
+        runner._do_focus(
+            _focus_step(view="HomepageMenu", label="Player", timeout_ms=100), context
+        )
+    message = str(error.value)
+    assert "reported no focused element for view=HomepageMenu" in message
+    assert "no press was placed" in message
+    assert context.driver.presses == []
+
+
+def test_focus_does_not_treat_another_menus_focus_as_current(tmp_path: Path) -> None:
+    # The newest FOCUS belongs to a page that was just pushed; the homepage has
+    # not painted yet, so nothing may be pressed on the strength of it.
+    runner, context = _focus_context(
+        tmp_path,
+        [_focus_line("Audio", index=0, kind="Switch", view="PageMenu", depth=2)],
+    )
+    with pytest.raises(engine.AssertionFailure) as error:
+        runner._do_focus(
+            _focus_step(view="HomepageMenu", label="Player", timeout_ms=100), context
+        )
+    assert "for view=HomepageMenu" in str(error.value)
+    assert context.driver.presses == []
+
+
+def test_focus_reports_a_press_that_produced_no_focus_event(tmp_path: Path) -> None:
+    runner, context = _focus_context(tmp_path, [_focus_line("Switches", index=0)])
+    with pytest.raises(engine.AssertionFailure) as error:
+        runner._do_focus(
+            _focus_step(view="HomepageMenu", label="Empty", max_presses=1, timeout_ms=100),
+            context,
+        )
+    message = str(error.value)
+    assert "1 of them produced no FOCUS event" in message
+    assert "may not have been delivered" in message
+    # The scroll key was re-issued, bounded by max_presses, and never ENTER.
+    assert context.driver.presses == [("DOWN", 1)]
+
+
+def test_focus_is_skipped_in_a_dry_run(tmp_path: Path) -> None:
+    runner, context = _focus_context(tmp_path, [], dry_run=True)
+    status, message, _artifacts = runner._do_focus(
+        _focus_step(view="HomepageMenu", label="Player"), context
+    )
+    assert status == "skipped"
+    assert "would focus" in message
+    assert context.driver.presses == []
+
+
+def test_focus_refuses_to_navigate_blind_with_skip_events(tmp_path: Path) -> None:
+    runner, context = _focus_context(tmp_path, [], skip_events=True)
+    with pytest.raises(engine.AssertionFailure) as error:
+        runner._do_focus(_focus_step(label="Player"), context)
+    assert "--skip-events" in str(error.value)
+    assert context.driver.presses == []
+
+
+def test_focus_refuses_a_driver_without_an_event_stream(tmp_path: Path) -> None:
+    runner, context = _focus_context(tmp_path, [], trace=None)
+    with pytest.raises(engine.AssertionFailure) as error:
+        runner._do_focus(_focus_step(label="Player"), context)
+    assert "no console event stream" in str(error.value)
+    assert "never press on a row it cannot see" in str(error.value)
+    assert context.driver.presses == []
+
+
+def test_preflight_rejects_focus_on_a_touch_only_device() -> None:
+    runner = engine.ScenarioRunner.__new__(engine.ScenarioRunner)
+    runner.device = find_device("venu3")
+    steps = parse_steps(
+        [{"action": "launch"}, {"action": "focus", "label": "Player"}], "test"
+    )
+    runner.scenario = replace(
+        find_scenario("extended/localisation-glyphs-eng"), steps=steps
+    )
+    with pytest.raises(engine.ConfigError) as error:
+        runner._preflight()
+    assert "scrolls the highlight" in str(error.value)
+
+
+def test_assert_focus_passes_for_the_focused_row(tmp_path: Path, monkeypatch) -> None:
+    result = _run_assert(
+        tmp_path,
+        monkeypatch,
+        [_focus_line("Player", index=1)],
+        focus={"view": "HomepageMenu", "label": "Player"},
+    )
+    assert result.steps[-1].status == "passed"
+    assert "label=Player" in result.steps[-1].message
+
+
+def test_assert_focus_names_the_expected_and_the_focused_row(
+    tmp_path: Path, monkeypatch
+) -> None:
+    result = _run_assert(
+        tmp_path,
+        monkeypatch,
+        [_focus_line("Nested", index=2)],
+        focus={"view": "HomepageMenu", "label": "Player"},
+    )
+    assert result.steps[-1].status == "failed"
+    message = result.steps[-1].message
+    assert "expected the focused element to match view=HomepageMenu label=Player" in message
+    assert "the focused element is E2E:FOCUS;view=HomepageMenu;depth=1;index=2" in message
+    assert "label=Nested" in message
+
+
+def test_assert_focus_fails_when_no_row_was_ever_reported(
+    tmp_path: Path, monkeypatch
+) -> None:
+    result = _run_assert(
+        tmp_path,
+        monkeypatch,
+        ["E2E:VIEW;category=sitemap;view=HomepageMenu;depth=1"],
+        focus={"label": "Player"},
+    )
+    assert result.steps[-1].status == "failed"
+    assert "no FOCUS event" in result.steps[-1].message
+
 # ---------------------------------------------------------------------------
 # stable capture: VIEW is constructed, not painted
 # ---------------------------------------------------------------------------
