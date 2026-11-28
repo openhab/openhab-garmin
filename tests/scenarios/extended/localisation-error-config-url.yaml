@@ -5,6 +5,14 @@
 # (130 chars in French, 129 in Spanish, 120 in German and Italian), so it
 # is the primary wrapping/truncation case for the whole message.
 #
+# The empty value must reach the compiled `settings.xml` as an explicit empty
+# string: `scenario_settings` carries it through instead of substituting the
+# shim URL, and the build asserts the compiled default is `""`. Omitting the
+# key instead would make `Properties.getValue` return null and crash (#417).
+# The zero-request assertion below is what proves the app really ran
+# unconfigured; before #430 the override was silently dropped, the app polled
+# ~35 times and only "passed" because it never showed an error.
+#
 # edge540 is the narrowest `ui` device in the approved matrix (246 px wide) and
 # uses the largest menu font; see tests/docs/localisation.md for the rationale.
 # The ERRORVIEW id (`UI:CONFIG`) is machine-asserted; the rendered text is
@@ -32,8 +40,9 @@ covers:
   - errors.codes-messages
 manual_checks:
   - >-
-    The ERRORVIEW id and the error view being the current view are
-    machine-asserted; the wrapped or truncated rendered text is review-only.
+    The ERRORVIEW id, the error view being the current view, and the app
+    making no request at all are machine-asserted; the wrapped or truncated
+    rendered text is review-only.
 
 settings:
   sitemap_0: garmin_localisation
@@ -54,6 +63,14 @@ steps:
     fields:
       id: "UI:CONFIG"
     timeout_ms: 30000
+
+  - action: assert
+    description: >-
+      An unconfigured app cannot reach the server at all, so the shim must stay
+      untouched. A single request here means the empty URL was replaced by a
+      real endpoint and the error view above proves nothing.
+    shim_requests:
+      max_count: 0
 
   - action: screenshot
     name: error-config-url

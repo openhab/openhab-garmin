@@ -39,6 +39,12 @@ manual_checks:
     Rendered text is reviewed in screenshots; the harness has no OCR or text
     assertion. This covers the screens the scenario visits, not a
     string-by-string inventory, and glance/widget strings are not visited.
+  - >-
+    The press sequence assumes the homepage order Switches, Player, Nested,
+    Empty and that BACK returns from a frame page. The trace has no focus
+    event, so which row a DOWN lands on cannot be asserted; a failure here is
+    only diagnosable from the last INPUT/SELECT line and the failure screenshot
+    (#430).
 
 settings:
   sitemap_0: garmin_localisation
@@ -92,7 +98,9 @@ steps:
     button: ENTER
 
   - action: wait_for_event
-    description: The Player control view opens.
+    description: >-
+      Back on the homepage, selecting the Player frame (the second entry, after
+      Switches) opens PlayerView.
     event: VIEW
     fields:
       category: sitemap

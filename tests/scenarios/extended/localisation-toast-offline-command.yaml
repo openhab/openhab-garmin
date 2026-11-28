@@ -5,11 +5,23 @@
 # toast. The TOAST id (`UI:03`) is machine-asserted; the rendered uppercase
 # text is review-only.
 #
-# ORDER: like `offline-mode`, this scenario renders a cached sitemap. It runs
-# after the BLE localisation scenarios in the same suite, which populate the
-# `garmin_localisation` cache. If no cache exists the app starts into the
-# offline error view instead, and the VIEW assertion below fails deliberately
-# rather than asserting against the wrong screen.
+# UNVERIFIED (#430). This scenario cannot pass in its current form, and the
+# steps below are deliberately left as written so the failure stays visible.
+#
+# The toast needs a rendered page, so the app must start offline *with* a
+# cached sitemap. It cannot: the driver calls `clear_app_data()` before every
+# launch (only `E2E_WINE_KEEP_APP_DATA=1` skips it), so the sitemap cache from
+# an earlier BLE scenario is gone by the time this one starts. Offline with no
+# cache, the app raises `OfflineWithoutSitemapException` and shows the
+# `S:OFFLINE` error view instead of a `HomepageMenu`, which is why the VIEW
+# assertion fails rather than the toast.
+#
+# Two harness capabilities would make it testable, neither available today:
+# seeding `SitemapStore`'s cache before an offline launch, or switching
+# connection mode mid-run (`restart_in_mode()` exists but is probe-only, and a
+# restart is not the mid-run transition this behaviour is about). The mode
+# keys (`BleState`/`WifiState`) are written and recorded by the driver, so the
+# start-up mode itself is not the suspect here.
 
 name: localisation-toast-offline-command
 description: An offline command attempt shows the translated OFFLINE toast and sends nothing.

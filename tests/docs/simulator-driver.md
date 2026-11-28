@@ -218,8 +218,11 @@ The driver's runtime backstop is unchanged: `wait_ready` raises when the app
 reports `ERRORVIEW;id=UI:CONFIG` although the fixture configured a URL, so a PRG
 built without the override fails the scenario instead of passing vacuously. A
 scenario that deliberately empties `url_0` (for example
-`extended/localisation-error-config-url`) is unaffected, because its fixture
-URL is empty.
+`extended/localisation-error-config-url`) is unaffected, because the composed
+settings carry the empty string and the backstop only fires for a non-empty
+requested URL. `scenario_settings` keeps that empty value instead of replacing
+it with the shim URL, and the build asserts the compiled default is `""` rather
+than absent (#417).
 
 `E2E_WINE_SETTINGS_FILE` is only an escape hatch for a hand-made properties
 file; the default path writes nothing.

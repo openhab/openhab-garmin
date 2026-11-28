@@ -322,6 +322,17 @@ class ScenarioRunner:
         except (DriverError, OpenHabError, ShimError) as error:
             status, message, artifacts = FAILED, f"{type(error).__name__}: {error}", []
 
+        if status == FAILED:
+            # The screen at the point of failure is the evidence a reader needs
+            # when the app is on a different view than the step expected; the
+            # step's own artifacts are empty because it never got to capture
+            # anything. Best effort: a driver that cannot capture must not turn
+            # one failure into two.
+            shot = self._failure_screenshot(step, context)
+            if shot is not None:
+                artifacts = list(artifacts) + [str(shot)]
+                message += f"\n  screenshot at failure: {shot}"
+
         duration_ms = (time.monotonic() - started) * 1000.0
         prefix = f"step {step.index} ({step.action})"
         if status == FAILED:
@@ -336,6 +347,22 @@ class ScenarioRunner:
             message=message,
             artifacts=list(artifacts),
         )
+
+    def _failure_screenshot(self, step: Step, context: _Context) -> Optional[Path]:
+        """Capture the screen when a step failed, for human review.
+
+        Never raises and never replaces the failure: a driver without
+        screenshots, a closed window or a dry run simply has no artifact.
+        """
+        if context.dry_run or not context.driver.supports_screenshots:
+            return None
+        path = context.workdir / f"failure-step-{step.index}.png"
+        try:
+            written = context.driver.screenshot(path)
+        except Exception as error:  # noqa: BLE001 - diagnostics must not mask the failure
+            self.log(f"note: no screenshot at failure: {error}")
+            return None
+        return Path(written)
 
     # -- actions ----------------------------------------------------------
     def _do_launch(self, step: Step, context: _Context) -> Tuple[str, str, List[str]]:
@@ -594,6 +621,61 @@ class ScenarioRunner:
         context.openhab.send_command(item, value)
         return PASSED, f"{value} -> {item} (direct)", []
 
+    def _failure_head(self, step: Step, summary: str) -> str:
+        """Put the step's own description first, where a reader looks."""
+        description = step.get("description")
+        if not description:
+            return summary
+        return f"{description}\n  {summary}"
+
+    def _activation_hint(self, context: "_Context") -> str:
+        """What the app did with the presses, when a wait timed out.
+
+        ``SELECT;kind=...`` is emitted only when a menu item handles a select,
+        and it never says which row is focused. So "the expected view never
+        opened" has three causes that look identical in the event stream: a
+        press that never arrived, a press that moved the highlight onto another
+        row, or a select that pushed something else. The last ``INPUT`` and
+        ``SELECT`` lines separate them, and naming the row the step expected is
+        the scenario author's job (the step description is printed above).
+        """
+        if context.trace is None:
+            return ""
+        try:
+            context.trace.poll()
+        except Exception:  # noqa: BLE001 - diagnostics must not mask the failure
+            return ""
+        lines: List[str] = []
+        view = context.trace.current_view_event()
+        lines.append(
+            "  app view now: "
+            + (view.describe() if view is not None else "no VIEW event yet")
+        )
+        inputs = context.trace.of_event("INPUT")
+        selects = context.trace.of_event("SELECT")
+        if inputs:
+            lines.append("  last input: " + inputs[-1].describe())
+        else:
+            lines.append(
+                "  last input: none; the press never reached the app's input delegate"
+            )
+        if selects:
+            last = selects[-1]
+            lines.append("  last selection: " + last.describe())
+            lines.append(
+                f"  activation: the app handled the last select as kind="
+                f"{last.get('kind')} (result={last.get('result')}, "
+                f"depth={last.get('depth')}). The focused row itself is not in the "
+                "trace, so a wrong press count and a press that never landed look "
+                "the same here; see tests/docs/scenarios.md."
+            )
+        else:
+            lines.append(
+                "  activation: no SELECT event at all, so no menu row handled a "
+                "press"
+            )
+        return "\n" + "\n".join(lines)
+
     def _do_wait_for_event(self, step: Step, context: _Context) -> Tuple[str, str, List[str]]:
         if context.skip_events:
             return SKIPPED, "--skip-events", []
@@ -612,8 +694,13 @@ class ScenarioRunner:
         found = context.trace.wait_for(match, timeout_s)
         if found is None:
             raise AssertionFailure(
-                f"no trace event matching {match.describe()} within {timeout_s:.1f}s\n"
+                self._failure_head(
+                    step,
+                    f"no trace event matching {match.describe()} within {timeout_s:.1f}s",
+                )
+                + "\n"
                 + context.trace.failure_report(match)
+                + self._activation_hint(context)
             )
         return PASSED, f"{found.describe()} at {found.received_at:.3f}", []
 
@@ -670,8 +757,14 @@ class ScenarioRunner:
         found = context.trace.wait_for(match, timeout_s)
         if found is None:
             raise AssertionFailure(
-                f"the app did not show a view matching {match.describe()} within "
-                f"{timeout_s:.1f}s\n" + context.trace.failure_report(match)
+                self._failure_head(
+                    step,
+                    "the app did not show a view matching "
+                    f"{match.describe()} within {timeout_s:.1f}s",
+                )
+                + "\n"
+                + context.trace.failure_report(match)
+                + self._activation_hint(context)
             )
         return PASSED, found.describe(), []
 

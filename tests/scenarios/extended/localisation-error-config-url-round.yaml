@@ -7,6 +7,10 @@
 # selection instead of a second device in the device matrix (#366 owns that).
 #
 # ERRORVIEW id (`UI:CONFIG`) is machine-asserted; text rendering is review-only.
+#
+# The empty `url_0` is carried through as an explicit empty string (see
+# `scenario_settings`), and the zero-request assertion proves the app ran
+# unconfigured instead of polling a substituted shim URL.
 
 name: localisation-error-config-url-round
 description: The missing-URL error view also wraps on a round screen.
@@ -31,8 +35,9 @@ covers:
   - errors.codes-messages
 manual_checks:
   - >-
-    The ERRORVIEW id and the error view being the current view are
-    machine-asserted; the wrapped or truncated rendered text is review-only.
+    The ERRORVIEW id, the error view being the current view, and the app
+    making no request at all are machine-asserted; the wrapped or truncated
+    rendered text is review-only.
 
 settings:
   sitemap_0: garmin_localisation
@@ -53,6 +58,14 @@ steps:
     fields:
       id: "UI:CONFIG"
     timeout_ms: 30000
+
+  - action: assert
+    description: >-
+      An unconfigured app cannot reach the server at all, so the shim must stay
+      untouched. A single request here means the empty URL was replaced by a
+      real endpoint and the error view above proves nothing.
+    shim_requests:
+      max_count: 0
 
   - action: screenshot
     name: error-config-url-round
