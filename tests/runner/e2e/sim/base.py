@@ -29,6 +29,16 @@ from ..settings import AppSettings
 #: ``can_provision_language`` answers precisely.
 RUNNABLE_LANGUAGES = ("eng",)
 
+#: The app mode a scenario requests, and the value its ``E2E:CONNECTION`` line
+#: must carry once the transition has happened. ``WIFI_CHECK_PENDING`` is a
+#: transient state, never a destination: a scenario that switches to Wi-Fi waits
+#: for ``WIFI`` even though the app may report the pending state on the way.
+CONNECTION_TRACE_MODES = {
+    "ble": "BLE",
+    "wifi": "WIFI",
+    "offline": "OFFLINE",
+}
+
 
 class Button(str, Enum):
     """Device buttons the harness can press.
@@ -75,6 +85,34 @@ class SimulatorDriver(abc.ABC):
     #: True when the driver can probe the simulator's own menu bar with real
     #: clicks (``probe_menus``). Probing reports evidence; it asserts nothing.
     supports_menu_probe: ClassVar[bool] = False
+    #: True when the driver can change the connection state while the app runs
+    #: (``set_connection_mode``). This is a driver capability, not a suite-wide
+    #: claim: it needs the simulator's own menu, which only the native build
+    #: exposes as X windows (see ``sim/menus.py``).
+    supports_connection_switch: ClassVar[bool] = False
+
+    #: True when the window toolkit can report *no* child window under a pointer
+    #: that is nevertheless inside the top-level. A native GTK top-level does;
+    #: Wine's windows report themselves or a child. The pointer guard then falls
+    #: back to the window rectangle instead of failing, while still failing for a
+    #: point outside it.
+    pointer_top_level_fallback: ClassVar[bool] = False
+
+    def set_connection_mode(self, mode: str, *, timeout_s: float = 0.0) -> str:
+        """Put the simulator into the state app ``mode`` expects, under the app.
+
+        The driver only *issues* the menu action; it must not claim the app
+        changed mode. The caller proves the effect from the app's
+        ``E2E:CONNECTION`` line, because a click that returns success is not
+        evidence (the lesson from #421).
+
+        Returns a one-line description of what was done, for the log and for a
+        failure message. Raises :class:`NotImplementedError` on a driver that
+        does not advertise ``supports_connection_switch``.
+        """
+        raise NotImplementedError(
+            f"{self.name} cannot change the connection mode while the app runs"
+        )
 
     def restart_in_mode(
         self, mode: str, *, night: Optional[bool] = None, timeout_s: float = 0.0

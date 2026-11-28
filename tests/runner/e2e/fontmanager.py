@@ -1,16 +1,19 @@
-"""Build-time sanity check for the JRE font stack.
+"""Build-time sanity checks for the JRE the runner's compiler needs.
 
-``monkeyc`` generates resources, so it loads AWT's font manager even on a
-headless JRE. A missing ``libharfbuzz`` broke every compile on the first live
-run, and the fix added the libraries plus an ``ldd`` smoke check to the runner
-image.
+``monkeyc`` generates resources, so it loads AWT even for a headless build. Two
+live failures motivated this module:
 
-That first check was wrong: plain ``ldd`` reports ``libjvm.so`` as ``not found``
-because the JVM resolves it at run time through its own ``LD_LIBRARY_PATH``
-(``$JAVA_HOME/lib`` and ``$JAVA_HOME/lib/server``). The guest image build failed
-on a healthy image because of it. This module measures the same thing the JVM
-measures: it runs ``ldd`` with that path set and only reports libraries that are
-genuinely unresolved, which is exactly the class the live run hit.
+- a missing ``libharfbuzz`` broke every compile on the first live run;
+- on Ubuntu 22.04, ``default-jre-headless`` has no ``libawt_xawt.so``, so
+  ``monkeyc``'s SVG rasteriser (Batik initialises AWT) died with
+  ``UnsatisfiedLinkError`` after the image had looked healthy.
+
+The first check shipped in #386 was also wrong: plain ``ldd`` reports
+``libjvm.so`` as ``not found`` because the JVM resolves it at run time through
+its own ``LD_LIBRARY_PATH`` (``$JAVA_HOME/lib`` and ``$JAVA_HOME/lib/server``).
+The guest image build failed on a healthy image because of it. This module
+measures the same thing the JVM measures: it runs ``ldd`` with that path set and
+only reports libraries that are genuinely unresolved.
 
 The module is copied into the runner image and run at build time (the SDK is
 never baked in, so a real ``monkeyc`` compile cannot run there). It is plain
@@ -27,8 +30,12 @@ import sys
 from pathlib import Path
 from typing import Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 
-#: Library the check is about: the JRE's AWT font manager.
+#: Library the font check is about: the JRE's AWT font manager.
 LIBRARY_NAME = "libfontmanager.so"
+
+#: Library the AWT check is about. Batik's ``CursorManager`` initialises AWT, and
+#: AWT on Linux loads this; Ubuntu 22.04 ships it only in the non-headless JRE.
+AWT_LIBRARY_NAME = "libawt_xawt.so"
 
 #: Libraries the JVM resolves itself before anything is loaded. ``libjvm.so``
 #: lives in ``$JAVA_HOME/lib/server`` and is found through the JVM's own
@@ -92,23 +99,22 @@ def discover_java_home(
     return None
 
 
-def check(
+def check_library(
     java_home: Path,
+    library_name: str,
     *,
+    missing_hint: str,
     runner: Optional[Callable[..., object]] = None,
 ) -> Tuple[bool, str]:
-    """Run ``ldd`` against the font manager and report the verdict.
+    """Run ``ldd`` against one JRE library and report the verdict.
 
     Returns ``(ok, message)``; ``ok`` is False only for a real problem, so the
-    image build fails on a broken font stack and not on the JVM's own library
+    image build fails on a broken JRE and not on the JVM's own library
     resolution.
     """
-    library = Path(java_home) / "lib" / LIBRARY_NAME
+    library = Path(java_home) / "lib" / library_name
     if not library.is_file():
-        return False, (
-            f"error: {library} does not exist; the JRE layout changed and the "
-            "font-stack check has to be updated"
-        )
+        return False, f"error: {library} does not exist; {missing_hint}"
 
     run = runner or subprocess.run
     try:
@@ -126,7 +132,7 @@ def check(
     missing = unresolved_libraries(output)
     if missing:
         return False, (
-            "error: libfontmanager.so has unresolved shared libraries: "
+            f"error: {library_name} has unresolved shared libraries: "
             + ", ".join(missing)
             + "\n"
             + output.strip()
@@ -139,12 +145,52 @@ def check(
     return True, f"{library} resolves every library the loader needs"
 
 
+def check(
+    java_home: Path,
+    *,
+    runner: Optional[Callable[..., object]] = None,
+) -> Tuple[bool, str]:
+    """Check the font manager ``monkeyc`` loads when it generates resources."""
+    return check_library(
+        java_home,
+        LIBRARY_NAME,
+        missing_hint=(
+            "the JRE layout changed and the font-stack check has to be updated"
+        ),
+        runner=runner,
+    )
+
+
+def check_awt(
+    java_home: Path,
+    *,
+    runner: Optional[Callable[..., object]] = None,
+) -> Tuple[bool, str]:
+    """Check ``libawt_xawt.so``, which Batik's AWT initialisation loads.
+
+    Ubuntu 22.04 ships it only in the non-headless JRE. Without the file,
+    ``monkeyc`` fails a resource compile with ``UnsatisfiedLinkError`` long
+    after the image looked healthy, so the build names it here.
+    """
+    return check_library(
+        java_home,
+        AWT_LIBRARY_NAME,
+        missing_hint=(
+            "the JRE is headless; monkeyc rasterises SVG drawables through "
+            "Batik, which initialises AWT. Install default-jre (non-headless), "
+            "not default-jre-headless"
+        ),
+        runner=runner,
+    )
+
+
 def main(argv: Optional[Sequence[str]] = None) -> int:
     parser = argparse.ArgumentParser(
         prog="fontmanager-check",
         description=(
-            "Fail when the JRE's libfontmanager.so cannot resolve a shared "
-            "library monkeyc would need. Run at runner image build time."
+            "Fail when the JRE's libfontmanager.so or libawt_xawt.so cannot "
+            "resolve a shared library monkeyc would need. Run at runner image "
+            "build time."
         ),
     )
     parser.add_argument(
@@ -161,8 +207,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         )
         return 1
 
-    ok, message = check(java_home)
-    print(message, file=sys.stdout if ok else sys.stderr)
+    ok = True
+    for label, check_function in (("font stack", check), ("AWT", check_awt)):
+        passed, message = check_function(java_home)
+        print(f"{label}: {message}", file=sys.stdout if passed else sys.stderr)
+        ok = ok and passed
     return 0 if ok else 1
 
 

@@ -328,23 +328,19 @@ waivers:
   # ---- Communication transitions need a mode switch the driver does not offer
   # The mode keys are read by simulator.ini at start, so `wine` can prove
   # "starts in X" (`restart_in_mode`) but not "transitions to X while running".
-  # The simulator's menu bar is the route and is untested, not absent.
-  - id: communication.transitions
-    reason: >-
-      The `wine` driver can start in each mode and relaunch into another one
-      (restart_in_mode), but a mid-run transition needs the simulator's
-      Simulation/Connection menu, which it does not script. The menu bar exists
-      and is probed by `python -m e2e simulator-probe`; it is untested, not
-      absent. See tests/docs/simulator-driver.md#runtime-mode-and-night-mode.
+  # The native driver scripts the simulator's menu for that (`sim/menus.py`),
+  # and the `connection-*` scenarios prove each direction from a NEW
+  # E2E:CONNECTION line. The indicator rendering itself is still unasserted.
   - id: communication.transition-indicators
     reason: >-
-      Status indicators after a transition need the same mid-run mode switch as
-      communication.transitions: an indicator that changes while the app runs
-      cannot be produced by a restart, which only exercises the start-up branch.
-  - id: communication.transition-data
-    reason: >-
-      The mode-start behaviour is covered by wifi-mode, offline-mode and
-      restart_in_mode, but the transition case needs a mid-run mode switch.
+      The transition itself is covered by connection-ble-wifi,
+      connection-ble-offline and connection-wifi-offline, and each of those
+      asserts the NEW E2E:CONNECTION line the indicator is driven from. What is
+      not asserted is the rendered indicator and the settings-menu "Connection
+      mode" value: no trace field carries either, and the harness has no text or
+      region assertion, so they are captured as screenshots and listed in the
+      scenarios' manual_checks. Verify them by reviewing those captures on the
+      VM.
 
   # ---- Settings
   - id: settings.every-setting
@@ -373,8 +369,11 @@ waivers:
       after inactivity cannot be expressed in one scenario.
   - id: lifecycle.connection-return
     reason: >-
-      Returning to the phone or network is a mid-run mode transition, which the
-      driver cannot drive (see communication.transitions).
+      Returning to the phone is covered for the BLE and Wi-Fi paths by the
+      `connection-*` scenarios (a NEW E2E:CONNECTION line plus resumed polls),
+      but "behaviour after the phone or network returns" also includes the
+      error-view and latency path after a long outage first; that part still
+      needs a scenario of its own.
 
   # ---- Localization
   - id: localisation.fallback

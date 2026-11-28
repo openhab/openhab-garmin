@@ -18,6 +18,7 @@ from typing import Optional
 
 from e2e.fontmanager import (
     check,
+    check_awt,
     discover_java_home,
     environment_for,
     unresolved_libraries,
@@ -104,6 +105,7 @@ def _jre(tmp_path: Path) -> Path:
     java_home = tmp_path / "jre"
     (java_home / "lib").mkdir(parents=True)
     (java_home / "lib" / "libfontmanager.so").write_bytes(b"\x7fELF")
+    (java_home / "lib" / "libawt_xawt.so").write_bytes(b"\x7fELF")
     return java_home
 
 
@@ -150,3 +152,39 @@ def test_java_home_discovery_falls_back_to_the_jvm_root(tmp_path: Path) -> None:
 
 def test_missing_environment_and_no_jvm_root_is_reported(tmp_path: Path) -> None:
     assert discover_java_home({}, jvm_root=tmp_path / "absent") is None
+
+
+#: `ldd libawt_xawt.so` on a healthy JRE, with the JVM's loader path.
+AWT_HEALTHY_LDD = """\
+\tlibX11.so.6 => /lib/x86_64-linux-gnu/libX11.so.6 (0x00007f2c4b000000)
+\tlibXext.so.6 => /lib/x86_64-linux-gnu/libXext.so.6 (0x00007f2c4b100000)
+\tlibawt.so => /usr/lib/jvm/java-11-openjdk-amd64/lib/libawt.so (0x00007f2c4b200000)
+\tlibjava.so => /usr/lib/jvm/java-11-openjdk-amd64/lib/libjava.so (0x00007f2c4b300000)
+"""
+
+
+def test_check_awt_passes_on_a_healthy_jre(tmp_path: Path) -> None:
+    recorder = _Recorder(_Completed(stdout=AWT_HEALTHY_LDD))
+    ok, message = check_awt(_jre(tmp_path), runner=recorder)
+    assert ok, message
+    assert "libawt_xawt.so" in message
+
+
+def test_check_awt_names_a_headless_jre(tmp_path: Path) -> None:
+    """The 22.04 default-jre-headless failure, named at build time."""
+    java_home = _jre(tmp_path)
+    (java_home / "lib" / "libawt_xawt.so").unlink()
+    recorder = _Recorder(_Completed())
+    ok, message = check_awt(java_home, runner=recorder)
+    assert not ok
+    assert "libawt_xawt.so" in message
+    assert "default-jre" in message
+    assert "non-headless" in message
+    assert recorder.calls == [], "no ldd run for a file that does not exist"
+
+
+def test_check_awt_reports_an_unresolved_x_library(tmp_path: Path) -> None:
+    recorder = _Recorder(_Completed(stdout="\tlibX11.so.6 => not found\n"))
+    ok, message = check_awt(_jre(tmp_path), runner=recorder)
+    assert not ok
+    assert "libX11.so.6" in message

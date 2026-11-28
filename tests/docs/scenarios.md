@@ -286,12 +286,51 @@ a run.
 | `install_faults` | `rules` | installs (replaces) fault rules mid-run, same grammar as the top-level `shim.rules`; see [Asserting on an injected fault](#asserting-on-an-injected-fault) |
 | `wait_for_request` | `method`, `path`/`path_prefix`, `matched_rule`, `faulted`, `min_count`, `timeout_ms` | polls the shim trace |
 | `press` | `button` (`START`/`UP`/`DOWN`/`ENTER`/`BACK`/`MENU`), `count`, `expect` (`input`/`effect`/`none`), `timeout_ms` | requires a button-capable device; `expect` measures the press, see [Measured presses](#measured-presses) |
+| `connection` | `mode` (`ble`/`wifi`/`offline`), `timeout_ms` (default 60000) | changes the mode **while the app runs**; needs `--driver native`, and passes only on a **new** `E2E:CONNECTION` line — see [Changing connection mode](#changing-connection-mode). Under `wine` the scenario is skipped with that reason, never passed |
 | `tap` | `x`, `y`, `count` | requires a touch-capable device |
 | `screenshot` | `name`, `stable`, `interval_ms`, `timeout_ms`, `stable_diff_ratio` | lower-case slug; stored as `NN-name.png`. `stable: true` recaptures until two frames agree, because a `VIEW` line is emitted before the view is painted |
 | `command` | `item`, `value`, `via` (`rest`/`shim`) | `rest` talks to openHAB directly |
 | `wait_for_event` | `event`, `fields`, `contains`, `timeout_ms` | see trace events below |
 | `wait_for_view` | `category`/`view`, `depth`, `timeout_ms` | shorthand for a `VIEW` event; put it before a screenshot |
 | `assert` | `shim_requests`, `golden`, `no_error_view`, `never_error_view`, `description` | at least one condition |
+
+### Changing connection mode
+
+`connection` changes the simulator's connection state **while the app runs**, so
+a scenario exercises the transition branch rather than the start-up branch. It
+is the only action with a driver requirement:
+
+```yaml
+- action: connection
+  mode: wifi
+  timeout_ms: 120000
+  description: The simulator's menu switches BLE to Wi-Fi and the app reports it.
+```
+
+- **It needs `--driver native`.** The mode comes from the simulator's
+  `Settings -> Connection Type` menu; the native GTK menu is a real X window and
+  is driven by a mnemonic/arrow key plan, while under Wine the popup is drawn
+  inside the window and cannot be selected deterministically. Under `wine` (and
+  in a dry run) the scenario is reported **skipped** with that reason. It is
+  never a pass.
+- **The click is not the evidence.** The step records how many trace events
+  exist, performs the menu action, and passes only on a **new**
+  `E2E:CONNECTION;mode=<BLE|WIFI|OFFLINE>` after it. The start-up line never
+  counts, and `WIFI_CHECK_PENDING` is a waypoint, not a destination.
+- **A no-op is rejected when the scenario loads.** Switching to the mode the app
+  is already in (the launch mode, or the target of an earlier step) would emit
+  no new event, so it is a configuration error instead of a guaranteed failure.
+  Switching back later is allowed: the loader tracks the mode through the steps.
+- **The interactive state is a manual check.** The painted connection-mode
+  indicator and the settings-menu "Connection mode" value have no trace field, so
+  the scenarios capture them and list the review in `manual_checks`.
+
+The three scenarios are `extended/connection-ble-wifi`,
+`extended/connection-ble-offline` and `extended/connection-wifi-offline`; each
+switches away and back, asserts the new mode both ways, and checks that polling
+stops or resumes as the mode requires. They are the evidence for
+`communication.transitions` and `communication.transition-data` in
+`tests/config/scope.yaml`.
 
 ### `assert`
 
@@ -367,9 +406,16 @@ compared against the screenshot captured earlier in the same scenario.
 A golden is a **drift detector, not a correctness proof**: a match says the app
 still draws what a reviewer once approved on that simulator build. It does not
 say the layout, truncation or glyphs are right on a device, and that question
-is answered only by a human looking at a capture from Windows or from hardware.
-Because the window geometry is simulator-specific, a golden is valid for one
-simulator build and is re-captured, not compared, after an upgrade.
+is answered only by a human looking at a capture from the native simulator, the
+Wine simulator, or hardware. Because the window geometry is simulator-specific,
+a golden is valid for one simulator build **and one driver** — the window chrome
+differs (409×600 under Wine, 446×700 native for fenix7 on the current build;
+446×607 in the #402 spike) even when the device
+screen is pixel-identical — and is re-captured, not compared, after an upgrade or
+a driver switch. Say which driver captured a golden in its review notes. On
+native the capture is the root window cropped to the simulator window (the
+window id captures black), and the device canvas inside it is measured at start;
+a single-colour capture is refused rather than compared.
 
 **The golden is the whole simulator window, and the app's screen is never
 assumed to be centred, square or even inside a known rectangle.** Devices differ
@@ -721,6 +767,26 @@ They are harness probes, not app behaviour:
 - **Count every entry, including static text.** A `Text` with no item and no
   children still occupies a menu index even though it cannot be activated. When
   paging by count, count it, and say the order in a comment.
+- **Do not rely on a press count surviving a device change.** The visible menu
+  window and the number of entries that fit differ per device, so a `DOWN xN`
+  that reaches an element on fenix7 can land elsewhere on edge540. The full
+  `--all` pass found this in `localisation-glyphs-*` and `localisation-sitemap-*`:
+  after `BACK`, `DOWN`, `ENTER` the app stayed on `PageMenu` instead of opening
+  `PlayerView`, while the element before it passed. Put the target first in a
+  dedicated fixture page (the next rule), and do not copy a count across
+  devices.
+
+  A generic "navigate to the element named X" action does **not** exist, and it
+  cannot be made safe from the current trace: the app reports
+  `SELECT;kind=...` only when an item is _activated_, never which item is
+  focused, and activating a command item has a side effect. A bounded retry
+  that presses ENTER at each row would send commands on the way. Making it
+  possible needs a debug-only focus event from the app (the `(:debug)`
+  mechanism) and its own VM verification — app work, not a harness-only change.
+  `press` with `expect: input` plus `wait_for_view` catch a press that never
+  arrived; they cannot detect the wrong row. The `connection-*` scenarios avoid
+  the problem entirely: they select the first frame's first element and use no
+  `DOWN` count.
 - **Wait for the page before paging.** The app builds a frame's children
   asynchronously after the page is shown (see
   `localisation-error-long-value`), so a `DOWN` sent immediately can run against

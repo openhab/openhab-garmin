@@ -63,8 +63,14 @@ that delta is what the harness classifies. Two consequences are worth knowing:
   that goes _down_ between two snapshots means the container was recreated
   during the window, which the harness reports as its own cause.
 
-A missing `Health` object means the service has no healthcheck (the `runner`
-service has none), so its health status proves nothing in either direction.
+A missing `Health` object means the service has no healthcheck (the openHAB
+init services have none), so its health status proves nothing in either
+direction. The `runner` service has one, and it is deliberately stricter than
+"the container is up": it requires the entrypoint's `/run/ciq-ready` marker,
+which is written only after the SDK copy, the device and font staging and
+`sdk-check` have succeeded, and it requires that the staged SDK provides at
+least one simulator build. A runner that reports healthy is therefore staged and
+able to run; it still says nothing about whether a scenario passed.
 
 ### Working set, not RSS
 

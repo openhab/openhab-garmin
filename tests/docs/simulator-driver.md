@@ -21,8 +21,12 @@ measured way out of the glance page: page down ×2, then select (see "Opening th
 app: DOWN, then SELECT"). `wait_ready` calls it.
 
 Class attributes state what a driver can actually do: `supports_events` and
-`supports_screenshots`. A driver that cannot provide them must not pretend: the
-engine reports event and golden assertions as **skipped**, never passed.
+`supports_screenshots`, plus `supports_restart_in_mode`, `supports_menu_probe` and
+`supports_connection_switch` (the last is native-only; see "Runtime mode and
+night mode"). A driver that cannot provide them must not pretend: the engine
+reports event and golden assertions as **skipped**, never passed, and a
+connection step on a driver without the capability skips the scenario with the
+reason instead of claiming a transition.
 
 ### Running the contract test
 
@@ -36,6 +40,10 @@ engine reports event and golden assertions as **skipped**, never passed.
   `screenshot`, `events`) are reported `not-implemented` with that reason, and
   the command exits `2`. The placeholder PRG the contract writes is not a
   runnable app.
+- `--driver native --prg <built.prg>` is the same contract on
+  `linux/bin/simulator`. It is the gate before native becomes the default; see
+  "The native driver and the connection transition" for what it must prove, and
+  the `ldd` check that names libraries a custom base is missing.
 - The device comes from the PRG's name (`openhab-garmin-<device>.prg`, the
   build's pattern). A `--device` that names another device is **refused**, and
   an unrecognised PRG name needs an explicit `--device`: launching one device's
@@ -164,27 +172,34 @@ PIDs instead.
 | `E2E_WINE_STARTUP_TIMEOUT` | seconds to wait for the simulator window (default `120`); the app's first trace line is bounded by the caller (90 s by default) |
 | `E2E_WINE_SETTINGS_FILE` | escape hatch: write this application-properties file before launch; the default path writes nothing because properties come from the build |
 | `E2E_WINE_SCREEN_RECT` | `x,y,width,height` of the watch screen inside the window; pin it when taps miss |
+| `E2E_NATIVE_SCREEN_RECT` | `x,y,width,height` of the native device canvas; the native driver detects it at start and this is the pin when a build cannot be read |
 | `E2E_WINE_KEY_<BUTTON>` | X keysym for one button, e.g. `E2E_WINE_KEY_ENTER=Return`; `--key BUTTON=KEYSYM` is the CLI spelling |
 | `E2E_WINE_NIGHT_MODE` | `1` starts the simulator in night mode (`nightMode=1`); start-up only, so a change means a restart |
 | `E2E_WINE_KEEP_APP_DATA` | `1` keeps the app's cached sitemap and settings across launches, for debugging the cache; the default clears them before every launch |
 
 ## Per-method status
 
+The table describes the `wine` driver. `native` implements the same contract on
+`linux/bin/simulator` and reuses these X11/monkeydo primitives; it differs in the
+process it launches, the paths below `$HOME`, the lock sweep and the menu
+capability (see "What the native driver does"). Rows that differ are marked.
+
 | Method | Status | Notes |
 | --- | --- | --- |
 | `prepare` | implemented | Validates the external tools and copies the PRG. Runs before anything touches Wine. |
-| `start` | implemented | Display check, `simulator.ini`, simulator-window wait, property seeding and `monkeydo` launch. The device name is expected to appear only after the launch. |
-| `wait_ready` | implemented | First view **and** the reported language, both from the trace stream. When the first view is the glance it runs the measured launch sequence and requires a non-glance view. A dead app fails with an actionable message (`no console output at all` = launch/packaging, `output but no E2E: line` = wrong build). |
+| `start` | implemented; **cannot push the app under Wine 6.0.x (22.04)** | Display check, `simulator.ini`, simulator-window wait, property seeding and `monkeydo` launch. The device name is expected to appear only after the launch. On the 22.04 image Wine 6.0.x maps the window but never pushes the app; see "Driver status on the 22.04 image". |
+| `wait_ready` | implemented; fails fast on the Wine 6.0.x push failure | First view **and** the reported language, both from the trace stream. When the first view is the glance it runs the measured launch sequence and requires a non-glance view. A dead app fails with an actionable message (`no console output at all` = launch/packaging or the measured Wine 6.0.x failure, `output but no E2E: line` = wrong build). |
 | `launch` | implemented, retries until the app responds | Page down ×2, then select, with `windowfocus` before every key, a 50 s dwell and a stable screen, then a retry loop (`LAUNCH_RESPONSE_WAIT_S` 4 s, every `LAUNCH_RETRY_INTERVAL_S` 10 s, up to `LAUNCH_RETRY_BUDGET_S` 180 s) cycling click, key tap, keydown/keyup and mouse hold. Each retry logs its index, elapsed time, variant, the focus before/after every key, the exact argv and the resulting view/connection. |
 | `press` | implemented, input delivered | Path per button, recorded: `E2E_WINE_KEY_<BUTTON>`/`--key` first, then a proven keysym, then the declared hit area (mouse, **pointer verified** before the click). `mechanism` can force `"mouse"` or `"keyboard"` for the launch retries; the window is focused before every key. |
 | `tap` | implemented, pointer verified | The window is focused and the pointer is verified to be over the simulator window before the click (see above). The screen rectangle comes from the device definition's `display.location` (`simulator.json`), with `E2E_WINE_SCREEN_RECT` as the override; a centred fit is only the last resort for an SDK without `simulator.json`. |
 | `screenshot` | implemented | Captures the simulator window. Fails when the capture is not a usable PNG instead of returning a blank image. |
 | `events` | implemented | `monkeydo` stdout/stderr with receipt timestamps; `stdbuf` disables its block buffering when available. |
 | `stop` | implemented | Terminates the app and the simulator by PID; leaks nothing into the next scenario. |
-| `restart_in_mode` | implemented (Wine), start-up only | Relaunches the app with another `simulator.ini` (`BleState`/`WifiState`, `nightMode`) and waits until it is ready. Proves start-up mode; never claims a mid-run transition. |
+| `restart_in_mode` | implemented (wine and native), start-up only | Relaunches the app with another `simulator.ini` (`BleState`/`WifiState`, `nightMode`) and waits until it is ready. Proves start-up mode; never claims a mid-run transition. |
 | `clear_app_data` / `relaunch_app` | implemented | Removes **only** the sitemap cache (`APPS/DATA`, `APPS/TEMP`) before every launch — never `APPS/SETTINGS`, `GARMIN/Settings` or `LOGS` — and can relaunch with a cleared cache. |
-| `probe_menus` | implemented (Wine), evidence only | Clicks along the menu bar row, reports every candidate point with its screen delta and any new X window, and screenshots each step. Asserts nothing; `simulator-probe` runs it. |
-| mode (`ble`/`wifi`/`offline`) | partial, start-up only | The startup keys are written and reported; `restart_in_mode()` relaunches into another mode and says in the log that it proves start-up mode, not a mid-run transition. A transition needs the simulator menus, which are probed by `simulator-probe` and still waived (see "Runtime mode and night mode"). |
+| `probe_menus` | implemented (wine and native), evidence only | Clicks along the menu bar row, reports every candidate point with its screen delta and any new X window, and screenshots each step. Asserts nothing; `simulator-probe` runs it. On native the popups are X windows, so a hit is conclusive rather than an in-window guess. |
+| `set_connection_mode` | implemented (native), **unverified on the VM** | Sends the measured menu key plan (mnemonic, arrows, `Return`) and returns the evidence. The engine requires a new `E2E:CONNECTION;mode=...` after it; `wine` raises because it cannot script the in-window menu. |
+| mode (`ble`/`wifi`/`offline`) | start-up on both; mid-run on native | The startup keys are written and reported, and `restart_in_mode()` relaunches into another mode and says it proves start-up mode. A **mid-run transition** is `set_connection_mode()` on `native` only; under `wine` a scenario that needs one is skipped with that reason. |
 | night mode | partial, start-up only | `nightMode` is an ini key: `E2E_WINE_NIGHT_MODE=1` (or a restart with `--night`) starts in night mode. The night theme changing mid-run is a menu action and stays waived. |
 | language (`eng`/`deu`/...) | implemented, per code | `eng` removes the `Language` key (simulator default); every other code writes the **numeric** index from `tests/config/simulator-languages.json` and the reported `E2E:LANGUAGE` must match or the run fails. A code with no measured index raises in `start()` and is reported blocked; `python -m e2e language-scan --write` measures it. |
 | app properties | implemented, verified at build | Compiled into the PRG through a `settings.xml` resource override; `e2e build` asserts the defaults `monkeyc` emitted, and `wait_ready` rejects a `UI:CONFIG` error view. See below. |
@@ -405,15 +420,20 @@ it came from writing `Language=deu`, which the simulator ignores because it want
 an index. `LANG`/`LC_ALL` on the Wine process make no difference either, and that
 part still holds.
 
-A mode change at runtime (the simulator's `Simulation` and `Connection` menus)
-is **not implemented**. The driver would have to script native Win32
-menus with `Alt+S`/`Alt+C` plus arrow keys and confirm the effect from
-`E2E:CONNECTION`; the spike under [`spike/`](../spike/README.md) exercises that
-path, and its verdict decides whether it is reliable enough for the driver.
-Until then a scenario that needs a mode gets it at startup, and the request-count
-assertions prove the app's behaviour. The guest also shows there is **no menu bar
-to drive**: `xwininfo -root -children` lists only the main window and 1x1 helper
-windows, and `Alt+F`/`Alt+S`/`Alt+M` open nothing.
+A mode change at runtime is now a driver capability, not a menu experiment. The
+`native` driver scripts the simulator's own menu (see "Runtime mode and night
+mode" below and [`sim/menus.py`](../runner/e2e/sim/menus.py)); the `wine` driver
+cannot, and a scenario that needs a transition is reported **skipped** under it
+with that reason, never passed. The two old claims in this file are retired:
+
+- "the simulator has no menu bar" — wrong. It has a real Win32 menu bar
+  (`File`, `Settings`, `Simulation`, `Data Fields`, `adb Connection`, `Help`).
+  What the guest did not see was an **X window** for its popups, because Wine
+  draws them inside the simulator window.
+- "`Alt+F`/`Alt+S` open nothing, so the menus are unreachable" — the
+  accelerators doing nothing is a property of Wine's key handling. Clicks work:
+  measured on the Windows build, clicking `Settings` opens the menu and hovering
+  `Connection Type` opens its submenu.
 
 Night mode, sleep mode and HTTPS requirements are also only available through
 those menus and are not scripted.
@@ -614,49 +634,110 @@ where the font failure lives.
 ## Runtime mode and night mode
 
 `mode` and `nightMode` are `simulator.ini` keys, so the harness can test that
-the app **starts** in BLE, Wi-Fi, Offline and night mode, and nothing else. A
-**mid-run transition** — the connection-mode indicator changing, the Wi-Fi-only
-sitemap update, the night theme — needs the simulator's own menus, because the
-app never re-reads the ini.
+the app **starts** in BLE, Wi-Fi, Offline and night mode. A **mid-run
+transition** — the connection-mode indicator changing, the Wi-Fi-only sitemap
+update, the night theme — needs the simulator's own menus, because the app never
+re-reads the ini.
 
-### The menu bar exists; the accelerators do not
+### The menu bar is real, and where its popups are drawn decides the driver
 
-Correction to an earlier note in this repository: the simulator **has** a menu
-bar. It is drawn _inside_ the window (`File`, `Settings`, `Simulation`,
-`Data Fields`, `adb Connection`, `Help`) — the first row of the committed golden
-is that text. The `alt+f`/`alt+s` experiments proved only that the keyboard
-accelerators do nothing; they did **not** prove the menus are unreachable. Treat
-the menus as **untested, not absent**.
+The simulator **has** a menu bar: `File`, `Settings`, `Simulation`,
+`Data Fields`, `adb Connection`, `Help`. Measured on 2026-11-28 against the SDK
+9.3.0 Windows build (the binary the guest runs under Wine), with the Win32 API:
+
+| Measurement | Result |
+| --- | --- |
+| `GetMenu(window)` | a real menu handle, not zero |
+| top-level labels | the six above, with mnemonics `&File`, `&Settings`, `Si&mulation`, … |
+| `Settings -> Connection Type` | `BLE`, `WiFi`, `LTE`; each a submenu of `Not Initialized`, `Not Connected`, `Connected` |
+| item command ids | BLE 6051-6053, WiFi 6054-6056, LTE 6057-6059 |
+| selecting an item | the menu's check state changes (`WM_COMMAND 6052` and `6192` tested) |
+| popup windows on Windows | a separate `#32768` window (the BLE submenu is 121x72) |
+| popup windows under Wine | **none**: Wine draws the popup inside the simulator window |
+
+That last row is the whole driver decision. The menu bar exists in both builds,
+but:
+
+- **Wine** gives X no window for the popup, so a driver cannot read its
+  geometry. It would have to find the labels and rows by pixel probing, and a
+  click that opens the right pixel region proves nothing about which item was
+  selected.
+- **Native GTK** menus are ordinary X windows, and the keyboard path (mnemonic,
+  arrows, `Return`) is the ordinary GTK menu interface. No coordinates are
+  involved, and the popup's appearance is observable with `xwininfo`.
+
+So the connection-mode capability belongs to the `native` driver. It is
+implemented as a pure key plan over the measured menu model
+(`sim/menus.py`: `connection_menu_selections`, `menu_key_plan`) and a driver
+method that only _issues_ the keys. The **effect** is proven by a new
+`E2E:CONNECTION;mode=...` line from the app — the scenario step fails without
+it, and the start-up line never counts.
+
+The key plan itself has **not** been executed against either build yet: the
+measurements above are the menu model (labels, order, ids, and that a selection
+takes effect), not the mnemonic/arrow sequence. The VM gate in "What the native
+driver does not prove yet" is what proves it, and a failure there names the keys
+and popup ids it saw so the plan can be corrected with evidence instead of a
+guess.
+
+The earlier "no menu bar" note was a misreading of "no X window for the menu".
+`WineSimulatorDriver.probe_menus()` remains diagnostic: it reports what each
+point did, and an empty report is now explicitly _inconclusive_ rather than
+proof that the menus are absent.
 
 ### What the harness provides now
 
-`python -m e2e simulator-probe --prg <built.prg>` runs the menu experiment and
-the mode restarts in one go, in **your own container** (a restart disturbs a
-running suite):
+Two drivers can select the connection state, and one can change it under the app:
+
+| Capability | `wine` | `native` |
+| --- | --- | --- |
+| start in BLE / Wi-Fi / offline (`simulator.ini`) | yes | yes |
+| relaunch in another start-up mode (`restart_in_mode`) | yes | yes |
+| `E2E:CONNECTION` asserted at start | yes | yes |
+| **push the app and run a scenario, on the 22.04 image** | **no: Wine 6.0.x cannot push the app (measured)** | yes (window and menu measured; contract re-run pending) |
+| change the mode **while the app runs** | no | yes (`set_connection_mode`) |
+| menu probe report | yes (diagnostic) | yes (and popups are X windows) |
+
+### Driver status on the 22.04 image
+
+The image moved to 22.04 so the native simulator can run at all, which also
+moved Wine from 9.0 to 6.0.3. Measured on the VM at `f70e7a7`, Wine 6.0.3
+starts the simulator and maps its window, `monkeydo` connects, and the app is
+never pushed: no console output, no `CIQ_LOG.YML`, and the captured device area
+stays 260x260 uniform black. Two runs, fresh and existing prefix, same result.
+
+- **Wine 6.0.3 on 22.04 is not a usable fallback.** No WineHQ repository was
+  added: the target is the native driver, and re-validating a corpus we intend
+  to retire is cost without a payoff. If native later fails the corpus for a
+  driver reason, WineHQ's `wine-stable` (pinned by version) is the revisit, with
+  that failure as the justification.
+- **An implicit `run` refuses it immediately.** Without `--driver`, `run` checks
+  `wine --version` and exits 2 with the measured description, pointing at
+  `--driver native`; this avoids spending the readiness budget on a known
+  failure. `--driver wine` explicitly is still allowed, because reproducing the
+  failure has to stay possible, and the driver appends the same diagnosis to the
+  `app-ready` error when it detects 6.0.x.
+- **`native` is the supported driver and is being verified.** Its window comes
+  up when the simulator runs in place (446x700 for fenix7 on this build), and
+  the steps below are the gate. The CLI default is still `wine` only because
+  native has not finished that gate; do not read the default as a
+  recommendation.
+
+`python -m e2e simulator-probe --driver native --prg <built.prg>` runs the menu
+experiment and the mode restarts in one go, in **your own container** (a restart
+disturbs a running suite); `--driver wine` is still accepted. The transition
+scenarios are run with `--driver native`:
 
 ```bash
 # The run prints `built <path>` for every PRG it compiles; the path is
 # artifacts/build/<device>/<digest>/openhab-garmin-<device>.prg.
-python -m e2e simulator-probe --prg artifacts/build/fenix7/<digest>/openhab-garmin-fenix7.prg \
-    --modes wifi,offline --night
+python -m e2e run extended/connection-ble-wifi --driver native \
+    --prg artifacts/build/fenix7/<digest>/openhab-garmin-fenix7.prg
 ```
 
-It does three things and prints the evidence for each:
-
-1. **Menu sweep** (`driver.probe_menus`): clicks along the menu bar row every
-   24 px, and after each click looks for a **new X window** (`xwininfo -root
-   -children`) and for a screen change (`compare -metric AE`). Every candidate
-   point is logged with its delta and any new window ids, plus a screenshot per
-   step; `artifacts/simulator-probe/menus/` holds them.
-1. **Restart in each start-up mode** (`driver.restart_in_mode`): stops the app
-   and simulator, rewrites the ini with the new `BleState`/`WifiState` (and
-   `nightMode`), relaunches and waits until the app is ready; it prints the last
-   `CONNECTION`/`VIEW`/`SITEMAP` lines as evidence.
-1. `--skip-restart` runs only the menu sweep.
-
-`restart_in_mode` is honest about what it proves, in the log line
-`restarting in mode 'wifi' (was 'ble') … this proves start-up mode, not a
-mid-run transition`.
+Under `--driver wine` each `connection-*` scenario is reported **skipped** with
+the reason that the driver cannot script the menu; it is never reported passed.
+A dry run reports the switch as skipped too.
 
 ### The compiled PRG lives under a per-build directory
 
@@ -671,31 +752,33 @@ a new directory rather than under a name an earlier run could reuse.
 The run prints `built <path>` for every PRG it compiles, so the exact path to
 pass to `--prg` is in the log rather than assumed.
 
-### The experiments and what each would settle
+### The experiment results
 
-| # | Experiment | Run | If it works | If it does not |
-| --- | --- | --- | --- | --- |
-| 1 | click the menu bar | `simulator-probe --skip-restart` | a popup window id and geometry in the report; screenshot in `artifacts/…/menus/` | the report says which points were clicked and that nothing changed |
-| 2 | drive a transition | after 1 opens a popup: screenshot the popup, then click `Simulation → Connection → Wi-Fi` and back | `E2E:CONNECTION;mode=…` changes **mid-run**, converting the waived entries into covered ones | menus open but do not act, or the popup is in-window and not scriptable |
-| 3 | native Linux simulator | the official Linux `simulator` from the same SDK, `xdotool` + `xwininfo` | GTK menus are ordinary X windows, so the driver would gain the capability under the Linux driver | Wine-only limitation becomes a Linux-only limitation, and the docs must name the driver |
-| 4 | restart fallback | `simulator-probe --modes wifi,offline --night` | start-up mode and night mode are asserted and documented as **start-up** coverage | a startup mode that does not reach the app is a driver bug to fix |
+| # | Experiment | Outcome |
+| --- | --- | --- |
+| 1 | click the menu bar | menus open: a click on `Settings` opens it, hovering `Connection Type` opens its submenu. Under Wine the popup is in-window and invisible to X; on Windows it is a separate `#32768` window |
+| 2 | drive a transition | implemented for the `native` driver from the measured menu model: mnemonic + arrows + `Return`, proven by a new `E2E:CONNECTION`. Under Wine the item cannot be selected deterministically, so the capability is not claimed there |
+| 3 | native Linux simulator | GTK menus are X windows, which is why the capability is native-only. Run `python -m e2e contract-test --driver native --prg <prg>` on the VM to exercise it |
+| 4 | restart fallback | start-up mode and night mode stay available through `restart_in_mode`, documented as **start-up** coverage |
 
-Nothing in this repository has been re-classified by these experiments yet: the
-waivers for `communication.transitions`, `communication.transition-indicators`,
-`communication.transition-data`, `lifecycle.connection-return` and
-`sitemap.theme` stay in place until an experiment proves the capability. When one
-does, the waiver is replaced by a scenario **and** the coverage entry names the
-driver that can do it (`wine` or `linux`), because a capability that exists only
-on one of them is not a suite-wide claim.
+The coverage consequence is recorded in `tests/config/scope.yaml`:
+`communication.transitions` and `communication.transition-data` are now covered
+by the three `connection-*` scenarios, and those scenarios are the only claim.
+`communication.transition-indicators` stays waived: the rendered indicator and
+the settings-menu value have no trace field, so the scenarios capture them and
+list the review in `manual_checks`. `sitemap.theme` stays waived (night mode is
+still start-up only), and `lifecycle.connection-return` stays waived for the
+error-view/latency part after a long outage.
 
 ### Start-up mode is not a transition
 
 - "The app **starts** in Wi-Fi" is covered by `restart_in_mode` and by the
   existing `mode: wifi` scenarios. It exercises the start-up branch.
 - "The app **transitions** to Wi-Fi while running" exercises the connection-mode
-  indicator, the Wi-Fi sync path and the sitemap update after the switch. Only
-  the simulator menus can produce it, and it stays waived until one of the
-  experiments above succeeds.
+  indicator, the Wi-Fi sync path and the sitemap update after the switch. It is
+  covered by `extended/connection-*` on the `native` driver, whose `connection`
+  step requires a new `E2E:CONNECTION` line; the wine fallback skips those
+  scenarios rather than pretending to run them.
 
 ## Window size is per device
 
@@ -1056,7 +1139,10 @@ manager it is a single colour and would silently satisfy a golden assertion.
 ## Failure modes
 
 Every failure names the stage, the timeout, and the next concrete step, so a log
-is enough to act on it.
+is enough to act on it. A dead simulator before its window is a **Wine/X state**
+failure, not an app failure, and it is what the native driver removes by
+construction: no prefix, no `wineserver`, and a lock sweep that runs before every
+start. It is recorded, not silently retried.
 
 | Message | Meaning | Next step |
 | --- | --- | --- |
@@ -1064,6 +1150,7 @@ is enough to act on it.
 | `a simulator was already running (window(s) …); stopped it` | a stray simulator was swept before start; the run continues | none, unless it repeats: check that nothing else starts a simulator |
 | `the simulator opened an error dialog` | the Wine prefix has no device definitions, or the simulator cannot start | `python -m e2e link-devices`, then check the prefix's `AppData/Roaming/Garmin/ConnectIQ/Devices` |
 | `simulator-window … no window titled 'CIQ Simulator' appeared` | the simulator process never produced a window | read `logs/simulator.log`; the device definitions are only one cause at this point |
+| `the simulator exited with code 3 before its window appeared` | observed on the guest in two runs (`localisation-settings-menu-fre` and one other). The app is not involved: the simulator process died before mapping a window, which points at a stale Wine/X state (prefix, `wineserver`, display) rather than the PRG. Not proven, and deliberately not retried automatically. | read `logs/simulator.log`; `wineserver -k`, then `xdpyinfo -display :99`; compare with a `--driver native` run, which has no Wine prefix and sweeps its own lock |
 | `device title … does not match` / `does not name a device` | **warning only**; the trace stream already proved the app is running | check `LastUsedDevice` in `simulator.ini` if results look wrong |
 | `monkeydo exited with code …` | wrong PRG or device name | read `logs/console.log` |
 | `app-ready … no console line` | the app started but produced no `E2E:` line | check the PRG is a debug build and the device wiring (`link-devices` is accurate here) |
@@ -1101,8 +1188,15 @@ The mounted SDK also ships a native build,
 same `monkeydo` push protocol, so it fits the existing driver shape. It was
 exercised end to end on 2026-11-26 in a disposable `ubuntu:22.04` container: it
 accepts input, loads the sitemap and **paints the text**, exactly as the Wine
-simulator does. Wine remains the driver because a second driver buys nothing
-today, not because the native build is unusable.
+simulator does.
+
+That earlier note said Wine would stay the driver because "a second driver buys
+nothing today". The menus ended that: under Wine the menu popups are drawn
+inside the window, while GTK menus are X windows, so the native build is the one
+that can change connection mode while the app runs. `native` is therefore the
+target driver, added as `--driver native`. `wine` remains the default until the
+native driver has passed the same corpus on the VM; every report and artifact
+directory names the driver, so a verdict is never ambiguous.
 
 ### Getting a window under Xvfb
 
@@ -1172,20 +1266,118 @@ native driver would have to sweep the lock, not just the process.
 Native input deserves to be stated on its own: the older story — "input is
 impossible on Linux" — was really "input is impossible **through Wine** with a
 select-first sequence". XTEST against a native GTK window is ordinary X input and
-is now measured working. Wine stays the driver, but if it regresses further the
-native build is a viable fallback for the input path: `press`, `screenshot` and
-the `monkeydo` event stream all have working primitives here, behind the same
-`SimulatorDriver` interface.
+is now measured working. Wine is still the default driver, but the native build
+has the same primitives: `press`, `screenshot` and the `monkeydo` event stream,
+behind the same `SimulatorDriver` interface, plus the menu capability Wine
+lacks.
+
+### What the native driver does
+
+`e2e/sim/native.py` drives `linux/bin/simulator` directly. It reuses the Wine
+driver's X11, monkeydo and instrumentation code (both push the app with
+`monkeydo` and take input through `xdotool`) and overrides only what differs:
+
+| Concern | Native behaviour |
+| --- | --- |
+| executable | `linux/bin/simulator` (or `bin/simulator`), made executable **in place**; never copied, because its resources are resolved relative to it (a lone copy asserts in `InitFromImage`) |
+| `simulator.ini` | `$HOME/.Garmin/ConnectIQ/simulator.ini`, same flat keys as Wine (`BleState`, `WifiState`, `Language`, `UseHttpsRequirements`) |
+| device definitions | `$HOME/.Garmin/ConnectIQ/Devices` (staged by `python -m e2e link-devices`) |
+| fonts | `$HOME/.Garmin/ConnectIQ/Fonts` (staged by `python -m e2e link-fonts`) |
+| single-instance lock | `$HOME/Sim-root`; a stale or zombie PID is signalled and the file removed before a start |
+| process environment | `DISPLAY`, `XDG_DATA_DIRS`, `GTK_THEME=Adwaita`, `GDK_BACKEND=x11` |
+| app data cleared | the `GARMIN/APPS/DATA`/`TEMP` leaves below the **measured** root `$TMPDIR/com.garmin.connectiq` (on the VM: `/tmp/com.garmin.connectiq`), and below `$HOME/.Garmin/ConnectIQ` for a build that keeps them there; each path is logged. `APPS/SETTINGS`, `GARMIN/Settings` and `LOGS` are never touched — the app initialises from the first two and the log is the crash evidence. The tree is the same shape as Wine's prefix tree, and `/tmp` survives a container restart (not a recreate) |
+| runtime log | `CIQ_LOG.YML` below the persistence root or `$HOME/.Garmin/ConnectIQ`, classified like the Wine one |
+| pointer guard | a native GTK top-level has no input child, so `xdotool getmouselocation` can report window 0 under a pointer that is inside it. For native the rectangle decides in that case; a point **outside** the window still fails, so the guard is not skipped and the blind-click pass it prevents cannot come back |
+| capture | `import -window <id>` returns **one black colour** for the native GTK window (measured: 1 colour against 203 in a root capture). `screenshot()` captures the root and crops the simulator window rectangle out of it, and refuses a single-colour result: a uniform capture cannot support a pixel verdict |
+| device canvas | **measured** after the app is up, not taken from `display.location` (that is art space, and the declared rectangle lands on window background). The detector finds the screen-sized region with the most non-background pixels and uses it for taps, declared hit areas and cropping; `E2E_NATIVE_SCREEN_RECT=x,y,width,height` pins it. The measured size must equal the device's declared screen, and a failure reports the window size, the background colour and the capture path |
+| launch sequence | the keydown/keyup **hold** is tried first: on the VM, plain XTEST key taps did nothing and the hold opened the app; declared hit areas remain as fallbacks |
+| language | the ini is read back after writing: `eng` must have no `Language` key and a requested code must have its numeric index, or the start fails instead of running in a stale language |
+| connection mode | `set_connection_mode()`: the menu key plan from `sim/menus.py`, verified by the engine from `E2E:CONNECTION` |
+
+The driver never claims that a menu action worked. It sends the keys, records
+the popup windows that appeared (X can see them natively) and returns that
+evidence; `_do_connection` in `e2e/engine.py` fails the step unless the app
+prints a new `E2E:CONNECTION;mode=<target>` after it.
+
+### The native driver gate on the VM
+
+The driver is written and unit-tested on a workstation without Linux; the VM
+runs are the verdict. At `a11848e` the contract passed `interface`, `prepare`,
+`start`, `wait_ready`, **`app-entry`**, `screenshot`, `events` and `stop` — the
+app runs on native for the first time, in a 446x700 window. The remaining
+failures exposed five bugs, all fixed since:
+
+1. **The pointer guard was Wine-shaped.** It assumed the pointer resolves to a
+   window with a client pid, which is true for Wine's several windows per
+   process. A native GTK top-level is one window with no input child, so
+   `xdotool getmouselocation` reported window 0 under a pointer that was inside
+   it, and every mouse press and tap was refused. For `native` the guard now
+   falls back to the window rectangle when the reported window is 0 or the root
+   and the point is inside; a point outside still fails, so the blind click the
+   guard prevents cannot come back.
+1. **The app-data clear missed the cache.** The native simulator keeps its tree
+   at `$TMPDIR/com.garmin.connectiq` (on the VM `/tmp/com.garmin.connectiq`),
+   not below `$HOME`, so `APPS/DATA` was never cleared and a relaunched app kept
+   reporting `unchanged`. `_app_data_dirs` is now rooted at the measured
+   location (with `$HOME/.Garmin/ConnectIQ` still searched), and the log names
+   every path it removes.
+1. **Every native screenshot was pure black.** `import -window <id>` returns one
+   colour for the GTK window (measured: 1 colour against 203 in a root capture),
+   so every `screen=0px` effect and every golden compared a black rectangle.
+   `screenshot()` now captures the root and crops the window out, and refuses a
+   single-colour capture instead of passing it.
+1. **The declared device rectangle was wrong for native.** `display.location`
+   is art space; the canvas is elsewhere, so taps and hit areas were mapped to
+   window background. The canvas is now **measured** from the capture (the
+   screen-sized region with the most non-background pixels), its size is
+   asserted against the device's declared screen, and `E2E_NATIVE_SCREEN_RECT`
+   is the pin when the detector cannot read a build.
+1. **The launch only worked on its third variant.** Plain XTEST key taps did
+   nothing and only the keydown/keyup hold opened the app, so native tries the
+   hold first.
+1. **A stale `Language` could leak.** The ini is now read back after writing:
+   `eng` must have no `Language` key and a requested code must have its index,
+   or the start fails instead of running in a previous run's language.
+
+Remaining gate, in order:
+
+1. `contract-test --driver native`: `input-delivery`, `press-effect`,
+   `press-sequence`, `app-data-reset`, `tap` and the mouse `press[...]` cases
+   must pass. `press[START]`, `press[UP]` and `press[DOWN]` report
+   `effect=none` because the app is already on `HomepageMenu` and a one-page
+   menu does not move; that skip is honest and expected.
+1. One full scenario (`smoke/launch-and-poll`) and one golden capture at
+   446x700, then the other two goldens, to prove the pipeline end to end.
+1. The menu plan: `extended/connection-ble-wifi` must show a new
+   `E2E:CONNECTION;mode=WIFI` and later `mode=BLE`. If the mnemonic/arrow plan
+   does not activate the item, the popup check and the failure message name the
+   step, and Wine stays the driver for this capability with that evidence
+   recorded here.
+1. `extended/connection-ble-offline` and `extended/connection-wifi-offline`.
+
+The three goldens are tied to the simulator build that captured them, and they
+were captured on Wine. They need re-capturing on the native build at 446x700 and
+review as **new baselines** (never an overwrite to make a run pass):
+
+- `tests/goldens/fenix7/homepage.png`
+- `tests/goldens/fenix7/unsupported-widget-error.png`
+- `tests/goldens/edge1060/homepage.png`
+
+Until that review, a native run that compares those goldens may differ for the
+simulator-build reason alone; say which driver produced a golden in the review
+notes rather than adjusting the baseline.
 
 ### Two traps when driving either simulator
 
-- **The device screen is scaled inside the window.** The 260×260 device screen is
-  drawn at **309×309**: at `(53,147)` in a native 446×607 window and at
-  `(53,141)` in a 409×600 Wine window. `display.location` is therefore _not_ 1:1
-  with the window in this setup, and the position is not a simple centre fit —
-  which is exactly why a golden is the whole window and no rectangle is derived.
-  `E2E_WINE_SCREEN_RECT` still pins a rectangle for input mapping; it is not used
-  to cut a golden.
+- **The device canvas is not at `display.location`, and its scale differs per
+  build.** The #402 spike measured the 260×260 screen drawn at 309×309 at
+  `(53,147)` in a 446×607 native window; the current native build is 446×700 and
+  the declared rectangle lands on window background, so the canvas is
+  **measured** at every native start (see "The native driver does") and its size
+  must equal the device's declared screen. Wine maps `display.location` 1:1 in
+  its 409×600 window and `E2E_WINE_SCREEN_RECT` pins a different rectangle for
+  input; native uses `E2E_NATIVE_SCREEN_RECT` for the same purpose. A golden is
+  the whole window, so no rectangle is used to cut one.
 - **Under Wine the device window only exists after the push.** `simulator.exe`
   starts with just the 342×666 control window; the device window appears when
   `monkeydo` pushes the app. Searching for it before the push returns nothing,
@@ -1250,18 +1442,24 @@ Compose mounts the pack read-only at `/opt/ciq-fonts` from
 
 ### Verdict and cost
 
-Wine stays the driver and the default: a second driver would buy input, which
-already works, and a rasteriser that is pixel-identical to the one we already
-have. What did change is the **visual tier**: goldens can now be captured on the
-guest from either host, so "goldens must come from Windows" is retired.
+The native driver is written and opt-in (`--driver native`); it is not the
+default yet. Wine stays the default until the native driver has passed the
+contract and the same corpus on the VM, because a driver that has not launched
+an app is not evidence — and on this image Wine cannot launch one at all
+(measured, see "Driver status on the 22.04 image"). The image cost is now paid
+rather than deferred: the runner base moved to `ubuntu:22.04` so the native
+driver can run, and the move changed Wine from 9.0 to 6.0.3, which turned out to
+be unusable for the app push. Dropping Wine
+entirely would still remove the `i386` architecture and
+`wine/wine32:i386/wine64` — roughly the bulk of the 2.8 GB image — leaving the
+22.04 base, the GTK/WebKit packages and the same X tools. `monkeyc`, the unit
+tests, the fixtures and the compose pins are unaffected by that later step;
+only the `wine` driver would need a Wine image of its own.
 
-The native build remains the fallback for the input path if Wine regresses, and
-the path to dropping Wine entirely. If a `linux` driver is written, the image
-cost is concrete: base `ubuntu:22.04`, drop the `i386` architecture and
-`wine/wine32:i386/wine64` (roughly the bulk of the 2.8 GB runner image), and add
-the packages above. `monkeyc`, the unit tests, the fixtures and the compose pins
-are unaffected by the base change; only the `wine` driver would need a Wine image
-of its own.
+What did change for the visual tier: goldens can be captured from either host,
+so "goldens must come from Windows" is retired — but the three committed goldens
+were captured on Wine and must be re-captured on native and reviewed before a
+native run can claim them (see "The native driver gate on the VM").
 
 ## Stopping the simulator
 
@@ -1318,8 +1516,40 @@ index 7) and the input limitation below.
    The `wait_ready` window-fit check already refuses a window that cannot contain
    the declared rectangle.
 
+### The native driver and the connection transition
+
+These were written and unit-tested without a Linux host, so none of them has
+executed yet. They are the gate before `native` replaces `wine`, in this order:
+
+1. `python -m e2e contract-test --driver native --prg <prg>` — every case must
+   pass. `prepare` prints the executable it chose (a copy when the SDK mount is
+   not executable), the `Sim-root` sweep and the device definition.
+1. `python -m e2e run smoke/launch-and-poll --driver native` — launch, press and
+   screenshot on one scenario.
+1. Re-capture one golden (`fenix7/homepage.png`) on native with
+   `run smoke/launch-and-poll --driver native --update-goldens`, review it, and
+   repeat for the other two. The current files were captured on Wine; do not
+   overwrite them to make a run pass.
+1. `python -m e2e run extended/connection-ble-wifi --driver native`. The pass
+   condition is a **new** `E2E:CONNECTION;mode=WIFI` and later `mode=BLE`. If the
+   mnemonic/arrow plan does not open or activate the item, the step fails with
+   the keys and popup ids it saw; record that here and keep Wine for this
+   capability rather than weakening the assertion.
+1. `extended/connection-ble-offline` and `extended/connection-wifi-offline`.
+   Watch for the offline `SELECT;result=offline` + `TOAST;id=offline-command`
+   pair and for polling that does not resume after the switch.
+
+`python -m e2e run --all --dry-run` covers the wiring of all three without a
+simulator; it reports the switch as skipped, never passed.
+
 ## Fallback if Wine cannot drive the simulator menus
 
-From #140: restart-based mode transitions with reduced coverage. `start()`
-already takes the mode per launch, so a scenario can re-launch into another mode
-without a scenario-format change; only the runtime menu path remains unproven.
+The connection-mode capability is implemented on the **native** driver, not on
+Wine: under Wine the popups are in-window and the item cannot be selected
+deterministically (see "The menu bar is real, and where its popups are drawn
+decides the driver"). If the native menu plan turns out not to activate the item
+on the VM, the fallback is the one from #140: restart-based mode transitions with
+reduced coverage. `start()` already takes the mode per launch, so a scenario can
+re-launch into another mode without a scenario-format change — but that proves
+start-up mode, and the transition scenarios must then be reported skipped with
+that reason rather than made green.

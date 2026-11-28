@@ -29,9 +29,16 @@ dev_digest = sha256:13e6f9d6c998167d33dea93bc7579150af1200c5ad60c5d5cb6d785c7975
 
 # Base images of the images this repository builds. Pinned for the same reason:
 # a silent base-image change is indistinguishable from an app regression.
+#
+# The runner base is 22.04 because the native (GTK) simulator links
+# libwebkit2gtk-4.0, which Ubuntu 24.04 dropped. It carries both drivers'
+# packages: Wine for the fallback and the GTK/WebKit stack for `--driver native`.
+# Moving the base also moved Wine from Ubuntu 24.04's 9.0 to 22.04's 6.0.3; that
+# is a named risk in tests/docs/simulator-driver.md, not a silent change.
+# Resolved on 2026-11-28.
 runner_base_repository = ubuntu
-runner_base_tag = 24.04
-runner_base_digest = sha256:9c7f200c07e3d4a03e7249d2c16bf66a51120fb876aa2242cf31451412543289
+runner_base_tag = 22.04
+runner_base_digest = sha256:b000e69a50ff940390233025e7a337fb8469b509e2334fa4d018ac30f3e18cdb
 
 shim_base_repository = python
 shim_base_tag = 3.12-slim-bookworm

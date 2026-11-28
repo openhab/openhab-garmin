@@ -261,10 +261,13 @@ def _step_stop(raw: Mapping[str, Any], where: str) -> Dict[str, Any]:
 
 
 def _step_wait(raw: Mapping[str, Any], where: str) -> Dict[str, Any]:
-    _reject_unknown(raw, {"action", "ms"}, where)
+    _reject_unknown(raw, {"action", "ms", "description"}, where)
     if "ms" not in raw:
         raise ScenarioError(f"{where}: 'ms' is required")
-    return {"ms": _int(raw["ms"], f"{where}.ms", 1, 600_000)}
+    params: Dict[str, Any] = {"ms": _int(raw["ms"], f"{where}.ms", 1, 600_000)}
+    if "description" in raw:
+        params["description"] = _string(raw["description"], f"{where}.description")
+    return params
 
 
 def _step_reset_shim(raw: Mapping[str, Any], where: str) -> Dict[str, Any]:
@@ -405,6 +408,30 @@ def _step_tap(raw: Mapping[str, Any], where: str) -> Dict[str, Any]:
         "y": _int(raw["y"], f"{where}.y", 0),
         "count": _int(raw.get("count", 1), f"{where}.count", 1, 100),
     }
+
+
+def _step_connection(raw: Mapping[str, Any], where: str) -> Dict[str, Any]:
+    """Change the simulator's connection mode while the app is running.
+
+    The step is proven by a **new** ``E2E:CONNECTION;mode=<target>`` line from
+    the app after the action, never by the menu click: the engine fails the step
+    when the app does not report the transition. A mode equal to the current one
+    is rejected by the preflight, because the app only emits the event on a
+    change, so such a step could only ever fail (or, worse, match the start-up
+    line).
+    """
+    _reject_unknown(raw, {"action", "mode", "timeout_ms", "description"}, where)
+    if "mode" not in raw:
+        raise ScenarioError(f"{where}: 'mode' is required")
+    params: Dict[str, Any] = {
+        "mode": _enum(raw["mode"], f"{where}.mode", MODES),
+    }
+    params["timeout_ms"] = _int(
+        raw.get("timeout_ms", 60_000), f"{where}.timeout_ms", 1_000, 600_000
+    )
+    if "description" in raw:
+        params["description"] = _string(raw["description"], f"{where}.description")
+    return params
 
 
 def _step_screenshot(raw: Mapping[str, Any], where: str) -> Dict[str, Any]:
@@ -630,6 +657,7 @@ _STEP_HANDLERS = {
     "wait_for_request": _step_wait_for_request,
     "press": _step_press,
     "tap": _step_tap,
+    "connection": _step_connection,
     "screenshot": _step_screenshot,
     "command": _step_command,
     "wait_for_event": _step_wait_for_event,

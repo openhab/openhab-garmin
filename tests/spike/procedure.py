@@ -28,7 +28,9 @@ EXIT_INCOMPLETE = 1
 EXIT_PREREQ = 2
 
 DEFAULT_IMAGE = "openhab-garmin-e2e-runner:spike"
-DEFAULT_BASE_IMAGE = "ubuntu:24.04"
+#: The spike reproduces the runner image, so it follows the runner base: 22.04,
+#: which still ships the `webkit2gtk-4.0` the native simulator links.
+DEFAULT_BASE_IMAGE = "ubuntu:22.04"
 CONTAINER_REPO = "/work"
 CONTAINER_SDK = "/opt/ciq-sdk"
 CONTAINER_ARTIFACTS = "/spike-artifacts"

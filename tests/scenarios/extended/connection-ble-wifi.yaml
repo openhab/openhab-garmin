@@ -1,0 +1,118 @@
+﻿# Extended: BLE <-> Wi-Fi while the app runs.
+#
+# This is the first scenario that changes the communication mode *mid-run*:
+# `mode: ble` only sets how the app starts. The switch is made through the
+# simulator's own Settings -> Connection Type menu and is accepted only when the
+# app prints a NEW `E2E:CONNECTION;mode=WIFI` (and later `BLE`) after it. A menu
+# action that returns success is not evidence (#421), and the start-up
+# `CONNECTION` line is explicitly excluded: the connection step only looks at
+# events after the action.
+#
+# It needs a driver that can script the simulator menu: `--driver native`. Under
+# the `wine` fallback the menu popups are drawn inside the simulator window, so
+# there is no X-visible menu to drive; the scenario is reported **skipped** with
+# that reason, never passed.
+#
+# The painted mode indicator and the settings-menu "Connection mode" value are
+# visual: the harness has no text assertion, so they are captured for review and
+# listed in manual_checks. The mode change that feeds them is asserted.
+
+name: connection-ble-wifi
+description: BLE to Wi-Fi and back while the app runs, proven by the app's trace.
+tier: protocol
+suite: extended
+device: fenix7
+mode: ble
+fixture: fast-polling
+openhab:
+  profile: stable
+  sitemap: garmin_e2e
+  items:
+    E2E_Temperature: "18.5"
+language: eng
+timeout_s: 600
+
+covers:
+  - communication.transitions
+  - communication.transition-data
+manual_checks:
+  - >-
+    The connection-mode indicator and the settings-menu "Connection mode" value
+    after each switch are review-only: no trace field carries the rendered
+    indicator, so compare `ble-homepage`, `wifi-homepage` and
+    `ble-homepage-again` by eye.
+  - >-
+    The cached-sitemap claim is asserted as "no sitemap request after the
+    switch" plus "the sitemap view is still current"; whether the pixels came
+    from storage or memory is not distinguishable from the outside.
+
+steps:
+  - action: launch
+
+  - action: wait_for_request
+    description: The first sitemap request over BLE.
+    method: GET
+    path_prefix: /rest/sitemaps/garmin_e2e
+    min_count: 1
+    timeout_ms: 60000
+
+  - action: wait_for_view
+    description: The homepage is on screen before the first switch.
+    category: sitemap
+    view: HomepageMenu
+    timeout_ms: 60000
+
+  - action: screenshot
+    name: ble-homepage
+
+  # BLE -> Wi-Fi. The app must report WIFI; WIFI_CHECK_PENDING may appear first
+  # and is not a destination.
+  - action: connection
+    mode: wifi
+    timeout_ms: 120000
+    description: The simulator's menu switches BLE to Wi-Fi and the app reports it.
+
+  - action: wait
+    ms: 2000
+
+  - action: screenshot
+    name: wifi-homepage
+
+  # Count only what happens after the switch: a request already in flight when
+  # the mode changed must not fail the "does not poll" assertion.
+  - action: reset_shim
+
+  - action: wait
+    description: Several 250 ms poll intervals, so a BLE poll would be visible.
+    ms: 6000
+
+  - action: assert
+    description: No sitemap poll is made while the app is in Wi-Fi mode.
+    shim_requests:
+      method: GET
+      path_prefix: /rest/sitemaps/garmin_e2e
+      max_count: 0
+
+  - action: assert
+    description: The cached sitemap is still on screen, not an error view.
+    no_error_view: true
+
+  # Wi-Fi -> BLE. Polling must resume on its own after the switch.
+  - action: connection
+    mode: ble
+    timeout_ms: 120000
+    description: The simulator's menu switches Wi-Fi back to BLE and the app reports it.
+
+  - action: wait_for_request
+    description: Polling resumes over BLE.
+    method: GET
+    path_prefix: /rest/sitemaps/garmin_e2e
+    min_count: 2
+    timeout_ms: 60000
+
+  - action: screenshot
+    name: ble-homepage-again
+
+  - action: assert
+    description: No full-screen error appeared during either transition.
+    never_error_view: true

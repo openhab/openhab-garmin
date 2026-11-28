@@ -686,10 +686,13 @@ capture set, the policy is deliberately narrow:
 
 - A golden exists only for a screen the VM can produce without input: the
   glance, the configuration-error view, or another launch-time screen.
-- The golden is per **device**, **language**, **build profile** and **simulator
-  version**. The filename or the metadata records all four. A golden from
-  `6.0.3` says nothing about `6.0.4`, and a golden from `fenix7` says nothing
-  about `edge540`.
+- The golden is per **device**, **language**, **build profile**, **simulator
+  version** and **driver**. The filename or the metadata records them. A golden
+  from `6.0.3` says nothing about `6.0.4`, a golden from `fenix7` says nothing
+  about `edge540`, and a whole-window golden from Wine says nothing about the
+  native build: the device screen is pixel-identical, but the window chrome is
+  not (409×600 under Wine and 446×700 native for fenix7 on the current build;
+  446×607 in the #402 spike).
 - The first capture is taken with `--update-goldens`, reviewed by a human, and
   committed. The review record names the reviewer, the simulator version and
   the string bundle version.

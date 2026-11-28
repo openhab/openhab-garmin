@@ -5,11 +5,17 @@ from __future__ import annotations
 from typing import Optional
 
 from ..sdk import SdkLayout
-from .base import Button, DriverError, RUNNABLE_LANGUAGES, SimulatorDriver
+from .base import Button, CONNECTION_TRACE_MODES, DriverError, RUNNABLE_LANGUAGES, SimulatorDriver
+from .native import NativeSimulatorDriver
 from .null import NullDriver
 from .wine import WineSimulatorDriver
 
-DRIVER_NAMES = ("null", "wine")
+#: Drivers that can be selected with ``--driver``. ``wine`` is still the default
+#: for ``run``: it is the driver the corpus was recorded on, and ``native`` must
+#: pass the same corpus on the VM before it takes over (see
+#: ``tests/docs/simulator-driver.md``). ``native`` is the target driver and the
+#: only one that can change the connection mode while the app runs.
+DRIVER_NAMES = ("null", "wine", "native")
 
 
 def create_driver(
@@ -23,8 +29,9 @@ def create_driver(
 ) -> SimulatorDriver:
     """Instantiate a driver by name.
 
-    ``null`` is the dry-run driver. ``wine`` needs a validated SDK layout and a
-    real PRG before it can launch anything.
+    ``null`` is the dry-run driver. ``wine`` and ``native`` need a validated SDK
+    layout and a real PRG before they can launch anything; ``native`` also needs
+    the Linux SDK's ``linux/bin/simulator``.
     """
     if name == "null":
         return NullDriver(log=log)
@@ -38,13 +45,24 @@ def create_driver(
             artifact_dir=artifact_dir,
             log=log,
         )
+    if name == "native":
+        if layout is None:
+            raise DriverError("the 'native' driver needs a validated Connect IQ SDK layout")
+        return NativeSimulatorDriver(
+            layout,
+            display=display,
+            artifact_dir=artifact_dir,
+            log=log,
+        )
     raise DriverError(f"unknown driver {name!r}; known drivers: {', '.join(DRIVER_NAMES)}")
 
 
 __all__ = [
     "Button",
+    "CONNECTION_TRACE_MODES",
     "DRIVER_NAMES",
     "DriverError",
+    "NativeSimulatorDriver",
     "NullDriver",
     "RUNNABLE_LANGUAGES",
     "SimulatorDriver",

@@ -1,0 +1,129 @@
+﻿# Extended: Wi-Fi <-> Offline while the app runs.
+#
+# Starts in Wi-Fi (the start-up ini keys, as `wifi-mode` does) and then removes
+# the network through the simulator's menu, so the app must report OFFLINE and
+# keep serving the sitemap it already has; restoring Wi-Fi must return the app
+# to WIFI without a restart. Neither direction may start polling: Wi-Fi and
+# offline both render from the cached sitemap.
+#
+# Needs `--driver native` (see connection-ble-wifi.yaml); skipped with a reason
+# under the wine fallback.
+
+name: connection-wifi-offline
+description: Wi-Fi to offline and back while the app runs, without polling in either state.
+tier: protocol
+suite: extended
+device: fenix7
+mode: wifi
+fixture: fast-polling
+openhab:
+  profile: stable
+  sitemap: garmin_e2e
+  items:
+    E2E_Temperature: "18.5"
+language: eng
+timeout_s: 600
+
+covers:
+  - communication.transitions
+  - communication.transition-data
+manual_checks:
+  - >-
+    The connection-mode indicator and the settings-menu "Connection mode" value
+    after each switch are review-only; compare the captured screens by eye.
+  - >-
+    The Wi-Fi-only behaviour beyond the mode change (automatic start-up sync, the
+    manual "update sitemap" action, the last-update timestamp, interrupt or
+    failure during sync, and the lower -402 response limit) is not exercised
+    here; see communication.wifi-sync.
+
+steps:
+  - action: launch
+
+  - action: wait_for_event
+    description: Wi-Fi mode is reported by the app at start.
+    event: CONNECTION
+    fields:
+      mode: WIFI
+    timeout_ms: 90000
+
+  - action: wait_for_view
+    description: The sitemap is on screen in Wi-Fi mode.
+    category: sitemap
+    view: HomepageMenu
+    timeout_ms: 60000
+
+  - action: screenshot
+    name: wifi-homepage
+
+  # Wi-Fi does not poll: count only what happens after the sitemap is up.
+  - action: reset_shim
+
+  - action: wait
+    description: Several 250 ms poll intervals, so a poll would be visible.
+    ms: 6000
+
+  - action: assert
+    description: No sitemap poll is made while in Wi-Fi mode.
+    shim_requests:
+      method: GET
+      path_prefix: /rest/sitemaps/garmin_e2e
+      max_count: 0
+
+  # Wi-Fi -> offline.
+  - action: connection
+    mode: offline
+    timeout_ms: 120000
+    description: The simulator's menu removes the network and the app reports offline.
+
+  - action: wait
+    ms: 2000
+
+  - action: screenshot
+    name: offline-homepage
+
+  - action: reset_shim
+
+  - action: wait
+    description: Several 250 ms poll intervals while offline.
+    ms: 6000
+
+  - action: assert
+    description: No sitemap poll is made while offline.
+    shim_requests:
+      method: GET
+      path_prefix: /rest/sitemaps/garmin_e2e
+      max_count: 0
+
+  - action: assert
+    description: The cached sitemap is still on screen, not an error view.
+    no_error_view: true
+
+  # Offline -> Wi-Fi.
+  - action: connection
+    mode: wifi
+    timeout_ms: 120000
+    description: The simulator's menu restores Wi-Fi and the app reports it.
+
+  - action: wait
+    ms: 2000
+
+  - action: screenshot
+    name: wifi-homepage-again
+
+  - action: reset_shim
+
+  - action: wait
+    description: Wi-Fi must still not poll after returning from offline.
+    ms: 6000
+
+  - action: assert
+    description: Returning to Wi-Fi does not start polling either.
+    shim_requests:
+      method: GET
+      path_prefix: /rest/sitemaps/garmin_e2e
+      max_count: 0
+
+  - action: assert
+    description: No full-screen error appeared during either transition.
+    never_error_view: true

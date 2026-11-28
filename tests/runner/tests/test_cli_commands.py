@@ -291,3 +291,23 @@ def test_run_profile_mismatch_fails_with_the_served_profile_and_command(
     assert "COMPOSE_PROFILES=dev" in captured.err
     assert "restart openhab-dev" in captured.err
 
+
+def test_an_implicit_wine_run_is_refused_on_a_wine_6_image(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The 22.04 image's Wine cannot push the app; name native immediately.
+
+    Without this, `run` without --driver spends the full readiness budget on a
+    failure the image already knows about. An explicit --driver wine is still
+    allowed, because reproducing the failure has to stay possible.
+    """
+    monkeypatch.setattr(cli, "wine_version", lambda: "wine-6.0.3 (Ubuntu 6.0.3~repack-1)")
+
+    code = cli.main(["run", "smoke/launch-and-poll"])
+
+    captured = capsys.readouterr()
+    assert code == 2
+    assert "cannot push the app" in captured.err
+    assert "--driver native" in captured.err
+    assert "device area stays black" in captured.err
+
