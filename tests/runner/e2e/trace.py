@@ -15,6 +15,7 @@ the documented order::
     E2E:COMMAND;result=<success|error>;code=<code|->;item=<item>;value=<command>
     E2E:INPUT;button=<select|back|next-page|previous-page>;view=<name>;depth=<n>
     E2E:SELECT;kind=<element type>;result=<pushed|empty-page|page-not-ready|no-action|offline|command|settings>;depth=<n>
+    E2E:FOCUS;view=<name>;depth=<n>;index=<n>;kind=<element type>;label=<label>;source=<platform|baseline>
     E2E:ERROR;kind=<temporary|critical|fatal>;id=<id>;code=<code|->;source=<sitemap|command|ui>
     E2E:TOAST;id=<id>
     E2E:ERRORVIEW;id=<id>;code=<code|->
@@ -22,8 +23,31 @@ the documented order::
 
 ``code`` is an HTTP status, an SDK error code (which may be negative, or
 carry a prefix such as ``S:-104`` or ``UI:CONFIG``), or ``-``. ``item`` and
-``value`` in ``COMMAND`` are percent-encoded (space, ``|``, ``%``, CR, LF), so
-the line format cannot be broken by a value.
+``value`` in ``COMMAND``, and ``kind`` and ``label`` in ``FOCUS``, are
+percent-encoded (space, ``|``, ``%``, ``;``, CR, LF), so the line format cannot
+be broken by a value.
+
+``FOCUS`` is emitted when the focused menu entry changes: after the highlight
+moved, and for the entry that becomes focused when a page is pushed or popped.
+A repeat of the same ``(view, depth, index, kind, label, source)`` is suppressed,
+so a polling app's repaints do not flood the console. Scrolling between entries
+happens inside ``Menu2`` and never reaches the input delegate, so this is the
+only event that names the row a press landed on, and it is what lets a scenario
+address an element by label instead of by a hard-coded press count.
+``focusTraceKind`` reports the sitemap element type (the same value
+``SELECT.kind`` reports) or ``Settings``/``Loading``/``MenuItem`` for the
+entries the app adds itself; ``label`` carries the sitemap label and is empty
+for those entries, because the trace never carries translated chrome.
+
+``source`` is the provenance of the position, and it is load-bearing:
+
+- ``platform``: the entry reported itself as focused. This is evidence, and it
+  is the default for an ``assert.focus`` condition.
+- ``baseline``: the platform reported no focused entry at all (``isFocused()`` is
+  faulty on some Edge devices, and is unset for the first frame after a push),
+  so the entry the native menu focuses when a page is shown was assumed. It is a
+  starting point for navigation - the step re-checks after every press - and
+  never evidence that the highlight is on that entry.
 
 Rules this parser follows, so the harness does not break when the app adds
 fields or events:
@@ -67,6 +91,7 @@ EVENT_FIELDS: Mapping[str, tuple] = MappingProxyType(
         "COMMAND": ("result", "code", "item", "value"),
         "INPUT": ("button", "view", "depth"),
         "SELECT": ("kind", "result", "depth"),
+        "FOCUS": ("view", "depth", "index", "kind", "label", "source"),
         "ERROR": ("kind", "id", "code", "source"),
         "TOAST": ("id",),
         "ERRORVIEW": ("id", "code"),
@@ -328,6 +353,63 @@ class TraceLog:
     def of_event(self, name: str) -> List[TraceEvent]:
         """Every event with this name, oldest first."""
         return [event for event in self._events if event.event == name]
+
+    def current_focus_event(self, view: Optional[str] = None) -> Optional[TraceEvent]:
+        """The newest ``FOCUS`` event for the view that is on screen now.
+
+        ``FOCUS`` is emitted only when the focused entry changes, so the newest
+        line describes where the highlight is now. Only lines emitted after the
+        newest ``VIEW`` count, and only when that view is ``view``: a menu can be
+        shown more than once (the homepage after every ``BACK``), and a line from
+        an earlier appearance must not be read as the current focus. When the
+        newest view is something else, nothing is known about this menu, and
+        callers must treat that as "wait", never as a match.
+        """
+        events = self.focus_events(view)
+        return events[-1] if events else None
+
+    def focus_events(self, view: Optional[str] = None) -> List[TraceEvent]:
+        """``FOCUS`` events that describe the focus of the current view.
+
+        Scoped to the newest ``VIEW`` so that a page which is shown again does
+        not inherit the focus it had last time. With ``view`` given, an empty
+        list also means "that menu is not the one on screen", which is why a
+        navigation step waits instead of pressing on a stale row.
+        """
+        newest_view: Optional[TraceEvent] = None
+        mark = -1
+        for index, event in enumerate(self._events):
+            if event.event == "VIEW":
+                newest_view = event
+                mark = index
+
+        if newest_view is not None:
+            if view is not None and newest_view.get("view") != view:
+                return []
+            candidates = [
+                event
+                for index, event in enumerate(self._events)
+                if index > mark
+            ]
+        else:
+            # No VIEW line yet: nothing to scope against, so every line counts.
+            candidates = list(self._events)
+
+        return [
+            event
+            for event in candidates
+            if event.event == "FOCUS"
+            and (view is None or event.get("view") == view)
+        ]
+
+    def focus_history(self, limit: int = 12) -> List[str]:
+        """The rows the highlight passed through, oldest first.
+
+        Each entry is a ``FOCUS`` line, so a failed navigation names the
+        elements that were actually focused instead of only the one that was
+        expected. The last ``limit`` lines are returned.
+        """
+        return [event.describe() for event in self.of_event("FOCUS")[-limit:]]
 
     def failure_report(self, match: Optional[EventMatch] = None, samples: int = 3) -> str:
         """Why a wait failed, without losing the event that explains it.

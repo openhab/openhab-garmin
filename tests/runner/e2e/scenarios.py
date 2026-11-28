@@ -82,9 +82,23 @@ OPENHAB_PROFILES = ("stable", "dev")
 BUTTONS = ("START", "UP", "DOWN", "ENTER", "BACK", "MENU")
 COMMAND_TRANSPORTS = ("rest", "shim")
 #: What a ``press`` may require: ``input`` (the app reported the press through
-#: an INPUT/SELECT/COMMAND event), ``effect`` (that, or a screen change from a
-#: settled baseline) or ``none`` (nothing at all). Unset means unmeasured.
+#: an INPUT/SELECT/COMMAND/FOCUS event), ``effect`` (that, or a screen change
+#: from a settled baseline) or ``none`` (nothing at all). Unset means unmeasured.
 PRESS_EXPECTATIONS = ("input", "effect", "none")
+
+#: Buttons a ``focus`` step may re-issue while it scrolls. Only keys that move
+#: the highlight are allowed: a bounded retry must never send ENTER on a row the
+#: harness has not observed, because a select can trigger a command.
+FOCUS_SCROLL_BUTTONS = ("DOWN", "UP")
+
+#: Fields a ``focus`` step and an ``assert.focus`` condition may match.
+FOCUS_FIELDS = ("view", "kind", "label", "index", "source")
+
+#: Provenance of a FOCUS position. ``platform`` means the entry reported itself
+#: as focused; ``baseline`` means the platform reported nothing and the first
+#: entry was assumed. Only ``platform`` is evidence a scenario may assert on,
+#: which is why ``assert.focus`` defaults to it.
+FOCUS_SOURCES = ("platform", "baseline")
 
 _SLUG = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 _SCREENSHOT_NAME = re.compile(r"^[a-z0-9]+(?:[-_][a-z0-9]+)*$")
@@ -395,6 +409,49 @@ def _step_press(raw: Mapping[str, Any], where: str) -> Dict[str, Any]:
     return params
 
 
+def _focus_fields(raw: Mapping[str, Any], where: str) -> Dict[str, str]:
+    """Validate the element-addressable fields a FOCUS event carries."""
+    fields: Dict[str, str] = {}
+    for key in ("view", "kind", "label"):
+        if key in raw:
+            fields[key] = _match_text(raw[key], f"{where}.{key}")
+    if "index" in raw:
+        # FOCUS.index is a decimal position in the menu, counted from 0.
+        fields["index"] = str(_int(raw["index"], f"{where}.index", 0))
+    if "source" in raw:
+        fields["source"] = _enum(raw["source"], f"{where}.source", FOCUS_SOURCES)
+    return fields
+
+
+def _step_focus(raw: Mapping[str, Any], where: str) -> Dict[str, Any]:
+    """Validate a ``focus`` step: scroll until the named element is focused.
+
+    The step addresses an element by what the app reports as focused
+    (``E2E:FOCUS``), so it is independent of how many rows a device shows at
+    once. It presses only ``DOWN`` or ``UP``, only after it has seen which row is
+    focused, and it never presses ENTER: the next step decides what to do with
+    the row. That is the difference between this and a bounded "press until the
+    view is right" retry, which would select the rows in between.
+    """
+    _reject_unknown(raw, {"action", "description", "view", "kind", "label", "index",
+                          "source", "button", "max_presses", "timeout_ms"}, where)
+    params: Dict[str, Any] = _focus_fields(raw, where)
+    if not any(key in params for key in ("kind", "label", "index")):
+        raise ScenarioError(
+            f"{where}: needs 'label', 'kind' or 'index' to say which element to focus"
+        )
+    params["button"] = _enum(
+        raw.get("button", "DOWN"), f"{where}.button", FOCUS_SCROLL_BUTTONS
+    )
+    params["max_presses"] = _int(raw.get("max_presses", 5), f"{where}.max_presses", 0, 20)
+    params["timeout_ms"] = _int(
+        raw.get("timeout_ms", 3000), f"{where}.timeout_ms", 100, 60_000
+    )
+    if "description" in raw:
+        params["description"] = _string(raw["description"], f"{where}.description")
+    return params
+
+
 def _step_tap(raw: Mapping[str, Any], where: str) -> Dict[str, Any]:
     _reject_unknown(raw, {"action", "x", "y", "count"}, where)
     for key in ("x", "y"):
@@ -491,10 +548,26 @@ def _step_wait_for_event(raw: Mapping[str, Any], where: str) -> Dict[str, Any]:
 
 def _assertion_params(raw: Mapping[str, Any], where: str) -> Dict[str, Any]:
     _reject_unknown(raw, {"action", "description", "shim_requests", "golden",
-                          "no_error_view", "never_error_view"}, where)
+                          "focus", "no_error_view", "never_error_view"}, where)
     params: Dict[str, Any] = {}
     if "description" in raw:
         params["description"] = _string(raw["description"], f"{where}.description")
+
+    if "focus" in raw:
+        spec_where = f"{where}.focus"
+        spec = _require_mapping(raw["focus"], spec_where)
+        _reject_unknown(spec, set(FOCUS_FIELDS), spec_where)
+        fields = _focus_fields(spec, spec_where)
+        if not fields:
+            raise ScenarioError(
+                f"{spec_where}: needs 'view', 'kind', 'label' or 'index' to say "
+                "which element must be focused"
+            )
+        # A baseline is an assumption, not an observation: an assertion must not
+        # pass on a position the device never reported. A scenario that really
+        # wants to prove the baseline may still ask for it explicitly.
+        fields.setdefault("source", "platform")
+        params["focus"] = fields
 
     if "shim_requests" in raw:
         spec_where = f"{where}.shim_requests"
@@ -588,9 +661,9 @@ def _assertion_params(raw: Mapping[str, Any], where: str) -> Dict[str, Any]:
         params["never_error_view"] = True
 
     if not any(key in params for key in
-               ("shim_requests", "golden", "no_error_view", "never_error_view")):
+               ("shim_requests", "golden", "focus", "no_error_view", "never_error_view")):
         raise ScenarioError(
-            f"{where}: an assert step needs 'shim_requests', 'golden', "
+            f"{where}: an assert step needs 'shim_requests', 'golden', 'focus', "
             "'no_error_view' or 'never_error_view'"
         )
     return params
@@ -634,6 +707,7 @@ _STEP_HANDLERS = {
     "command": _step_command,
     "wait_for_event": _step_wait_for_event,
     "wait_for_view": _step_wait_for_view,
+    "focus": _step_focus,
     "assert": _assertion_params,
 }
 
@@ -709,7 +783,11 @@ class Scenario:
     @property
     def requires_trace_events(self) -> bool:
         """True when the scenario asserts on app console events."""
-        return any(step.action == "wait_for_event" for step in self.steps)
+        return any(
+            step.action in ("wait_for_event", "focus")
+            or (step.action == "assert" and "focus" in step.params)
+            for step in self.steps
+        )
 
     @property
     def shim_script(self) -> Dict[str, Any]:

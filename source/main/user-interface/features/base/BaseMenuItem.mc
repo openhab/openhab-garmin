@@ -64,9 +64,106 @@ class BaseMenuItem extends CustomMenuItem {
 
             onUpdate( dc );
 
+            traceFocus();
+
         } catch( ex ) {
             ExceptionHandler.handleBackgroundException( ex );
         }
+    }
+
+    /*
+     * Debug-only E2E trace of the focused menu entry.
+     *
+     * This runs after the entry has painted, which is when isFocused() is
+     * valid, and only for the focused entry: that is the one entry a repaint
+     * always draws, so the event cannot be missed while the highlight is
+     * scrolled out of view. The scroll itself is handled inside Menu2 and never
+     * reaches the input delegate, so this is the only place that can name the
+     * row a press landed on. E2ETrace drops repeats, so sampling every draw does
+     * not become a per-frame flood.
+     *
+     * Baseline: isFocused() is faulty on some Edge devices (see #267) and can
+     * also be unset for the first frame after a page is pushed. When no entry
+     * reports focus at all, the first entry reports itself once, because that is
+     * the entry the native menu focuses when a page is shown. This keeps the
+     * trace observable on those devices without inventing a position for a
+     * scrolled menu: the guess is only made while the platform reports no focus
+     * anywhere, and the first real report replaces it.
+     *
+     * The index is looked up in the menu that is currently shown rather than
+     * stored on the item, so a deleteItem() that shifts the entries cannot leave
+     * a stale position behind. An item that is drawn while its menu is not the
+     * current view emits nothing.
+     *
+     * The release implementation is empty, so no label, no index and no view
+     * name are computed in release builds.
+     */
+    (:debug)
+    private function traceFocus() as Void {
+        var view = ViewStack.getCurrentView()[0];
+        if( ! ( view instanceof BaseMenu ) ) {
+            return;
+        }
+        var menu = view as BaseMenu;
+        var index = menu.traceIndexOf( self );
+        if( index < 0 ) {
+            return;
+        }
+        if( isFocused() ) {
+            emitFocus( index, "platform" );
+            return;
+        }
+        if( index == 0
+            && ! focusTraceIsPlaceholder()
+            && menu.traceFocusedIndex() < 0
+        ) {
+            emitFocus( 0, "baseline" );
+        }
+    }
+    (:release)
+    private function traceFocus() as Void {}
+
+    (:debug)
+    private function emitFocus( index as Number, source as String ) as Void {
+        E2ETrace.focusedItem(
+            ViewStack.currentViewName(),
+            ViewStack.getDepth(),
+            index,
+            focusTraceKind(),
+            focusTraceLabel(),
+            source
+        );
+    }
+
+    /*
+     * Debug-only: true for an entry that stands in for content that is still
+     * being built. A placeholder must never be reported as the focused element,
+     * because a scenario would then press keys against a menu that has no real
+     * entries yet.
+     */
+    (:debug)
+    public function focusTraceIsPlaceholder() as Boolean {
+        return false;
+    }
+
+    /*
+     * Debug-only: the stable protocol name reported in E2E:FOCUS. Sitemap
+     * entries report their element type; the remaining entries are the ones the
+     * app adds itself.
+     */
+    (:debug)
+    public function focusTraceKind() as String {
+        return "MenuItem";
+    }
+
+    /*
+     * Debug-only: the label reported in E2E:FOCUS. Empty by default, because an
+     * entry that is not a sitemap element carries translated chrome, and the
+     * E2E trace never reports translated free text.
+     */
+    (:debug)
+    public function focusTraceLabel() as String {
+        return "";
     }
 
     // Returns the theme to apply when drawing.

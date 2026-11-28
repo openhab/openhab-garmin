@@ -58,6 +58,39 @@ import Toybox.System;
  *       Without it, "the item opened nothing" is indistinguishable from "the
  *       press never arrived".
  *
+ *   E2E:FOCUS;view=<view>;depth=<n>;index=<n>;kind=<kind>;label=<label>;source=<source>
+ *       view:  stable name of the menu that owns the focused entry
+ *       depth: app view-stack depth
+ *       index: position of the entry in that menu, counted from 0
+ *       kind:  sitemap element type (Frame, Group, Switch, Text, ...) for a
+ *              sitemap entry; Settings, Loading or MenuItem for the entries
+ *              the app adds itself
+ *       label: the entry's sitemap label, percent-encoded like COMMAND.item.
+ *              Empty for an entry whose label is translated chrome: the trace
+ *              never carries translated free text.
+ *       source: platform | baseline. `platform` means the entry reported
+ *              itself as focused, which is what a scenario may assert on.
+ *              `baseline` means the platform reported no focus at all and the
+ *              entry the native menu focuses when a page is shown was assumed
+ *              (see below); it is a starting point for navigation, never
+ *              evidence that the highlight is on that entry.
+ *       Emitted when the focused entry changes, i.e. after a highlight moved
+ *       and when a page is pushed or popped, because the entry that becomes
+ *       focused is then drawn for the first time. A repeat of the same
+ *       (view, depth, index, kind, label, source) is suppressed, so a polling
+ *       app's repaints do not turn the trace into a per-frame flood. Scrolling
+ *       between entries is handled inside Menu2 and never reaches the input
+ *       delegate; this is the only event that names the row a press landed on,
+ *       which is what lets a scenario address an element by label instead of
+ *       by a hard-coded press count.
+ *       Baseline: while no entry reports itself as focused (isFocused() is
+ *       faulty on some Edge devices, and is unset for the first frame after a
+ *       page is pushed), the first entry reports index 0 with
+ *       source=baseline. The guess is never made while the platform reports a
+ *       focused entry, and the repeat rule keeps it to one line. A scenario
+ *       that needs a position the device actually reported selects
+ *       source=platform, which is the default for an `assert.focus` condition.
+ *
  *   E2E:ERROR;kind=<kind>;id=<id>;code=<code>;source=<source>
  *       kind:   temporary | critical | fatal
  *       id:     stable exception identifier, e.g. communication.sitemap
@@ -85,9 +118,10 @@ import Toybox.System;
  * neither print nor retain any E2E data.
  *
  * E2E is test-only instrumentation: events must never contain credentials,
- * full URLs with authentication data, or translated free text. Item names and
- * command values are the only server-sourced values and are required by the
- * command event schema.
+ * full URLs with authentication data, or translated free text. Item names,
+ * command values and sitemap labels are the only server-sourced values, and
+ * they are required by the event schemas that carry them; chrome text is never
+ * reported, which is why FOCUS leaves the label empty for a non-sitemap entry.
  */
 (:glance)
 class E2ETrace {
@@ -191,6 +225,72 @@ class E2ETrace {
     (:release)
     public static function selectionHandled( kind as String, result as String, depth as Number ) as Void {}
 
+    /******* FOCUS *******/
+
+    /*
+     * The last FOCUS line emitted, so a menu that repaints on every poll does
+     * not flood the console with the entry that is already focused.
+     *
+     * The state is kept here rather than in the menu on purpose: a page that
+     * is pushed or popped must emit again even when it returns to the entry it
+     * showed before, and only a single value shared by all menus compares that
+     * across views. It is compiled only in debug builds.
+     */
+    (:debug)
+    private static var _lastFocus as String?;
+
+    (:debug)
+    public static function focusedItem(
+        viewName as String,
+        depth as Number,
+        index as Number,
+        kind as String,
+        label as String,
+        source as String
+    ) as Void {
+        var event = focusEvent( viewName, depth, index, kind, label, source );
+        var last = _lastFocus;
+        if( last != null && last.equals( event ) ) {
+            return;
+        }
+        _lastFocus = event;
+        emit( event );
+    }
+    (:release)
+    public static function focusedItem(
+        viewName as String,
+        depth as Number,
+        index as Number,
+        kind as String,
+        label as String,
+        source as String
+    ) as Void {}
+
+    /*
+     * The FOCUS line body, without the "E2E:" prefix.
+     *
+     * Kept separate from the emitter so the wire format — field order, the
+     * encoding of the server-sourced kind and label, and the provenance of the
+     * position — can be pinned by a unit test: the E2E scenarios parse exactly
+     * this shape.
+     */
+    (:debug)
+    public static function focusEvent(
+        viewName as String,
+        depth as Number,
+        index as Number,
+        kind as String,
+        label as String,
+        source as String
+    ) as String {
+        return "FOCUS;view=" + viewName
+               + ";depth=" + depth.toString()
+               + ";index=" + index.toString()
+               + ";kind=" + encode( kind )
+               + ";label=" + encode( label )
+               + ";source=" + source;
+    }
+
     /******* ERROR HANDLING *******/
 
     (:debug)
@@ -248,7 +348,10 @@ class E2ETrace {
 
     /******* HELPERS *******/
 
-    // Percent-encodes the characters that would break the line format.
+    // Percent-encodes the characters that would break the line format: the
+    // field separator, the escape character itself, and the characters that
+    // cannot be read on one line. Values keep their human-readable form, so a
+    // scenario may assert either form.
     (:debug)
     private static function encode( value as String ) as String {
         var encoded = "";
@@ -260,6 +363,8 @@ class E2ETrace {
                 encoded += "%7C";
             } else if( c.equals( "%" ) ) {
                 encoded += "%25";
+            } else if( c.equals( ";" ) ) {
+                encoded += "%3B";
             } else if( c.equals( "\n" ) ) {
                 encoded += "%0A";
             } else if( c.equals( "\r" ) ) {

@@ -300,7 +300,8 @@ a run.
 | `command` | `item`, `value`, `via` (`rest`/`shim`) | `rest` talks to openHAB directly |
 | `wait_for_event` | `event`, `fields`, `contains`, `timeout_ms` | see trace events below |
 | `wait_for_view` | `category`/`view`, `depth`, `timeout_ms` | shorthand for a `VIEW` event; put it before a screenshot |
-| `assert` | `shim_requests`, `golden`, `no_error_view`, `never_error_view`, `description` | at least one condition |
+| `focus` | `label`/`kind`/`index` (at least one), `view`, `source` (`platform`/`baseline`), `button` (`DOWN`/`UP`), `max_presses`, `timeout_ms` | requires a button-capable device; scrolls until the app reports that element as focused, see [Addressing an element](#addressing-an-element) |
+| `assert` | `shim_requests`, `golden`, `focus`, `no_error_view`, `never_error_view`, `description` | at least one condition |
 
 ### `assert`
 
@@ -545,17 +546,18 @@ E2E:<EVENT>;field=<value>;field=<value>
 | `COMMAND` | `result` (`success`/`error`), `code`, `item`, `value` |
 | `INPUT` | `button` (`select`/`back`/`next-page`/`previous-page`), `view`, `depth` |
 | `SELECT` | `kind` (element type), `result` (`pushed`/`empty-page`/`page-not-ready`/`no-action`/`offline`/`command`/`settings`), `depth` |
+| `FOCUS` | `view`, `depth`, `index`, `kind` (element type, or `Settings`/`Loading`/`MenuItem`), `label`, `source` (`platform`/`baseline`) |
 | `ERROR` | `kind` (`temporary`/`critical`/`fatal`), `id`, `code`, `source` (`sitemap`/`command`/`ui`) |
 | `TOAST` | `id` |
 | `ERRORVIEW` | `id`, `code` |
 | `LANGUAGE` | `code` (`eng`/`deu`/... or `unknown`) |
 
 `code` is an HTTP status, an SDK error code (possibly negative, or prefixed such
-as `S:-104` or `UI:CONFIG`), or `-` when unavailable. `COMMAND.item` and
-`COMMAND.value` are percent-encoded (space, `|`, `%`, CR, LF); a scenario may
-assert either the encoded or the human-readable value. Unknown events and fields
-in the stream are ignored; unknown _field names in a scenario_ for a known event
-are rejected at load time.
+as `S:-104` or `UI:CONFIG`), or `-` when unavailable. `COMMAND.item`,
+`COMMAND.value`, `FOCUS.kind` and `FOCUS.label` are percent-encoded (space, `|`,
+`%`, `;`, CR, LF); a scenario may assert either the encoded or the human-readable
+value. Unknown events and fields in the stream are ignored; unknown _field names
+in a scenario_ for a known event are rejected at load time.
 
 The parser (`e2e/trace.py`) splits on `;`, then on the first `=`, keeps unknown
 events and fields, and timestamps each line on receipt. Lines that are not trace
@@ -568,6 +570,36 @@ change that dismisses the error view. `ERRORVIEW` only records that the error
 view was shown or updated, never that it was cleared. `TraceLog` exposes this
 split as `current_view_category()`/`is_showing_error_view()` against
 `has_error_view()`.
+
+`FOCUS` is emitted when the highlighted menu entry changes, and only then: a
+repeat of the same `(view, depth, index, kind, label, source)` is suppressed, so
+a polling app's repaints do not flood the console. It is the one event that names
+the row a press landed on, because scrolling happens inside `Menu2` and never
+reaches the input delegate. `index` is the entry's position in `view` counted
+from 0 (the homepage's settings entry included, because a reader can see it);
+`kind` is the sitemap element type — the same value `SELECT.kind` reports — or
+`Settings`/`Loading`/`MenuItem` for the entries the app adds itself. `label` is
+the sitemap label and is empty for those entries, because the trace never
+carries translated chrome.
+
+`source` says where the position came from, and it decides what the line may be
+used for:
+
+- `platform` — the entry reported itself as focused. This is an observation.
+- `baseline` — the platform reported no focused entry at all, so the app assumed
+  the entry the native menu focuses when a page is shown (`index=0`). It exists
+  because `isFocused()` is faulty on some Edge devices (#267) and is unset for
+  the first frame after a push. It is a starting point for `focus`, never
+  evidence that the highlight is on that entry.
+
+A scenario that asserts a position must require `platform`; `assert.focus` does
+that by default. `focus` steps accept either, because they re-check the row after
+every press and only ever press `DOWN`/`UP`, so a wrong starting point costs a
+bounded press rather than a wrong select.
+
+```text
+E2E:FOCUS;view=HomepageMenu;depth=1;index=1;kind=Frame;label=Player;source=platform
+```
 
 ```yaml
 - action: wait_for_event
@@ -612,12 +644,12 @@ A `wait_for_request` timeout prints the same event counts and the last
 `SITEMAP`/`COMMAND`/`ERROR` event next to the app's current view.
 
 A failed view wait also prints the step's own description, the app's current
-view, the last `INPUT` and the last `SELECT` (kind, result, depth), because the
-focused row is not in the trace: a wrong press count, a press that never landed
-and a `BACK` that did not pop are otherwise indistinguishable. Every failed step
-also leaves `failure-step-<n>.png` in its artifact directory — the screen at the
-moment of failure, captured best effort and never allowed to replace the
-failure. Both are for human review; neither is an assertion.
+view, the focused row, the last `INPUT` and the last `SELECT` (kind, result,
+depth): the focused row names where the select came from, which is what a wrong
+press count used to hide. Every failed step also leaves `failure-step-<n>.png`
+in its artifact directory — the screen at the moment of failure, captured best
+effort and never allowed to replace the failure. Both are for human review;
+neither is an assertion.
 
 ## Determinism rules
 
@@ -653,14 +685,14 @@ opened nothing.
 ```
 
 `expect: input` requires the app's own evidence that it handled the press: an
-`INPUT`, `SELECT` or `COMMAND` trace event. `expect: effect` accepts that **or**
-a screen change measured from a _settled_ baseline (`SETTLE_DIFF_RATIO`); an
-unsettled screen is not a baseline, so a press that lands while the app is still
-painting proves nothing. A view change alone is not delivery either — the app
-arriving on a page changes the view — which is why `input` exists and why the
-scenarios that must reach the menu delegate use it. `expect: none` requires that
-the press do nothing; without `expect` the press is not measured, which is fine
-when the next step asserts the effect anyway.
+`INPUT`, `SELECT`, `COMMAND` or `FOCUS` trace event. `expect: effect` accepts
+that **or** a screen change measured from a _settled_ baseline
+(`SETTLE_DIFF_RATIO`); an unsettled screen is not a baseline, so a press that
+lands while the app is still painting proves nothing. A view change alone is not
+delivery either — the app arriving on a page changes the view — which is why
+`input` exists and why the scenarios that must reach the menu delegate use it.
+`expect: none` requires that the press do nothing; without `expect` the press is
+not measured, which is fine when the next step asserts the effect anyway.
 
 A press that fails its expectation reports the mechanism the driver used, each
 attempt's evidence, and the app's current state, so a dead input path fails where
@@ -693,10 +725,10 @@ Two trace events separate "no input" from "input with no effect":
 - `E2E:INPUT;button=<select|back|next-page|previous-page>;view=...;depth=...`
   is emitted by the menu input delegate, so it only appears when the app
   received the press. Scrolling between entries is handled inside `Menu2` and
-  never reaches the delegate: a `DOWN` that moves the highlight is observable
-  only as a repaint, which is what `expect: effect` measures. The page buttons
-  are reported as `next-page`/`previous-page` when the highlight runs past the
-  first or last entry.
+  never reaches the delegate; a `DOWN` that moves the highlight is reported by
+  `E2E:FOCUS` instead. The page buttons are reported as
+  `next-page`/`previous-page` when the highlight runs past the first or last
+  entry.
 - `E2E:SELECT;kind=<element type>;result=<outcome>;depth=...` is emitted when a
   menu item handled a select, and says what it decided. `INPUT` without
   `SELECT` means the press arrived but no item handled it; `result=page-not-ready`
@@ -735,35 +767,117 @@ They are harness probes, not app behaviour:
     button: ENTER
   ```
 
+- **Address the element, not the count.** Use a `focus` step (see below) when a
+  scenario needs a specific element. A counted press is only acceptable when the
+  count is the behaviour under test (a page button, a wrap), and then the order
+  belongs in a comment.
 - **Count every entry, including static text.** A `Text` with no item and no
-  children still occupies a menu index even though it cannot be activated. When
-  paging by count, count it, and say the order in a comment.
+  children still occupies a menu index even though it cannot be activated, so a
+  counted press must count it too. A `focus` step does not care.
 - **Wait for the page before paging.** The app builds a frame's children
   asynchronously after the page is shown (see
   `localisation-error-long-value`), so a `DOWN` sent immediately can run against
-  a half-built menu. Wait for the `PageMenu` view first.
+  a half-built menu. Wait for the `PageMenu` view first; `focus` then waits for
+  that view's first `FOCUS` event before it presses anything.
 - **Prefer a dedicated fixture page over a long page plus counting.** A sitemap
   per scenario boundary (as `garmin_commands` and `garmin_dynamic` do after
   #400) makes the first element deterministic; growing one page until a scenario
   needs seven page-downs is how navigation drifts silently.
 
-### Navigating by press count is not verifiable today
+### Addressing an element
 
-A scenario that pages by count (`localisation-glyphs`, `localisation-sitemap`)
-assumes a fixed row order and that every press lands. Nothing in the trace can
-confirm either: `SELECT` is emitted only when an item handles a select, and it
-names the element type, not the row; scrolling inside `Menu2` emits nothing.
-A wrong count, a lost press and a `BACK` that did not pop therefore look the
-same, and a "press until it works" retry is not safe because the retry would
-`ENTER` on the rows in between (which can send commands).
+A scenario that navigates by press count assumes a fixed row order and that
+every press lands. That holds on one device only: the same `DOWN`, `ENTER`
+after `BACK` opened `PlayerView` on fenix7 and stayed on `PageMenu` on edge540,
+because the layout scrolled differently (#430). A "press until the view is
+right" retry cannot fix it either — the retry would select the rows in between,
+and a select can send a command.
 
-The fix is a debug-only `E2E:FOCUS` event carrying the focused row's view,
-index, kind and encoded label, emitted from the item draw path only when the
-focus changes; scenarios would then scroll until the label matches, bounded,
-and report the rows they passed. It is specified in #431 and not implemented.
-Until it is, a failure in those two scenarios is a navigation assumption, not
-proven app behaviour: read the last `INPUT`/`SELECT` line, the app view line and
-the `failure-step-<n>.png` screenshot the engine now captures when a step fails.
+`E2E:FOCUS` makes the row addressable, so a `focus` step replaces the count:
+
+```yaml
+- action: focus
+  description: Move the highlight onto the Player frame before selecting it.
+  view: HomepageMenu          # optional: which menu the row belongs to
+  label: Player               # the server-sourced sitemap label
+  max_presses: 5              # bounded, nothing is pressed after this
+- action: press
+  button: ENTER
+```
+
+`label`, `kind` and `index` are matched against the `FOCUS` event; at least one
+is required, and `view` narrows it to the menu that owns the row (two pages at
+the same depth are otherwise indistinguishable). Only the lines emitted since
+the newest `VIEW` count, and only while `view` **is** the newest view: a menu can
+be shown more than once (the homepage after every `BACK`), and a row it reported
+last time must not be mistaken for the current focus. That is why a step after a
+`press` that pushes a page waits for the new page's own `FOCUS` instead of acting
+on the previous page's row. The step behaves as follows:
+
+1. It waits until the app has reported a focused row **for that view**. Nothing
+   is pressed before that, because a press on an unobserved row is how a
+   navigation bug turns into a command.
+2. If the row already matches, it presses nothing.
+3. Otherwise it presses `DOWN` (or `UP`, the only buttons the step accepts)
+   once, waits up to `timeout_ms` for the focus to change, and re-checks.
+4. After `max_presses` presses without a match it fails, printing the element it
+   wanted and every row the highlight passed through:
+
+```text
+could not focus view=HomepageMenu label=Empty: 2 DOWN press(es) ran out
+  focus history (3 entries, oldest first):
+    E2E:FOCUS;view=HomepageMenu;depth=1;index=0;kind=Frame;label=Switches
+    E2E:FOCUS;view=HomepageMenu;depth=1;index=1;kind=Frame;label=Player
+    E2E:FOCUS;view=HomepageMenu;depth=1;index=2;kind=Frame;label=Nested
+  focus seen per view: HomepageMenu x3
+  elements seen: Frame(Switches), Frame(Player), Frame(Nested)
+```
+
+The failure separates the three causes that a single "no FOCUS" line would
+collapse: the app reported nothing at all, it reported focus **for another
+menu** (`focus history: no FOCUS event for view=HomepageMenu; the app reported
+focus elsewhere` plus one line per other view), and it reported **only the entry
+that was already focused** (`focus movement: only … was ever reported for this
+view`), which means the platform is not reporting movement.
+
+A press that produced no `FOCUS` at all is reported as such: the guest loses
+the first click after a view appears, so the scroll key is re-issued, but only
+within `max_presses` and never with `ENTER`. A skipped row fails the step
+instead of selecting the wrong element later.
+
+#### The baseline entry
+
+`isFocused()` is faulty on some Edge devices (#267) and is unset for the first
+frame after a page is pushed. While **no** entry reports itself as focused, the
+first entry reports `index=0` with `source=baseline`: the entry the native menu
+focuses when a page is shown. The guess is never made while the platform reports
+a focused entry, and the repeat rule suppresses it, so a device with a working
+`isFocused()` sees no difference. That gives every page a starting point without
+pretending it was observed.
+
+A `focus` step accepts a baseline because it re-checks the row after every press
+and never presses `ENTER` on a guess. An `assert` must not: `assert.focus`
+requires `source=platform` unless the scenario explicitly asks for `baseline`, so
+a position the device never reported cannot satisfy an assertion. If a device
+never reports movement, the `focus` step fails with the "only … was ever
+reported" line instead of pressing on a guess, and "the highlight stayed on X" is
+a manual check rather than an assertion.
+
+`focus` needs the console event stream. With `--skip-events` or a driver that
+has none it **fails** rather than skipping, because skipping would leave the
+next `press` acting on a row nobody observed.
+
+An `assert` can check the focus without moving it. It requires the platform's
+own report by default, because a baseline is an assumption:
+
+```yaml
+- action: assert
+  description: The player page reported its element as focused.
+  focus: {view: PageMenu, label: Audio}
+```
+
+The failure names both the expected element and the one that is actually
+focused, followed by the same focus history.
 
 ## Adding a scenario
 

@@ -174,8 +174,11 @@ SETTLE_TIMEOUT_S = 8.0
 
 #: Event names that prove the *app* handled the press. A view change is
 #: deliberately absent: the app arriving on a page changes the view too, which
-#: is exactly the false positive this list exists to exclude.
-PRESS_EVIDENCE_EVENTS: Tuple[str, ...] = ("INPUT", "SELECT", "COMMAND")
+#: is exactly the false positive this list exists to exclude. ``FOCUS`` proves a
+#: press that moved the highlight, which the input delegate never sees; it is
+#: emitted only when the focused row actually changed, so a repaint of the same
+#: row cannot fake it.
+PRESS_EVIDENCE_EVENTS: Tuple[str, ...] = ("INPUT", "SELECT", "COMMAND", "FOCUS")
 
 #: Keyboard keysyms the guest has proven this simulator honours. The select
 #: path (declared hit areas) works as well; the keyboard is preferred for
@@ -352,8 +355,8 @@ class PressResult:
 
     ``weak`` is true when the only evidence was the screen changing, which the
     app's own painting can also cause; ``strong`` is true when the app emitted
-    an ``INPUT``/``SELECT``/``COMMAND`` that can only come from handling the
-    press.
+    an ``INPUT``/``SELECT``/``COMMAND``/``FOCUS`` that can only come from
+    handling the press.
     """
 
     button: str
@@ -2509,14 +2512,16 @@ class WineSimulatorDriver(SimulatorDriver):
 
         ``require`` decides what counts:
 
-        - ``"effect"`` -- the app emitted an ``INPUT``/``SELECT``/``COMMAND``,
-          a view changed, or the screen changed *from a settled baseline*
-          (:attr:`SETTLE_DIFF_RATIO`). A screen that is still painting is not a
-          baseline: the app finishing its own first render was once read as a
-          press having an effect.
+        - ``"effect"`` -- the app emitted an ``INPUT``/``SELECT``/``COMMAND``/
+          ``FOCUS``, a view changed, or the screen changed *from a settled
+          baseline* (:attr:`SETTLE_DIFF_RATIO`). A screen that is still painting
+          is not a baseline: the app finishing its own first render was once
+          read as a press having an effect.
         - ``"input"`` -- only the app-side events count. A view change alone is
           not enough, because the app arriving on a page changes the view too;
           this is what a press that must reach the delegate should require.
+          ``FOCUS`` counts as well and is the only app-side evidence a scroll
+          key produces.
 
         A press that did not satisfy ``require`` is re-issued up to ``retries``
         times, because the guest loses the first click after a view appears. It

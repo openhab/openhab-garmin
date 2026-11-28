@@ -44,6 +44,9 @@ REAL_SAMPLES = (
     "E2E:INPUT;button=back;view=PageMenu;depth=2",
     "E2E:SELECT;kind=Frame;result=pushed;depth=1",
     "E2E:SELECT;kind=Switch;result=command;depth=2",
+    "E2E:FOCUS;view=HomepageMenu;depth=1;index=1;kind=Frame;label=Player;source=platform",
+    "E2E:FOCUS;view=PageMenu;depth=2;index=0;kind=Switch;label=Kitchen%20Light;source=platform",
+    "E2E:FOCUS;view=HomepageMenu;depth=1;index=4;kind=Settings;label=;source=platform",
     "E2E:ERROR;kind=temporary;id=communication.sitemap;code=-400;source=sitemap",
     "E2E:ERROR;kind=critical;id=communication.sitemap;code=404;source=sitemap",
     "E2E:ERROR;kind=fatal;id=settings.changed;code=-;source=ui",
@@ -96,6 +99,38 @@ def test_command_values_are_percent_encoded_on_the_wire() -> None:
     assert event is not None
     assert event.fields["item"] == "Kitchen%20Light"
     assert event.fields["value"] == "OPEN%7CON"
+
+
+def test_a_focus_label_is_matched_in_its_human_readable_form() -> None:
+    # The app percent-encodes label like COMMAND.item, including the ';' that
+    # would otherwise split the line, so a scenario writes the label as it
+    # appears on screen.
+    event = parse_line(
+        "E2E:FOCUS;view=PageMenu;depth=2;index=2;kind=Switch;label=Living%3BRoom%20Lamp;source=platform"
+    )
+    assert event is not None
+    assert event.fields["label"] == "Living%3BRoom%20Lamp"
+    match = EventMatch(event="FOCUS", fields={"label": "Living;Room Lamp"})
+    assert match.matches(event)
+
+
+def test_a_focus_position_is_matched_as_the_documented_decimal() -> None:
+    event = parse_line(
+        "E2E:FOCUS;view=HomepageMenu;depth=1;index=3;kind=Frame;label=Empty;source=platform"
+    )
+    assert event is not None
+    # Scenario `index: 3` is canonicalised to the string the wire carries.
+    assert EventMatch(event="FOCUS", fields={"index": "3"}).matches(event)
+    assert not EventMatch(event="FOCUS", fields={"index": "1"}).matches(event)
+
+
+def test_an_empty_focus_label_is_a_field_not_a_missing_one() -> None:
+    # A non-sitemap entry reports no label on purpose; it must still parse as
+    # an empty field, so `label: ""` can be asserted deliberately.
+    event = parse_line("E2E:FOCUS;view=HomepageMenu;depth=1;index=4;kind=Settings;label=;source=platform")
+    assert event is not None
+    assert "label" in event.fields
+    assert event.fields["label"] == ""
 
 
 def test_match_accepts_the_human_readable_command_value() -> None:
@@ -353,6 +388,91 @@ def test_error_view_history_survives_the_recovery() -> None:
     log.poll()
     assert not log.is_showing_error_view()
     assert log.has_error_view()
+
+
+def test_current_focus_event_is_the_newest_row_the_highlight_reached() -> None:
+    buffer = _Buffer()
+    log = TraceLog(buffer)
+    buffer.lines = [
+        "E2E:FOCUS;view=HomepageMenu;depth=1;index=0;kind=Frame;label=Switches;source=platform",
+        "E2E:FOCUS;view=HomepageMenu;depth=1;index=1;kind=Frame;label=Player;source=platform",
+        "E2E:SITEMAP;result=unchanged;code=200;bytes=4096",
+    ]
+    log.poll()
+    event = log.current_focus_event()
+    assert event is not None
+    assert event.get("label") == "Player"
+    # A later non-FOCUS event must not change where the highlight is reported.
+    assert event.get("index") == "1"
+
+
+def test_current_focus_event_is_unknown_before_the_first_row() -> None:
+    log = TraceLog(_Buffer())
+    assert log.current_focus_event() is None
+
+
+def test_current_focus_event_ignores_an_earlier_appearance_of_the_view() -> None:
+    """The homepage is shown again: its previous row must not count as current."""
+    buffer = _Buffer()
+    log = TraceLog(buffer)
+    buffer.lines = [
+        "E2E:VIEW;category=sitemap;view=HomepageMenu;depth=1",
+        "E2E:FOCUS;view=HomepageMenu;depth=1;index=1;kind=Frame;label=Player;source=platform",
+        "E2E:VIEW;category=sitemap;view=PageMenu;depth=2",
+        "E2E:FOCUS;view=PageMenu;depth=2;index=0;kind=Switch;label=Audio;source=platform",
+        "E2E:VIEW;category=sitemap;view=HomepageMenu;depth=1",
+    ]
+    log.poll()
+    # The homepage is the newest view and has not reported its row yet.
+    assert log.current_focus_event("HomepageMenu") is None
+    # The page's row belongs to a view that is no longer on screen.
+    assert log.focus_events("PageMenu") == []
+    assert log.current_focus_event() is None
+
+
+def test_focus_events_are_scoped_to_the_newest_view() -> None:
+    buffer = _Buffer()
+    log = TraceLog(buffer)
+    buffer.lines = [
+        "E2E:VIEW;category=sitemap;view=HomepageMenu;depth=1",
+        "E2E:FOCUS;view=HomepageMenu;depth=1;index=1;kind=Frame;label=Player;source=platform",
+        "E2E:VIEW;category=sitemap;view=PageMenu;depth=2",
+        "E2E:FOCUS;view=PageMenu;depth=2;index=0;kind=Switch;label=Audio;source=platform",
+    ]
+    log.poll()
+    assert [event.get("label") for event in log.focus_events("PageMenu")] == ["Audio"]
+    assert log.focus_events("HomepageMenu") == []
+    assert log.current_focus_event().get("label") == "Audio"
+
+
+def test_focus_history_names_every_row_the_highlight_passed_through() -> None:
+    buffer = _Buffer()
+    log = TraceLog(buffer)
+    buffer.lines = [
+        "E2E:FOCUS;view=HomepageMenu;depth=1;index=0;kind=Frame;label=Switches;source=platform",
+        "E2E:FOCUS;view=HomepageMenu;depth=1;index=1;kind=Frame;label=Player;source=platform",
+        "E2E:FOCUS;view=PageMenu;depth=2;index=0;kind=Switch;label=Audio;source=platform",
+    ]
+    log.poll()
+    history = log.focus_history()
+    assert history == [
+        "E2E:FOCUS;view=HomepageMenu;depth=1;index=0;kind=Frame;label=Switches;source=platform",
+        "E2E:FOCUS;view=HomepageMenu;depth=1;index=1;kind=Frame;label=Player;source=platform",
+        "E2E:FOCUS;view=PageMenu;depth=2;index=0;kind=Switch;label=Audio;source=platform",
+    ]
+
+
+def test_focus_history_is_bounded() -> None:
+    buffer = _Buffer()
+    log = TraceLog(buffer)
+    buffer.lines = [
+        f"E2E:FOCUS;view=HomepageMenu;depth=1;index={index};kind=Frame;label=Row{index};source=platform"
+        for index in range(30)
+    ]
+    log.poll()
+    history = log.focus_history(limit=3)
+    assert len(history) == 3
+    assert "Row29" in history[-1]
 
 
 def test_describe_is_bounded() -> None:
