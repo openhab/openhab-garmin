@@ -817,10 +817,10 @@ on the previous page's row. The step behaves as follows:
 1. It waits until the app has reported a focused row **for that view**. Nothing
    is pressed before that, because a press on an unobserved row is how a
    navigation bug turns into a command.
-2. If the row already matches, it presses nothing.
-3. Otherwise it presses `DOWN` (or `UP`, the only buttons the step accepts)
+1. If the row already matches, it presses nothing.
+1. Otherwise it presses `DOWN` (or `UP`, the only buttons the step accepts)
    once, waits up to `timeout_ms` for the focus to change, and re-checks.
-4. After `max_presses` presses without a match it fails, printing the element it
+1. After `max_presses` presses without a match it fails, printing the element it
    wanted and every row the highlight passed through:
 
 ```text
