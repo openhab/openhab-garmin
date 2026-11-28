@@ -232,10 +232,20 @@ services:
       - openhab-dev-userdata:/openhab-logs/dev:ro
       - e2e-artifacts:/artifacts
     healthcheck:
-      test: ["CMD", "python", "-c", "import e2e"]
+      # Healthy means "the harness can run", not "the container started". The
+      # entrypoint writes /run/ciq-ready only after the SDK copy, device and font
+      # staging and `sdk-check` have all succeeded, so `up -d --wait` and
+      # `docker inspect` cannot report healthy while the ~1 GB copy is running
+      # (which once made the documented `up -d` then `exec` workflow fail with
+      # "does not look like a Connect IQ SDK"). At least one simulator build must
+      # be staged for a run to be possible; which one is recorded in the marker.
+      test:
+        - CMD-SHELL
+        - "test -f /run/ciq-ready && python -c 'import e2e' && grep -Eq 'simulator\\.(windows|native)=yes' /run/ciq-ready"
       interval: 10s
       timeout: 5s
-      retries: 6
+      retries: 30
+      start_period: 300s
     networks: [e2e]
 
 networks:

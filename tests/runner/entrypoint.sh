@@ -8,7 +8,7 @@
 # It also stages everything the compile needs: the SDK is copied out of its
 # read-only mount into a writable path, and its device definitions are linked
 # into the paths the toolchains search. The X server comes up first, because it
-# is cheap and independent while staging copies ~250 MB.
+# is cheap and independent while staging copies ~1 GB (the VM measured 964 MB).
 set -euo pipefail
 
 # Record which entrypoint actually ran. The script is baked into the image while
@@ -27,6 +27,12 @@ record_entrypoint_hash() {
 }
 
 record_entrypoint_hash
+
+# Readiness marker for the Compose healthcheck. A restart during staging must
+# not leave a stale "ready" behind, so it is removed before anything expensive
+# and only written once every check below has passed.
+ready_marker="${CIQ_READY_MARKER:-/run/ciq-ready}"
+rm -f "$ready_marker"
 
 sdk_hint() {
     cat >&2 <<'MSG'
@@ -62,7 +68,7 @@ MSG
 }
 
 # One X server per container, started before anything is staged: staging copies
-# the SDK (~250 MB) and validates it, and a container that reports healthy while
+# the SDK (~1 GB) and validates it, and a container that reports healthy while
 # no display is up yet makes a UI driver look like a display failure. Compose
 # sets DISPLAY; start Xvfb only when the display is not already answering, so
 # restarting the entrypoint is safe.
@@ -170,5 +176,29 @@ if ! python -m e2e sdk-check --quiet; then
     sdk_hint
     exit 78
 fi
+
+# Publish readiness only now. Everything above is what "can run" means, and the
+# Compose healthcheck keys off this file: the SDK copy is ~1 GB and took over a
+# minute on the VM, and a container that reports healthy mid-copy makes the
+# documented `up -d` then `exec` workflow fail with "does not look like a
+# Connect IQ SDK". `sdk-check` does not require a simulator binary, so the marker
+# records which builds the staged SDK provides; the healthcheck requires at
+# least one.
+mkdir -p "$(dirname "$ready_marker")"
+{
+    printf 'ready %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    if [ -f "$sdk_workdir/windows/bin/simulator.exe" ] \
+        || [ -f "$sdk_workdir/bin/simulator.exe" ]; then
+        echo "simulator.windows=yes"
+    else
+        echo "simulator.windows=no"
+    fi
+    if [ -f "$sdk_workdir/linux/bin/simulator" ] \
+        || [ -f "$sdk_workdir/bin/simulator" ]; then
+        echo "simulator.native=yes"
+    else
+        echo "simulator.native=no"
+    fi
+} > "$ready_marker"
 
 exec "$@"

@@ -393,7 +393,11 @@ Re-run with a writable target and copy it back:
 
 - `eng` is the simulator's default. The driver **removes** the `Language` key for
   it rather than writing an index, so a stale `Language=7` from a previous run
-  (or the maintainer's own file) cannot run an English scenario in German.
+  (or the maintainer's own file) cannot run an English scenario in German. After
+  writing the file the driver reads it **back**: an `eng` start must leave no
+  `Language` key and a requested index must be present, or `start()` fails
+  instead of silently measuring another language. A stale `Language=7` once leaked
+  into an `eng` run and the app reported `deu`.
 - A code **with** an index is written and then **verified**: `wait_ready` fails
   the run when the app reports a different language, because a run in the wrong
   language asserts the wrong strings. The message names `language-scan`.
@@ -1059,7 +1063,12 @@ manager it is a single colour and would silently satisfy a golden assertion.
 ## Failure modes
 
 Every failure names the stage, the timeout, and the next concrete step, so a log
-is enough to act on it.
+is enough to act on it. The next step is **driver-specific**:
+`SimulatorDriver.stage_hint()` names no mechanism by default, and the Wine
+driver overrides it with its prefix and the entrypoint's
+`link-devices`/`link-fonts` staging. Advice about a Wine prefix is nonsense on a
+driver that launches the simulator another way, so a driver overrides the hint
+instead of inheriting it. The rows below describe the Wine driver.
 
 | Message | Meaning | Next step |
 | --- | --- | --- |
@@ -1126,8 +1135,10 @@ the first draw aborts on an Adwaita SVG:
   > /usr/lib/x86_64-linux-gnu/gdk-pixbuf-2.0/loaders.cache
 ```
 
-The binary on the read-only mount is `-rw-rw-r--`, so it has to be copied and
-`chmod +x`, or the mount fixed.
+The binary on the read-only mount is `-rw-rw-r--`, so it must be made
+executable. Do it **in place** in the writable staging copy — `chmod +x
+/tmp/ciq-sdk/linux/bin/simulator` — and run it from its own directory; see
+"Stage the binary in place; never copy it elsewhere" below.
 
 Three things, and only these three, are needed to get a window:
 
@@ -1142,6 +1153,33 @@ Three things, and only these three, are needed to get a window:
 tried and is actively unhelpful: it maximises the window to the display size,
 which destroys the `display.location` rectangle (fenix7: `x=77, y=146, 260×260`)
 that pixel checks crop to.
+
+### Stage the binary in place; never copy it elsewhere
+
+The mounted SDK is read-only and its `linux/bin/simulator` has no exec bit
+(`-rw-rw-r--`), so it cannot be executed where it sits. The obvious fix — copy
+the binary somewhere writable and `chmod +x` the copy — produces a binary that
+starts and then asserts on its first draw:
+
+```text
+Gtk-CRITICAL **: gtk_image_set_from_pixbuf: assertion 'image.IsOk()' failed
+```
+
+with the backtrace in `InitFromImage()`. The simulator resolves its resources
+relative to its own path, and a lone copy has no SDK tree around it.
+
+The working arrangement is the one the entrypoint already creates: the entire
+SDK is copied to the writable staging directory (`/tmp/ciq-sdk`), so the tree
+around the binary is intact. Set the exec bit there and run it in place:
+
+```bash
+chmod +x /tmp/ciq-sdk/linux/bin/simulator
+cd /tmp/ciq-sdk && linux/bin/simulator      # resources resolve from its own dir
+```
+
+Never `chmod` the mount and never copy just the binary. This was measured while
+the native driver was being tried; the native driver itself is parked, but the
+lesson is the reason a future one must not "stage" the executable.
 
 ### The single-instance lock is `$HOME/Sim-root`
 

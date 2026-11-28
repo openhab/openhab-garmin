@@ -133,6 +133,33 @@ def test_entrypoint_links_devices_before_checking_the_sdk() -> None:
     assert text.index("python -m e2e link-devices") < text.index("python -m e2e sdk-check")
 
 
+def test_entrypoint_publishes_readiness_only_after_staging() -> None:
+    """`healthy` must mean "staged", not "container started".
+
+    The SDK copy is ~1 GB; the VM once saw the runner report healthy mid-copy
+    and the documented `up -d` then `exec` workflow failed with "does not look
+    like a Connect IQ SDK".
+    """
+    text = _entrypoint()
+    assert 'ready_marker="${CIQ_READY_MARKER:-/run/ciq-ready}"' in text
+    reset = text.index('rm -f "$ready_marker"')
+    written = text.index('> "$ready_marker"')
+    checks = text.index("python -m e2e sdk-check")
+    assert reset < checks < written, "the marker is cleared first and written last"
+    assert "simulator.windows=" in text and "simulator.native=" in text
+
+
+def test_the_runner_healthcheck_requires_the_readiness_marker() -> None:
+    runner = compose_module.load_compose()["services"]["runner"]
+    healthcheck = runner["healthcheck"]
+    command = " ".join(healthcheck["test"])
+    assert "ciq-ready" in command
+    assert "import e2e" in command
+    # At least one simulator build must be staged for the runner to run.
+    assert "simulator" in command
+    assert healthcheck["start_period"] == "300s"
+
+
 def test_entrypoint_clears_a_stale_x_socket_before_starting_xvfb() -> None:
     """`docker restart` keeps the container filesystem, so the previous Xvfb's
     socket and lock survive with no server behind them and block a new Xvfb.
@@ -149,7 +176,7 @@ def test_entrypoint_clears_a_stale_x_socket_before_starting_xvfb() -> None:
 
 
 def test_entrypoint_starts_the_display_before_staging_the_sdk() -> None:
-    """Staging copies ~250 MB and validates the SDK.
+    """Staging copies ~1 GB and validates the SDK.
 
     Starting Xvfb afterwards makes "container healthy" and "display available"
     mean different things, and a UI driver launched straight after `up` sees a
