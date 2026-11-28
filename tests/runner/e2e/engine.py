@@ -630,7 +630,7 @@ class ScenarioRunner:
                     + self._focus_history(context, view)
                     + self._activation_hint(context)
                 )
-            mark = len(trace.of_event("FOCUS"))
+            mark = len(trace.focus_events(view))
             context.driver.press(button, 1)
             presses += 1
             updated = self._wait_for_focus(
@@ -667,18 +667,14 @@ class ScenarioRunner:
 
     @staticmethod
     def _current_focus(trace: TraceLog, view: Optional[str]) -> Optional[TraceEvent]:
-        """The newest FOCUS event, if it describes the expected menu.
+        """The newest FOCUS event for the view that is on screen now.
 
-        A page that was just pushed or popped has not painted yet, so the newest
-        FOCUS event may still belong to the other menu. That is reported as "the
-        focus here is not known yet" rather than as a stale match.
+        A page that was just pushed or popped has not painted yet, and a menu
+        that is not the newest view cannot describe the current focus, so that
+        is reported as "the focus here is not known yet" rather than as a stale
+        match.
         """
-        event = trace.current_focus_event()
-        if event is None:
-            return None
-        if view is not None and event.get("view") != view:
-            return None
-        return event
+        return trace.current_focus_event(view)
 
     @staticmethod
     def _wait_for_focus(
@@ -687,13 +683,13 @@ class ScenarioRunner:
         timeout_s: float,
         mark: int,
     ) -> Optional[TraceEvent]:
-        """The newest FOCUS event for ``view`` at or after ``mark``, else None."""
+        """The newest FOCUS event for ``view`` beyond ``mark``, else None."""
         deadline = time.monotonic() + timeout_s
         while True:
             trace.poll()
-            for event in reversed(trace.of_event("FOCUS")[mark:]):
-                if view is None or event.get("view") == view:
-                    return event
+            events = trace.focus_events(view)
+            if len(events) > mark:
+                return events[-1]
             if time.monotonic() >= deadline:
                 return None
             time.sleep(0.25)
@@ -1062,7 +1058,7 @@ class ScenarioRunner:
             else:
                 context.trace.poll()
                 expected = " ".join(f"{key}={value}" for key, value in focus_spec.items())
-                event = context.trace.current_focus_event()
+                event = self._current_focus(context.trace, focus_spec.get("view"))
                 match = EventMatch(event="FOCUS", fields=focus_spec)
                 if event is None:
                     raise AssertionFailure(

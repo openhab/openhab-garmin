@@ -411,6 +411,40 @@ def test_current_focus_event_is_unknown_before_the_first_row() -> None:
     assert log.current_focus_event() is None
 
 
+def test_current_focus_event_ignores_an_earlier_appearance_of_the_view() -> None:
+    """The homepage is shown again: its previous row must not count as current."""
+    buffer = _Buffer()
+    log = TraceLog(buffer)
+    buffer.lines = [
+        "E2E:VIEW;category=sitemap;view=HomepageMenu;depth=1",
+        "E2E:FOCUS;view=HomepageMenu;depth=1;index=1;kind=Frame;label=Player",
+        "E2E:VIEW;category=sitemap;view=PageMenu;depth=2",
+        "E2E:FOCUS;view=PageMenu;depth=2;index=0;kind=Switch;label=Audio",
+        "E2E:VIEW;category=sitemap;view=HomepageMenu;depth=1",
+    ]
+    log.poll()
+    # The homepage is the newest view and has not reported its row yet.
+    assert log.current_focus_event("HomepageMenu") is None
+    # The page's row belongs to a view that is no longer on screen.
+    assert log.focus_events("PageMenu") == []
+    assert log.current_focus_event() is None
+
+
+def test_focus_events_are_scoped_to_the_newest_view() -> None:
+    buffer = _Buffer()
+    log = TraceLog(buffer)
+    buffer.lines = [
+        "E2E:VIEW;category=sitemap;view=HomepageMenu;depth=1",
+        "E2E:FOCUS;view=HomepageMenu;depth=1;index=1;kind=Frame;label=Player",
+        "E2E:VIEW;category=sitemap;view=PageMenu;depth=2",
+        "E2E:FOCUS;view=PageMenu;depth=2;index=0;kind=Switch;label=Audio",
+    ]
+    log.poll()
+    assert [event.get("label") for event in log.focus_events("PageMenu")] == ["Audio"]
+    assert log.focus_events("HomepageMenu") == []
+    assert log.current_focus_event().get("label") == "Audio"
+
+
 def test_focus_history_names_every_row_the_highlight_passed_through() -> None:
     buffer = _Buffer()
     log = TraceLog(buffer)

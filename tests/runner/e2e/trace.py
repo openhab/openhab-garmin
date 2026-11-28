@@ -344,19 +344,53 @@ class TraceLog:
         """Every event with this name, oldest first."""
         return [event for event in self._events if event.event == name]
 
-    def current_focus_event(self) -> Optional[TraceEvent]:
-        """The newest ``FOCUS`` event, or ``None`` before the first one.
+    def current_focus_event(self, view: Optional[str] = None) -> Optional[TraceEvent]:
+        """The newest ``FOCUS`` event for the view that is on screen now.
 
         ``FOCUS`` is emitted only when the focused entry changes, so the newest
-        line describes where the highlight is now. Because a navigation step
-        must never press on a row it has not observed, callers that expect a
-        particular menu compare this event's ``view`` and treat a different one
-        as "the focus here is not known yet" rather than as a match.
+        line describes where the highlight is now. Only lines emitted after the
+        newest ``VIEW`` count, and only when that view is ``view``: a menu can be
+        shown more than once (the homepage after every ``BACK``), and a line from
+        an earlier appearance must not be read as the current focus. When the
+        newest view is something else, nothing is known about this menu, and
+        callers must treat that as "wait", never as a match.
         """
-        for event in reversed(self._events):
-            if event.event == "FOCUS":
-                return event
-        return None
+        events = self.focus_events(view)
+        return events[-1] if events else None
+
+    def focus_events(self, view: Optional[str] = None) -> List[TraceEvent]:
+        """``FOCUS`` events that describe the focus of the current view.
+
+        Scoped to the newest ``VIEW`` so that a page which is shown again does
+        not inherit the focus it had last time. With ``view`` given, an empty
+        list also means "that menu is not the one on screen", which is why a
+        navigation step waits instead of pressing on a stale row.
+        """
+        newest_view: Optional[TraceEvent] = None
+        mark = -1
+        for index, event in enumerate(self._events):
+            if event.event == "VIEW":
+                newest_view = event
+                mark = index
+
+        if newest_view is not None:
+            if view is not None and newest_view.get("view") != view:
+                return []
+            candidates = [
+                event
+                for index, event in enumerate(self._events)
+                if index > mark
+            ]
+        else:
+            # No VIEW line yet: nothing to scope against, so every line counts.
+            candidates = list(self._events)
+
+        return [
+            event
+            for event in candidates
+            if event.event == "FOCUS"
+            and (view is None or event.get("view") == view)
+        ]
 
     def focus_history(self, limit: int = 12) -> List[str]:
         """The rows the highlight passed through, oldest first.

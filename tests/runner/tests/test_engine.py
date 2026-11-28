@@ -892,6 +892,50 @@ def test_focus_fails_when_the_app_never_reports_a_row(tmp_path: Path) -> None:
     assert context.driver.presses == []
 
 
+def test_focus_does_not_use_a_stale_row_from_a_previous_page(tmp_path: Path) -> None:
+    # The Player page was shown earlier and its rows are still in the log, but
+    # the homepage is on screen now: a step that wants a PageMenu row must wait
+    # for the page to be pushed again, never press on the old row.
+    runner, context = _focus_context(
+        tmp_path,
+        [
+            "E2E:VIEW;category=sitemap;view=PageMenu;depth=2",
+            _focus_line("Toggle Switch", index=0, kind="Switch", view="PageMenu", depth=2),
+            "E2E:VIEW;category=sitemap;view=HomepageMenu;depth=1",
+            _focus_line("Player", index=1),
+        ],
+    )
+    with pytest.raises(engine.AssertionFailure) as error:
+        runner._do_focus(
+            _focus_step(view="PageMenu", label="Audio", timeout_ms=100), context
+        )
+    assert "no focused element for view=PageMenu" in str(error.value)
+    assert context.driver.presses == []
+
+
+def test_focus_ignores_the_earlier_appearance_of_the_same_view(tmp_path: Path) -> None:
+    # The homepage is shown again after a pop and reports Switches. The Player
+    # row it reported before the page was pushed must not satisfy the step.
+    runner, context = _focus_context(
+        tmp_path,
+        [
+            "E2E:VIEW;category=sitemap;view=HomepageMenu;depth=1",
+            _focus_line("Player", index=1),
+            "E2E:VIEW;category=sitemap;view=PageMenu;depth=2",
+            _focus_line("Audio", index=0, kind="Switch", view="PageMenu", depth=2),
+            "E2E:VIEW;category=sitemap;view=HomepageMenu;depth=1",
+            _focus_line("Switches", index=0),
+        ],
+        after_press=[[_focus_line("Player", index=1)]],
+    )
+    status, message, _artifacts = runner._do_focus(
+        _focus_step(view="HomepageMenu", label="Player"), context
+    )
+    assert status == "passed"
+    assert "after 1 press" in message
+    assert context.driver.presses == [("DOWN", 1)]
+
+
 def test_focus_does_not_treat_another_menus_focus_as_current(tmp_path: Path) -> None:
     # The newest FOCUS belongs to a page that was just pushed; the homepage has
     # not painted yet, so nothing may be pressed on the strength of it.

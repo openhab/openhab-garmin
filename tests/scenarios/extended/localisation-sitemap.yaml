@@ -107,12 +107,29 @@ steps:
     label: Player
     max_presses: 5
 
+  # A Frame is a submenu, so this select pushes the Player frame's page - the
+  # same two-level navigation as Switches above. It does not open PlayerView.
+  - action: press
+    button: ENTER
+
+  # The player element inside the frame is what opens the full-screen view. Its
+  # label is the sitemap label (`Switch item=E2E_MediaControl label="Audio"`),
+  # not a translated resource, so it is identical in every language. This step
+  # also waits for the page pushed above to report its own focus before it
+  # presses anything, so the previous page cannot leave a stale row behind.
+  - action: focus
+    description: The player element inside the Player frame.
+    view: PageMenu
+    label: Audio
+    max_presses: 5
+    timeout_ms: 15000
+
   - action: press
     button: ENTER
 
   - action: wait_for_event
     description: >-
-      Back on the homepage, selecting the Player frame opens PlayerView.
+      Selecting the player element opens PlayerView with the localised labels.
     event: VIEW
     fields:
       category: sitemap

@@ -799,7 +799,12 @@ and a select can send a command.
 
 `label`, `kind` and `index` are matched against the `FOCUS` event; at least one
 is required, and `view` narrows it to the menu that owns the row (two pages at
-the same depth are otherwise indistinguishable). The step behaves as follows:
+the same depth are otherwise indistinguishable). Only the lines emitted since
+the newest `VIEW` count, and only while `view` **is** the newest view: a menu can
+be shown more than once (the homepage after every `BACK`), and a row it reported
+last time must not be mistaken for the current focus. That is why a step after a
+`press` that pushes a page waits for the new page's own `FOCUS` instead of acting
+on the previous page's row. The step behaves as follows:
 
 1. It waits until the app has reported a focused row **for that view**. Nothing
    is pressed before that, because a press on an unobserved row is how a
