@@ -1,14 +1,34 @@
 # Agent Instructions
 
-## Do not create unit tests
+## Tests
 
-Do not create or add automated tests, including Connect IQ `(:test)` unit tests, test source folders, or test infrastructure in `monkey.jungle`.
-This repository does not use automated unit tests at this time.
+This repository has automated tests, and CI runs them:
 
-Instead of writing tests, provide the operator with clear, step-by-step instructions to verify the change manually in the Garmin Connect IQ simulator.
-The instructions should cover the relevant device/input models where applicable (for example touch, button, and Edge devices) and the expected behavior, including edge cases.
+- **Harness tests.** [`tests/runner/tests`](tests/runner/tests) is a pytest suite.
+  CI runs `python -m pytest` with `tests/runner` as the working directory; after
+  changing the harness, do the same:
 
-If a change would normally warrant an automated test, state the manual verification steps explicitly and let the operator run them.
+  ```bash
+  cd tests/runner
+  python -m pip install -r requirements.txt
+  python -m pip install --editable .
+  python -m pytest
+  ```
+
+- **Connect IQ unit tests (Run No Evil).** [`source/test`](source/test) holds
+  `(:test)` sources compiled with `monkeyc --unit-test` and run by
+  [`tests/unit/run`](tests/unit/run);
+  [`tests/docs/unit-tests.md`](tests/docs/unit-tests.md) documents the tier, how
+  to run it and its limits.
+
+Do not add a new test framework, a new test source root, or test infrastructure
+in `monkey.jungle` without the operator's agreement.
+
+When a change cannot be covered by either tier — anything that needs the
+simulator to paint and take input, for example — give the operator clear,
+step-by-step instructions to verify it in the Garmin Connect IQ simulator. Cover
+the relevant device/input models (touch, button and Edge devices), the expected
+behaviour and the edge cases, and let the operator run them.
 
 ## Keep documentation in sync
 
