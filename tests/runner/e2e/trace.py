@@ -15,7 +15,7 @@ the documented order::
     E2E:COMMAND;result=<success|error>;code=<code|->;item=<item>;value=<command>
     E2E:INPUT;button=<select|back|next-page|previous-page>;view=<name>;depth=<n>
     E2E:SELECT;kind=<element type>;result=<pushed|empty-page|page-not-ready|no-action|offline|command|settings>;depth=<n>
-    E2E:FOCUS;view=<name>;depth=<n>;index=<n>;kind=<element type>;label=<label>
+    E2E:FOCUS;view=<name>;depth=<n>;index=<n>;kind=<element type>;label=<label>;source=<platform|baseline>
     E2E:ERROR;kind=<temporary|critical|fatal>;id=<id>;code=<code|->;source=<sitemap|command|ui>
     E2E:TOAST;id=<id>
     E2E:ERRORVIEW;id=<id>;code=<code|->
@@ -29,8 +29,8 @@ be broken by a value.
 
 ``FOCUS`` is emitted when the focused menu entry changes: after the highlight
 moved, and for the entry that becomes focused when a page is pushed or popped.
-A repeat of the same ``(view, depth, index, kind, label)`` is suppressed, so a
-polling app's repaints do not flood the console. Scrolling between entries
+A repeat of the same ``(view, depth, index, kind, label, source)`` is suppressed,
+so a polling app's repaints do not flood the console. Scrolling between entries
 happens inside ``Menu2`` and never reaches the input delegate, so this is the
 only event that names the row a press landed on, and it is what lets a scenario
 address an element by label instead of by a hard-coded press count.
@@ -38,6 +38,16 @@ address an element by label instead of by a hard-coded press count.
 ``SELECT.kind`` reports) or ``Settings``/``Loading``/``MenuItem`` for the
 entries the app adds itself; ``label`` carries the sitemap label and is empty
 for those entries, because the trace never carries translated chrome.
+
+``source`` is the provenance of the position, and it is load-bearing:
+
+- ``platform``: the entry reported itself as focused. This is evidence, and it
+  is the default for an ``assert.focus`` condition.
+- ``baseline``: the platform reported no focused entry at all (``isFocused()`` is
+  faulty on some Edge devices, and is unset for the first frame after a push),
+  so the entry the native menu focuses when a page is shown was assumed. It is a
+  starting point for navigation - the step re-checks after every press - and
+  never evidence that the highlight is on that entry.
 
 Rules this parser follows, so the harness does not break when the app adds
 fields or events:
@@ -81,7 +91,7 @@ EVENT_FIELDS: Mapping[str, tuple] = MappingProxyType(
         "COMMAND": ("result", "code", "item", "value"),
         "INPUT": ("button", "view", "depth"),
         "SELECT": ("kind", "result", "depth"),
-        "FOCUS": ("view", "depth", "index", "kind", "label"),
+        "FOCUS": ("view", "depth", "index", "kind", "label", "source"),
         "ERROR": ("kind", "id", "code", "source"),
         "TOAST": ("id",),
         "ERRORVIEW": ("id", "code"),

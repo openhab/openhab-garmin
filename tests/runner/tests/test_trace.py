@@ -44,9 +44,9 @@ REAL_SAMPLES = (
     "E2E:INPUT;button=back;view=PageMenu;depth=2",
     "E2E:SELECT;kind=Frame;result=pushed;depth=1",
     "E2E:SELECT;kind=Switch;result=command;depth=2",
-    "E2E:FOCUS;view=HomepageMenu;depth=1;index=1;kind=Frame;label=Player",
-    "E2E:FOCUS;view=PageMenu;depth=2;index=0;kind=Switch;label=Kitchen%20Light",
-    "E2E:FOCUS;view=HomepageMenu;depth=1;index=4;kind=Settings;label=",
+    "E2E:FOCUS;view=HomepageMenu;depth=1;index=1;kind=Frame;label=Player;source=platform",
+    "E2E:FOCUS;view=PageMenu;depth=2;index=0;kind=Switch;label=Kitchen%20Light;source=platform",
+    "E2E:FOCUS;view=HomepageMenu;depth=1;index=4;kind=Settings;label=;source=platform",
     "E2E:ERROR;kind=temporary;id=communication.sitemap;code=-400;source=sitemap",
     "E2E:ERROR;kind=critical;id=communication.sitemap;code=404;source=sitemap",
     "E2E:ERROR;kind=fatal;id=settings.changed;code=-;source=ui",
@@ -106,7 +106,7 @@ def test_a_focus_label_is_matched_in_its_human_readable_form() -> None:
     # would otherwise split the line, so a scenario writes the label as it
     # appears on screen.
     event = parse_line(
-        "E2E:FOCUS;view=PageMenu;depth=2;index=2;kind=Switch;label=Living%3BRoom%20Lamp"
+        "E2E:FOCUS;view=PageMenu;depth=2;index=2;kind=Switch;label=Living%3BRoom%20Lamp;source=platform"
     )
     assert event is not None
     assert event.fields["label"] == "Living%3BRoom%20Lamp"
@@ -116,7 +116,7 @@ def test_a_focus_label_is_matched_in_its_human_readable_form() -> None:
 
 def test_a_focus_position_is_matched_as_the_documented_decimal() -> None:
     event = parse_line(
-        "E2E:FOCUS;view=HomepageMenu;depth=1;index=3;kind=Frame;label=Empty"
+        "E2E:FOCUS;view=HomepageMenu;depth=1;index=3;kind=Frame;label=Empty;source=platform"
     )
     assert event is not None
     # Scenario `index: 3` is canonicalised to the string the wire carries.
@@ -127,7 +127,7 @@ def test_a_focus_position_is_matched_as_the_documented_decimal() -> None:
 def test_an_empty_focus_label_is_a_field_not_a_missing_one() -> None:
     # A non-sitemap entry reports no label on purpose; it must still parse as
     # an empty field, so `label: ""` can be asserted deliberately.
-    event = parse_line("E2E:FOCUS;view=HomepageMenu;depth=1;index=4;kind=Settings;label=")
+    event = parse_line("E2E:FOCUS;view=HomepageMenu;depth=1;index=4;kind=Settings;label=;source=platform")
     assert event is not None
     assert "label" in event.fields
     assert event.fields["label"] == ""
@@ -394,8 +394,8 @@ def test_current_focus_event_is_the_newest_row_the_highlight_reached() -> None:
     buffer = _Buffer()
     log = TraceLog(buffer)
     buffer.lines = [
-        "E2E:FOCUS;view=HomepageMenu;depth=1;index=0;kind=Frame;label=Switches",
-        "E2E:FOCUS;view=HomepageMenu;depth=1;index=1;kind=Frame;label=Player",
+        "E2E:FOCUS;view=HomepageMenu;depth=1;index=0;kind=Frame;label=Switches;source=platform",
+        "E2E:FOCUS;view=HomepageMenu;depth=1;index=1;kind=Frame;label=Player;source=platform",
         "E2E:SITEMAP;result=unchanged;code=200;bytes=4096",
     ]
     log.poll()
@@ -417,9 +417,9 @@ def test_current_focus_event_ignores_an_earlier_appearance_of_the_view() -> None
     log = TraceLog(buffer)
     buffer.lines = [
         "E2E:VIEW;category=sitemap;view=HomepageMenu;depth=1",
-        "E2E:FOCUS;view=HomepageMenu;depth=1;index=1;kind=Frame;label=Player",
+        "E2E:FOCUS;view=HomepageMenu;depth=1;index=1;kind=Frame;label=Player;source=platform",
         "E2E:VIEW;category=sitemap;view=PageMenu;depth=2",
-        "E2E:FOCUS;view=PageMenu;depth=2;index=0;kind=Switch;label=Audio",
+        "E2E:FOCUS;view=PageMenu;depth=2;index=0;kind=Switch;label=Audio;source=platform",
         "E2E:VIEW;category=sitemap;view=HomepageMenu;depth=1",
     ]
     log.poll()
@@ -435,9 +435,9 @@ def test_focus_events_are_scoped_to_the_newest_view() -> None:
     log = TraceLog(buffer)
     buffer.lines = [
         "E2E:VIEW;category=sitemap;view=HomepageMenu;depth=1",
-        "E2E:FOCUS;view=HomepageMenu;depth=1;index=1;kind=Frame;label=Player",
+        "E2E:FOCUS;view=HomepageMenu;depth=1;index=1;kind=Frame;label=Player;source=platform",
         "E2E:VIEW;category=sitemap;view=PageMenu;depth=2",
-        "E2E:FOCUS;view=PageMenu;depth=2;index=0;kind=Switch;label=Audio",
+        "E2E:FOCUS;view=PageMenu;depth=2;index=0;kind=Switch;label=Audio;source=platform",
     ]
     log.poll()
     assert [event.get("label") for event in log.focus_events("PageMenu")] == ["Audio"]
@@ -449,16 +449,16 @@ def test_focus_history_names_every_row_the_highlight_passed_through() -> None:
     buffer = _Buffer()
     log = TraceLog(buffer)
     buffer.lines = [
-        "E2E:FOCUS;view=HomepageMenu;depth=1;index=0;kind=Frame;label=Switches",
-        "E2E:FOCUS;view=HomepageMenu;depth=1;index=1;kind=Frame;label=Player",
-        "E2E:FOCUS;view=PageMenu;depth=2;index=0;kind=Switch;label=Audio",
+        "E2E:FOCUS;view=HomepageMenu;depth=1;index=0;kind=Frame;label=Switches;source=platform",
+        "E2E:FOCUS;view=HomepageMenu;depth=1;index=1;kind=Frame;label=Player;source=platform",
+        "E2E:FOCUS;view=PageMenu;depth=2;index=0;kind=Switch;label=Audio;source=platform",
     ]
     log.poll()
     history = log.focus_history()
     assert history == [
-        "E2E:FOCUS;view=HomepageMenu;depth=1;index=0;kind=Frame;label=Switches",
-        "E2E:FOCUS;view=HomepageMenu;depth=1;index=1;kind=Frame;label=Player",
-        "E2E:FOCUS;view=PageMenu;depth=2;index=0;kind=Switch;label=Audio",
+        "E2E:FOCUS;view=HomepageMenu;depth=1;index=0;kind=Frame;label=Switches;source=platform",
+        "E2E:FOCUS;view=HomepageMenu;depth=1;index=1;kind=Frame;label=Player;source=platform",
+        "E2E:FOCUS;view=PageMenu;depth=2;index=0;kind=Switch;label=Audio;source=platform",
     ]
 
 
@@ -466,7 +466,7 @@ def test_focus_history_is_bounded() -> None:
     buffer = _Buffer()
     log = TraceLog(buffer)
     buffer.lines = [
-        f"E2E:FOCUS;view=HomepageMenu;depth=1;index={index};kind=Frame;label=Row{index}"
+        f"E2E:FOCUS;view=HomepageMenu;depth=1;index={index};kind=Frame;label=Row{index};source=platform"
         for index in range(30)
     ]
     log.poll()

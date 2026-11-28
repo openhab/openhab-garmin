@@ -242,7 +242,7 @@ basis alone.
 | `source/test/SitemapModelTests.mc` | homepage title and widget types; label/state split; Frame and linked page nesting; empty page; unsupported type; item type/unit/state rules | a change to `JsonAdapter`, `SitemapHomepage`, the factory or `Item` that breaks the REST contract |
 | `source/test/ErrorClassificationTests.mc` | -402/-403/-1001/404 are full-screen; BLE codes are no-phone and not full-screen; `S:`/`C:` prefixes; empty-response suppression for -400 and null bodies | an error code silently changing class, or the user-facing code changing |
 | `source/test/SitemapParameterTests.mc` | Setpoint/Slider defaults, invalid step/range/step-count, releaseOnly default, numeric formatting, ON/OFF mapping normalization, switch display state, named and hex colours | a parameter rule silently relaxing or a mapping/colour silently regressing |
-| `source/test/E2ETraceFocusTests.mc` | `E2E:FOCUS` field order, percent-encoding of the server-sourced kind and label, an empty label field, a non-ASCII label | the trace line changing shape, which every `focus` step and `assert.focus` parses |
+| `source/test/E2ETraceFocusTests.mc` | `E2E:FOCUS` field order, percent-encoding of the server-sourced kind and label, an empty label field, a non-ASCII label, and the `source=platform`/`source=baseline` provenance | the trace line changing shape, which every `focus` step and `assert.focus` parses |
 
 Notes on the pilot data:
 

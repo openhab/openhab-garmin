@@ -745,8 +745,12 @@ def test_wait_for_view_is_skipped_without_an_event_stream(tmp_path: Path) -> Non
 # focus: address a row by label instead of by a press count
 # ---------------------------------------------------------------------------
 
-def _focus_line(label, index=0, kind="Frame", view="HomepageMenu", depth=1) -> str:
-    return f"E2E:FOCUS;view={view};depth={depth};index={index};kind={kind};label={label}"
+def _focus_line(label, index=0, kind="Frame", view="HomepageMenu", depth=1,
+                source="platform") -> str:
+    return (
+        f"E2E:FOCUS;view={view};depth={depth};index={index};kind={kind}"
+        f";label={label};source={source}"
+    )
 
 
 class _ScriptedFocusDriver(NullDriver):

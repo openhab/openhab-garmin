@@ -542,7 +542,38 @@ def test_assert_focus_is_a_condition(tmp_path: Path) -> None:
         ]
     )
     step = load_scenario(_write(tmp_path, document)).steps[1]
-    assert step.get("focus") == {"view": "HomepageMenu", "label": "Player"}
+    assert step.get("focus") == {
+        "view": "HomepageMenu",
+        "label": "Player",
+        # A baseline is an assumption, so an assertion must ask for the
+        # platform's own report unless it says otherwise.
+        "source": "platform",
+    }
+
+
+def test_assert_focus_can_ask_for_the_baseline_explicitly(tmp_path: Path) -> None:
+    document = _with(
+        steps=[
+            {"action": "launch"},
+            {
+                "action": "assert",
+                "focus": {"label": "Switches", "source": "baseline"},
+            },
+        ]
+    )
+    step = load_scenario(_write(tmp_path, document)).steps[1]
+    assert step.get("focus")["source"] == "baseline"
+
+
+def test_focus_rejects_an_unknown_source(tmp_path: Path) -> None:
+    for action in (
+        {"action": "focus", "label": "Player", "source": "guess"},
+        {"action": "assert", "focus": {"label": "Player", "source": "guess"}},
+    ):
+        document = _with(steps=[{"action": "launch"}, action])
+        with pytest.raises(ScenarioError) as error:
+            load_scenario(_write(tmp_path, document))
+        assert "must be one of platform, baseline" in str(error.value)
 
 
 def test_assert_focus_needs_a_field(tmp_path: Path) -> None:

@@ -110,27 +110,28 @@ class BaseMenuItem extends CustomMenuItem {
             return;
         }
         if( isFocused() ) {
-            emitFocus( index );
+            emitFocus( index, "platform" );
             return;
         }
         if( index == 0
             && ! focusTraceIsPlaceholder()
             && menu.traceFocusedIndex() < 0
         ) {
-            emitFocus( 0 );
+            emitFocus( 0, "baseline" );
         }
     }
     (:release)
     private function traceFocus() as Void {}
 
     (:debug)
-    private function emitFocus( index as Number ) as Void {
+    private function emitFocus( index as Number, source as String ) as Void {
         E2ETrace.focusedItem(
             ViewStack.currentViewName(),
             ViewStack.getDepth(),
             index,
             focusTraceKind(),
-            focusTraceLabel()
+            focusTraceLabel(),
+            source
         );
     }
 

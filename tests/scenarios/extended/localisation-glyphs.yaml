@@ -52,6 +52,14 @@ manual_checks:
     within a bounded number of DOWN/UP presses, and names the rows it passed
     when it cannot. That makes a wrong-row failure impossible to confuse with a
     missing glyph; what remains review-only is how the glyphs actually render.
+  - >-
+    "The info toast kept the highlight on Empty" is not asserted. On a device
+    whose focus API is dormant (`isFocused()` is faulty on some Edge devices,
+    #267) the only FOCUS line after the toast is the app's index-0 baseline, and
+    asserting on it would assert a position the device never reported. Confirm
+    by eye in `glyphs-empty-page.png` that Empty is still highlighted before the
+    UP presses; the following `focus Player` step proves the scenario is still
+    on the homepage and that the empty frame did not navigate.
 
 settings:
   sitemap_0: garmin_localisation
@@ -77,9 +85,12 @@ steps:
   - action: screenshot
     name: glyphs-homepage
 
-  # Selecting the Empty frame shows the localised EmptyPage toast and keeps the
-  # homepage visible. Its position is not assumed: the step scrolls until the
-  # app reports the Empty label as focused.
+  # Selecting the Empty frame must be decided in the app, not opened: the select
+  # reports `empty-page` and the info toast follows. Both are machine-asserted
+  # below. Whether the highlight stays on Empty is review-only (see
+  # manual_checks): on a device whose focus API is dormant the only FOCUS line
+  # after the toast is the app's index-0 baseline, so asserting a position there
+  # would assert a value the device never reported.
   - action: focus
     description: Move the highlight onto the Empty frame before selecting it.
     view: HomepageMenu
@@ -90,15 +101,17 @@ steps:
     button: ENTER
 
   - action: wait_for_event
+    description: The app decided the empty frame has no page to open.
+    event: SELECT
+    fields:
+      kind: Frame
+      result: empty-page
+    timeout_ms: 15000
+
+  - action: wait_for_event
     description: The empty-page info toast is shown.
     event: TOAST
     timeout_ms: 15000
-
-  # The toast is an info toast: it must not move the highlight, or the UP below
-  # would start from an unknown row.
-  - action: assert
-    description: The toast did not move the highlight off the Empty frame.
-    focus: {view: HomepageMenu, label: Empty}
 
   - action: screenshot
     name: glyphs-empty-page

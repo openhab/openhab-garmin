@@ -92,7 +92,13 @@ PRESS_EXPECTATIONS = ("input", "effect", "none")
 FOCUS_SCROLL_BUTTONS = ("DOWN", "UP")
 
 #: Fields a ``focus`` step and an ``assert.focus`` condition may match.
-FOCUS_FIELDS = ("view", "kind", "label", "index")
+FOCUS_FIELDS = ("view", "kind", "label", "index", "source")
+
+#: Provenance of a FOCUS position. ``platform`` means the entry reported itself
+#: as focused; ``baseline`` means the platform reported nothing and the first
+#: entry was assumed. Only ``platform`` is evidence a scenario may assert on,
+#: which is why ``assert.focus`` defaults to it.
+FOCUS_SOURCES = ("platform", "baseline")
 
 _SLUG = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 _SCREENSHOT_NAME = re.compile(r"^[a-z0-9]+(?:[-_][a-z0-9]+)*$")
@@ -412,6 +418,8 @@ def _focus_fields(raw: Mapping[str, Any], where: str) -> Dict[str, str]:
     if "index" in raw:
         # FOCUS.index is a decimal position in the menu, counted from 0.
         fields["index"] = str(_int(raw["index"], f"{where}.index", 0))
+    if "source" in raw:
+        fields["source"] = _enum(raw["source"], f"{where}.source", FOCUS_SOURCES)
     return fields
 
 
@@ -426,7 +434,7 @@ def _step_focus(raw: Mapping[str, Any], where: str) -> Dict[str, Any]:
     view is right" retry, which would select the rows in between.
     """
     _reject_unknown(raw, {"action", "description", "view", "kind", "label", "index",
-                          "button", "max_presses", "timeout_ms"}, where)
+                          "source", "button", "max_presses", "timeout_ms"}, where)
     params: Dict[str, Any] = _focus_fields(raw, where)
     if not any(key in params for key in ("kind", "label", "index")):
         raise ScenarioError(
@@ -555,6 +563,10 @@ def _assertion_params(raw: Mapping[str, Any], where: str) -> Dict[str, Any]:
                 f"{spec_where}: needs 'view', 'kind', 'label' or 'index' to say "
                 "which element must be focused"
             )
+        # A baseline is an assumption, not an observation: an assertion must not
+        # pass on a position the device never reported. A scenario that really
+        # wants to prove the baseline may still ask for it explicitly.
+        fields.setdefault("source", "platform")
         params["focus"] = fields
 
     if "shim_requests" in raw:

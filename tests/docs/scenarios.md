@@ -300,7 +300,7 @@ a run.
 | `command` | `item`, `value`, `via` (`rest`/`shim`) | `rest` talks to openHAB directly |
 | `wait_for_event` | `event`, `fields`, `contains`, `timeout_ms` | see trace events below |
 | `wait_for_view` | `category`/`view`, `depth`, `timeout_ms` | shorthand for a `VIEW` event; put it before a screenshot |
-| `focus` | `label`/`kind`/`index` (at least one), `view`, `button` (`DOWN`/`UP`), `max_presses`, `timeout_ms` | requires a button-capable device; scrolls until the app reports that element as focused, see [Addressing an element](#addressing-an-element) |
+| `focus` | `label`/`kind`/`index` (at least one), `view`, `source` (`platform`/`baseline`), `button` (`DOWN`/`UP`), `max_presses`, `timeout_ms` | requires a button-capable device; scrolls until the app reports that element as focused, see [Addressing an element](#addressing-an-element) |
 | `assert` | `shim_requests`, `golden`, `focus`, `no_error_view`, `never_error_view`, `description` | at least one condition |
 
 ### `assert`
@@ -546,7 +546,7 @@ E2E:<EVENT>;field=<value>;field=<value>
 | `COMMAND` | `result` (`success`/`error`), `code`, `item`, `value` |
 | `INPUT` | `button` (`select`/`back`/`next-page`/`previous-page`), `view`, `depth` |
 | `SELECT` | `kind` (element type), `result` (`pushed`/`empty-page`/`page-not-ready`/`no-action`/`offline`/`command`/`settings`), `depth` |
-| `FOCUS` | `view`, `depth`, `index`, `kind` (element type, or `Settings`/`Loading`/`MenuItem`), `label` |
+| `FOCUS` | `view`, `depth`, `index`, `kind` (element type, or `Settings`/`Loading`/`MenuItem`), `label`, `source` (`platform`/`baseline`) |
 | `ERROR` | `kind` (`temporary`/`critical`/`fatal`), `id`, `code`, `source` (`sitemap`/`command`/`ui`) |
 | `TOAST` | `id` |
 | `ERRORVIEW` | `id`, `code` |
@@ -572,8 +572,8 @@ split as `current_view_category()`/`is_showing_error_view()` against
 `has_error_view()`.
 
 `FOCUS` is emitted when the highlighted menu entry changes, and only then: a
-repeat of the same `(view, depth, index, kind, label)` is suppressed, so a
-polling app's repaints do not flood the console. It is the one event that names
+repeat of the same `(view, depth, index, kind, label, source)` is suppressed, so
+a polling app's repaints do not flood the console. It is the one event that names
 the row a press landed on, because scrolling happens inside `Menu2` and never
 reaches the input delegate. `index` is the entry's position in `view` counted
 from 0 (the homepage's settings entry included, because a reader can see it);
@@ -582,15 +582,23 @@ from 0 (the homepage's settings entry included, because a reader can see it);
 the sitemap label and is empty for those entries, because the trace never
 carries translated chrome.
 
-While no entry reports itself as focused — `isFocused()` is faulty on some Edge
-devices (#267) and is unset for the first frame after a push — the first entry
-reports `index=0`, the entry the native menu focuses when a page is shown. The
-guess is never made while the platform reports a focused entry, so a device with
-a working `isFocused()` sees no difference; a device that never reports movement
-can only ever name that baseline, which the `focus` step reports explicitly.
+`source` says where the position came from, and it decides what the line may be
+used for:
+
+- `platform` — the entry reported itself as focused. This is an observation.
+- `baseline` — the platform reported no focused entry at all, so the app assumed
+  the entry the native menu focuses when a page is shown (`index=0`). It exists
+  because `isFocused()` is faulty on some Edge devices (#267) and is unset for
+  the first frame after a push. It is a starting point for `focus`, never
+  evidence that the highlight is on that entry.
+
+A scenario that asserts a position must require `platform`; `assert.focus` does
+that by default. `focus` steps accept either, because they re-check the row after
+every press and only ever press `DOWN`/`UP`, so a wrong starting point costs a
+bounded press rather than a wrong select.
 
 ```text
-E2E:FOCUS;view=HomepageMenu;depth=1;index=1;kind=Frame;label=Player
+E2E:FOCUS;view=HomepageMenu;depth=1;index=1;kind=Frame;label=Player;source=platform
 ```
 
 ```yaml
@@ -841,24 +849,31 @@ instead of selecting the wrong element later.
 
 `isFocused()` is faulty on some Edge devices (#267) and is unset for the first
 frame after a page is pushed. While **no** entry reports itself as focused, the
-first entry reports index 0, which is the entry the native menu focuses when a
-page is shown; the guess is never made while the platform reports a focused
-entry, and the repeat rule suppresses it, so a device with a working
-`isFocused()` sees no difference. That gives every page a starting point. It
-cannot invent a position for a scrolled menu: if a device never reports
-movement, the `focus` step fails with the "only … was ever reported" line
-rather than pressing on a guess.
+first entry reports `index=0` with `source=baseline`: the entry the native menu
+focuses when a page is shown. The guess is never made while the platform reports
+a focused entry, and the repeat rule suppresses it, so a device with a working
+`isFocused()` sees no difference. That gives every page a starting point without
+pretending it was observed.
+
+A `focus` step accepts a baseline because it re-checks the row after every press
+and never presses `ENTER` on a guess. An `assert` must not: `assert.focus`
+requires `source=platform` unless the scenario explicitly asks for `baseline`, so
+a position the device never reported cannot satisfy an assertion. If a device
+never reports movement, the `focus` step fails with the "only … was ever
+reported" line instead of pressing on a guess, and "the highlight stayed on X" is
+a manual check rather than an assertion.
 
 `focus` needs the console event stream. With `--skip-events` or a driver that
 has none it **fails** rather than skipping, because skipping would leave the
 next `press` acting on a row nobody observed.
 
-An `assert` can check the focus without moving it:
+An `assert` can check the focus without moving it. It requires the platform's
+own report by default, because a baseline is an assumption:
 
 ```yaml
 - action: assert
-  description: The empty-page toast kept the highlight on the Empty frame.
-  focus: {view: HomepageMenu, label: Empty}
+  description: The player page reported its element as focused.
+  focus: {view: PageMenu, label: Audio}
 ```
 
 The failure names both the expected element and the one that is actually

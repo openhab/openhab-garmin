@@ -19,17 +19,37 @@ import Toybox.Test;
 (:test)
 class E2ETraceFocusTests {
 
-    // The documented order: view, depth, index, kind, label. A scenario may
-    // rely on it, and the harness tests assert against real sample lines.
+    // The documented order: view, depth, index, kind, label, source. A scenario
+    // may rely on it, and the harness tests assert against real sample lines.
     (:test)
     static function fieldOrderIsStable( logger as Test.Logger ) as Boolean {
-        var line = E2ETrace.focusEvent( "HomepageMenu", 1, 1, "Frame", "Player" );
+        var line = E2ETrace.focusEvent( "HomepageMenu", 1, 1, "Frame", "Player", "platform" );
         logger.debug( "line=" + line );
 
         Test.assertEqualMessage(
-            "FOCUS;view=HomepageMenu;depth=1;index=1;kind=Frame;label=Player",
+            "FOCUS;view=HomepageMenu;depth=1;index=1;kind=Frame;label=Player;source=platform",
             line,
             "FOCUS wire format"
+        );
+        return true;
+    }
+
+    // The provenance field separates a position the platform reported from the
+    // baseline the app assumes when isFocused() reports nothing. A scenario may
+    // assert only on the former.
+    (:test)
+    static function theSourceFieldSeparatesBaselineFromPlatform( logger as Test.Logger ) as Boolean {
+        var platform = E2ETrace.focusEvent( "HomepageMenu", 1, 3, "Frame", "Empty", "platform" );
+        var baseline = E2ETrace.focusEvent( "HomepageMenu", 1, 0, "Frame", "Switches", "baseline" );
+        logger.debug( "platform=" + platform + " baseline=" + baseline );
+
+        Test.assertMessage(
+            platform.find( ";source=platform" ) != null,
+            "a platform report must say so: " + platform
+        );
+        Test.assertMessage(
+            baseline.find( ";source=baseline" ) != null,
+            "a baseline must say so: " + baseline
         );
         return true;
     }
@@ -39,13 +59,13 @@ class E2ETraceFocusTests {
     (:test)
     static function labelIsPercentEncoded( logger as Test.Logger ) as Boolean {
         var line = E2ETrace.focusEvent(
-            "PageMenu", 2, 0, "Switch", "Living Room; 50%|x"
+            "PageMenu", 2, 0, "Switch", "Living Room; 50%|x", "platform"
         );
         logger.debug( "line=" + line );
 
         Test.assertEqualMessage(
             "FOCUS;view=PageMenu;depth=2;index=0;kind=Switch"
-            + ";label=Living%20Room%3B%2050%25%7Cx",
+            + ";label=Living%20Room%3B%2050%25%7Cx;source=platform",
             line,
             "label encoding"
         );
@@ -56,11 +76,11 @@ class E2ETraceFocusTests {
     // reports; a ';' in it must not be read as the next field.
     (:test)
     static function kindIsEncodedToo( logger as Test.Logger ) as Boolean {
-        var line = E2ETrace.focusEvent( "PageMenu", 2, 3, "Odd;Type", "" );
+        var line = E2ETrace.focusEvent( "PageMenu", 2, 3, "Odd;Type", "", "platform" );
         logger.debug( "line=" + line );
 
         Test.assertEqualMessage(
-            "FOCUS;view=PageMenu;depth=2;index=3;kind=Odd%3BType;label=",
+            "FOCUS;view=PageMenu;depth=2;index=3;kind=Odd%3BType;label=;source=platform",
             line,
             "kind encoding"
         );
@@ -72,12 +92,12 @@ class E2ETraceFocusTests {
     // must still be present and empty, so `label: ""` is an explicit assertion.
     (:test)
     static function anEmptyLabelIsStillAField( logger as Test.Logger ) as Boolean {
-        var line = E2ETrace.focusEvent( "HomepageMenu", 1, 4, "Settings", "" );
+        var line = E2ETrace.focusEvent( "HomepageMenu", 1, 4, "Settings", "", "platform" );
         logger.debug( "line=" + line );
 
         Test.assertMessage(
-            line.find( ";label=" ) == line.length() - ";label=".length(),
-            "the line must end with an empty label field: " + line
+            line.find( ";label=;source=" ) != null,
+            "the line must carry an empty label field: " + line
         );
         return true;
     }
@@ -86,11 +106,11 @@ class E2ETraceFocusTests {
     // through unchanged; the harness compares the decoded value.
     (:test)
     static function aNonAsciiLabelPassesThrough( logger as Test.Logger ) as Boolean {
-        var line = E2ETrace.focusEvent( "PageMenu", 2, 1, "Text", "Téléphone" );
+        var line = E2ETrace.focusEvent( "PageMenu", 2, 1, "Text", "Téléphone", "platform" );
         logger.debug( "line=" + line );
 
         Test.assertEqualMessage(
-            "FOCUS;view=PageMenu;depth=2;index=1;kind=Text;label=Téléphone",
+            "FOCUS;view=PageMenu;depth=2;index=1;kind=Text;label=Téléphone;source=platform",
             line,
             "non-ASCII label"
         );
