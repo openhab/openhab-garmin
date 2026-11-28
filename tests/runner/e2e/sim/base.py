@@ -97,6 +97,22 @@ class SimulatorDriver(abc.ABC):
         """
         return language in RUNNABLE_LANGUAGES or self.provisions_language
 
+    def stage_hint(self, stage: str) -> str:
+        """Advice for a start stage that failed, in terms of this driver.
+
+        The stage names are shared, the mechanisms are not: a Wine prefix, a
+        GTK tree or a remote device are invisible to a driver that does not use
+        them, and an unconditional hint sends the reader to something that does
+        not exist. This default names no mechanism on purpose; a driver
+        overrides it with the one it actually uses.
+        """
+        return (
+            f"The '{stage}' stage failed under the '{self.name}' driver. Stage "
+            "names are shared but mechanisms are not, so read this driver's "
+            "section of tests/docs/simulator-driver.md and the run log instead "
+            "of another driver's advice."
+        )
+
     # -- lifecycle ---------------------------------------------------------
     @abc.abstractmethod
     def prepare(self, prg: Path) -> None:

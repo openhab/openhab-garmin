@@ -1451,10 +1451,15 @@ def timeout_error(
     *,
     display: str = DEFAULT_DISPLAY,
     details: Sequence[str] = (),
+    hint: Optional[str] = None,
 ) -> DriverError:
-    """Build an actionable error for a stage that ran out of time."""
-    hint = _STAGE_HINTS.get(stage, "").format(display=display)
-    lines = [f"{stage} did not complete within {timeout_s:.0f}s.", hint]
+    """Build an actionable error for a stage that ran out of time.
+
+    ``hint`` lets a driver supply its own advice (see ``SimulatorDriver.stage_hint``);
+    the stage name and details stay the same.
+    """
+    resolved = hint if hint is not None else _STAGE_HINTS.get(stage, "").format(display=display)
+    lines = [f"{stage} did not complete within {timeout_s:.0f}s.", resolved]
     for detail in details:
         if detail:
             lines.append(f"  {detail}")
@@ -1585,6 +1590,17 @@ class WineSimulatorDriver(SimulatorDriver):
             "simulator": getattr(self._simulator_process, "pid", None),
             "app": getattr(self._app_process, "pid", None),
         }
+
+    # -- driver-specific advice --------------------------------------------
+    def stage_hint(self, stage: str) -> str:
+        """Advice for a start stage that failed, in this driver's terms.
+
+        The base class names no mechanism on purpose. Wine's mechanism is the
+        prefix below, plus the entrypoint's ``link-devices``/``link-fonts``
+        staging, so a failure names those; a driver that launches the simulator
+        another way overrides this instead of inheriting nonsense.
+        """
+        return _STAGE_HINTS.get(stage, "").format(display=self.display)
 
     # -- contract ----------------------------------------------------------
     def prepare(self, prg: Path) -> None:
@@ -3305,7 +3321,7 @@ class WineSimulatorDriver(SimulatorDriver):
             raise DriverError(
                 f"no X display is answering on {self.display!r}: xdpyinfo exited "
                 f"{completed.returncode}.\n"
-                f"{_STAGE_HINTS['display'].format(display=self.display)}\n"
+                f"{self.stage_hint('display')}\n"
                 f"{tail((completed.stderr or '').splitlines(), 6)}"
             )
         if not self._display_checked:
@@ -3342,6 +3358,27 @@ class WineSimulatorDriver(SimulatorDriver):
         text = path.read_text(encoding="utf-8", errors="replace") if path.is_file() else ""
         update = update_ini(text, updates, remove=ini_removals(language_value))
         path.write_text(update.text, encoding="utf-8")
+        # Pin the language on every start, not just for a new file: a previous
+        # run's `Language=7` must be gone for `eng`, and a requested index must
+        # be present. Reading it back is what makes that an invariant instead of
+        # a hope, and it stops a run silently measuring another language.
+        reread = path.read_text(encoding="utf-8", errors="replace")
+        language_lines = [
+            line
+            for line in reread.splitlines()
+            if line.partition("=")[0].strip().lower() == "language"
+        ]
+        if language_value is None and language_lines:
+            raise DriverError(
+                f"{path} still has {language_lines[0]!r} after writing the default "
+                "language; the simulator would start in whatever a previous run "
+                "left there. Remove the key and retry."
+            )
+        if language_value is not None and not language_lines:
+            raise DriverError(
+                f"{path} has no Language key after writing {language_value!r}; the "
+                "simulator would start in its own default language."
+            )
         self._ini_path = path
         self._ini_summary = update
         language_note = (
@@ -3429,7 +3466,7 @@ class WineSimulatorDriver(SimulatorDriver):
                     f"the simulator exited with code {process.returncode} before "
                     "its window appeared.\n"
                     f"log: {self.simulator_log}\n"
-                    f"{_STAGE_HINTS['simulator-window']}"
+                    f"{self.stage_hint('simulator-window')}"
                 )
             for window in self._find_windows():
                 name = self._window_name(window) or ""
@@ -3437,7 +3474,7 @@ class WineSimulatorDriver(SimulatorDriver):
                 if title.error:
                     raise DriverError(
                         f"the simulator opened an error dialog ({name!r}).\n"
-                        f"{_STAGE_HINTS['simulator-window']}\n"
+                        f"{self.stage_hint('simulator-window')}\n"
                         f"log: {self.simulator_log}"
                     )
                 self._window = window
@@ -3450,7 +3487,7 @@ class WineSimulatorDriver(SimulatorDriver):
                 raise DriverError(
                     "the simulator opened an error dialog instead of its main "
                     "window.\n"
-                    f"{_STAGE_HINTS['simulator-window']}\n"
+                    f"{self.stage_hint('simulator-window')}\n"
                     f"log: {self.simulator_log}"
                 )
             time.sleep(0.5)
@@ -3459,6 +3496,7 @@ class WineSimulatorDriver(SimulatorDriver):
             "simulator-window",
             timeout,
             display=self.display,
+            hint=self.stage_hint("simulator-window"),
             details=[
                 "no window titled `CIQ Simulator` appeared",
                 f"log: {self.simulator_log}",
@@ -3660,7 +3698,7 @@ class WineSimulatorDriver(SimulatorDriver):
                 raise DriverError(
                     f"monkeydo exited with code {process.returncode} before the app "
                     "rendered its first view.\n"
-                    f"{_STAGE_HINTS['app-launch']}\n"
+                    f"{self.stage_hint('app-launch')}\n"
                     f"log: {self.console_log}\n"
                     f"{tail(self.events(), 12)}"
                 )
@@ -3703,6 +3741,7 @@ class WineSimulatorDriver(SimulatorDriver):
             "app-ready",
             min(timeout, DEFAULT_READY_TIMEOUT * 2),
             display=self.display,
+            hint=self.stage_hint("app-ready"),
             details=[
                 f"log: {self.console_log}",
                 "console tail:",

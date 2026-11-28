@@ -138,8 +138,16 @@ survives with no server behind it; Xvfb refuses to start against it, and the
 container would report healthy with nothing able to render. The files are only
 removed after `xdpyinfo` says nothing is answering, and an Xvfb that never
 comes up is a fatal start-up error. Xvfb starts before the SDK is staged: the
-copy is ~250 MB, and a display that only appears afterwards would make "healthy"
+copy is ~1 GB, and a display that only appears afterwards would make "healthy"
 and "can render" mean different things while a UI driver is already running.
+
+"Healthy" is stricter than "the container is up". The entrypoint writes
+`/run/ciq-ready` only after the SDK copy, the device and font staging and
+`sdk-check` have succeeded, and the runner's healthcheck requires that marker,
+the harness import and at least one staged simulator build. Before that marker
+existed, the VM saw the runner report healthy during the copy and the documented
+`up -d` then `exec` workflow failed with "does not look like a Connect IQ SDK".
+A restart clears the marker first, so a stale file cannot survive.
 
 The copy costs the size of the SDK in the container's writable layer on each
 start; `preflight` already requires 5 GiB free disk for the stack.

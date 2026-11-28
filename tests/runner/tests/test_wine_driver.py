@@ -33,7 +33,7 @@ from e2e.contract import (
 from e2e.sdk import SdkLayout
 from e2e.settings import load_settings
 from e2e.sim.base import Button, DriverError, SimulatorDriver
-from e2e.sim.null import png_bytes
+from e2e.sim.null import NullDriver, png_bytes
 from e2e.trace import parse_lines
 from e2e.sim.wine import (
     DEFAULT_KEYS,
@@ -1266,6 +1266,89 @@ def test_simulator_ini_rewrite_keeps_the_simulators_own_keys(
     assert "WifiState=2" in text
     assert "Language=eng" in text
     assert len(sorted((tmp_path / "prefix").rglob("simulator.ini"))) == 1
+
+
+def test_a_leftover_language_is_removed_before_start(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A previous `Language=7` must not survive an `eng` start.
+
+    The VM once reported `language=deu` for a contract that asked for English.
+    Writing the ini now verifies the key is gone, so a silent wrong-language
+    run fails here instead of later.
+    """
+    monkeypatch.setenv("USER", "root")
+    monkeypatch.delenv("WINEUSERNAME", raising=False)
+    driver = _driver(tmp_path)
+    ini = driver._ini_candidates()[0]
+    ini.parent.mkdir(parents=True, exist_ok=True)
+    ini.write_text("LastUsedDevice=fenix7\nLanguage=7\n", encoding="utf-8")
+
+    driver._write_simulator_ini(_device("fenix7"), "ble", None)
+
+    text = ini.read_text(encoding="utf-8")
+    assert "Language" not in text
+    assert "LastUsedDevice=fenix7" in text
+
+
+def test_write_simulator_ini_rejects_a_language_it_cannot_remove(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("USER", "root")
+    monkeypatch.delenv("WINEUSERNAME", raising=False)
+    driver = _driver(tmp_path)
+    ini = driver._ini_candidates()[0]
+    ini.parent.mkdir(parents=True, exist_ok=True)
+    ini.write_text("Language=7\n", encoding="utf-8")
+
+    def _ignore_removal(text, updates, remove=()):  # noqa: ANN001
+        from e2e.sim.wine import IniUpdate
+
+        return IniUpdate(text=text, written=(), appended=(), removed=())
+
+    monkeypatch.setattr("e2e.sim.wine.update_ini", _ignore_removal)
+    with pytest.raises(DriverError) as error:
+        driver._write_simulator_ini(_device("fenix7"), "ble", None)
+    assert "still has" in str(error.value)
+    assert "Language=7" in str(error.value)
+
+
+def test_write_simulator_ini_rejects_a_missing_language_key(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The other direction: a requested index must be there after the write."""
+    monkeypatch.setenv("USER", "root")
+    monkeypatch.delenv("WINEUSERNAME", raising=False)
+    driver = _driver(tmp_path)
+    ini = driver._ini_candidates()[0]
+    ini.parent.mkdir(parents=True, exist_ok=True)
+    ini.write_text("LastUsedDevice=fenix7\n", encoding="utf-8")
+
+    def _drop_language(text, updates, remove=()):  # noqa: ANN001
+        from e2e.sim.wine import IniUpdate
+
+        return IniUpdate(text=text, written=(), appended=(), removed=())
+
+    monkeypatch.setattr("e2e.sim.wine.update_ini", _drop_language)
+    with pytest.raises(DriverError) as error:
+        driver._write_simulator_ini(_device("fenix7"), "ble", "7")
+    assert "has no Language key" in str(error.value)
+
+
+def test_failure_hints_describe_the_driver_that_failed(tmp_path: Path) -> None:
+    """A hint must name the mechanism of the driver that raised.
+
+    The base class names no mechanism, so a driver without a Wine prefix cannot
+    inherit advice about one; Wine overrides it with its prefix and staging.
+    """
+    neutral = NullDriver().stage_hint("app-launch")
+    assert "app-launch" in neutral
+    assert "wine" not in neutral.lower()
+    assert "link-devices" not in neutral
+
+    wine = _driver(tmp_path).stage_hint("simulator-window")
+    assert "link-devices" in wine
+    assert "Wine prefix" in wine
 
 
 # ---------------------------------------------------------------------------

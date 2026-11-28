@@ -285,6 +285,12 @@ python -m e2e setup                   # fixture sets over REST, then the sitemap
 python -m e2e verify-fixtures         # the fixture guard on its own
 ```
 
+`runner` reports healthy only after the SDK copy, the device and font staging
+and `sdk-check` have finished — the copy is ~1 GB, so this can take minutes.
+`docker compose up -d --wait` blocks until every healthcheck passes; running
+`exec` while `runner` is still `starting` would see a half-staged SDK and fail
+with "does not look like a Connect IQ SDK".
+
 `e2e run` runs the same guard before every scenario, so a scenario can no longer
 reach an openHAB whose models were rejected; `setup` and `verify-fixtures` expose
 it for a manual check and for CI.
