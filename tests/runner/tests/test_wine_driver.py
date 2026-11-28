@@ -66,6 +66,7 @@ from e2e.sim.wine import (
     parse_window_geometry,
     parse_window_title,
     png_problem,
+    point_inside,
     read_device_display_name,
     read_device_keys,
     read_device_runtime_version,
@@ -79,6 +80,8 @@ from e2e.sim.wine import (
     update_ini,
     vk_to_keysym,
     window_point,
+    wine_60_push_hint,
+    wine_version,
     WineSimulatorDriver,
     xdotool_click_only_command,
     xdotool_focus_commands,
@@ -1266,6 +1269,51 @@ def test_simulator_ini_rewrite_keeps_the_simulators_own_keys(
     assert "WifiState=2" in text
     assert "Language=eng" in text
     assert len(sorted((tmp_path / "prefix").rglob("simulator.ini"))) == 1
+
+
+def test_a_leftover_language_is_removed_before_start(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A previous `Language=7` must not survive an `eng` start.
+
+    The VM once reported `language=deu` for a contract that asked for English.
+    Writing the ini now verifies the key is gone, so a silent wrong-language
+    run fails here instead of later.
+    """
+    monkeypatch.setenv("USER", "root")
+    monkeypatch.delenv("WINEUSERNAME", raising=False)
+    driver = _driver(tmp_path)
+    ini = driver._ini_candidates()[0]
+    ini.parent.mkdir(parents=True, exist_ok=True)
+    ini.write_text("LastUsedDevice=fenix7\nLanguage=7\n", encoding="utf-8")
+
+    driver._write_simulator_ini(_device("fenix7"), "ble", None)
+
+    text = ini.read_text(encoding="utf-8")
+    assert "Language" not in text
+    assert "LastUsedDevice=fenix7" in text
+
+
+def test_write_simulator_ini_rejects_a_language_it_cannot_remove(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("USER", "root")
+    monkeypatch.delenv("WINEUSERNAME", raising=False)
+    driver = _driver(tmp_path)
+    ini = driver._ini_candidates()[0]
+    ini.parent.mkdir(parents=True, exist_ok=True)
+    ini.write_text("Language=7\n", encoding="utf-8")
+
+    def _ignore_removal(text, updates, remove=()):  # noqa: ANN001
+        from e2e.sim.wine import IniUpdate
+
+        return IniUpdate(text=text, written=(), appended=(), removed=())
+
+    monkeypatch.setattr("e2e.sim.wine.update_ini", _ignore_removal)
+    with pytest.raises(DriverError) as error:
+        driver._write_simulator_ini(_device("fenix7"), "ble", None)
+    assert "still has" in str(error.value)
+    assert "Language=7" in str(error.value)
 
 
 # ---------------------------------------------------------------------------
@@ -2817,6 +2865,31 @@ def test_probe_menus_reports_the_popup_it_finds(
     assert "menu probe step" in log
 
 
+def test_wine_version_is_none_when_wine_is_absent() -> None:
+    assert wine_version("/nonexistent/wine") is None
+
+
+def test_point_inside_uses_the_window_rectangle() -> None:
+    geometry = {"x": 0, "y": 0, "width": 446, "height": 700}
+    assert point_inside(geometry, 2, 2)
+    assert point_inside(geometry, 445, 699)
+    assert not point_inside(geometry, 446, 2)
+    assert not point_inside(geometry, 2, 700)
+    assert not point_inside({}, 0, 0)
+
+
+def test_wine_6_is_diagnosed_as_a_push_failure() -> None:
+    """The measured 22.04 result must read as Wine's limit, not an app defect."""
+    hint = wine_60_push_hint("wine-6.0.3 (Ubuntu 6.0.3~repack-1)")
+    assert "no console output" in hint
+    assert "device area stays black" in hint
+    assert "--driver native" in hint
+    assert "Do not read this as an app or PRG defect" in hint
+    # Any other Wine build reports nothing extra.
+    assert wine_60_push_hint("wine-9.0") == ""
+    assert wine_60_push_hint(None) == ""
+
+
 def test_probe_menus_reports_a_silent_menu_bar_without_raising(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -2830,8 +2903,8 @@ def test_probe_menus_reports_a_silent_menu_bar_without_raising(
 
     assert report.opened is False
     assert report.steps, "every candidate point is recorded"
-    assert "does not take synthetic clicks on its menu bar" in report.verdict()
-    assert "restart-in-mode remains the documented capability" in report.verdict()
+    assert "inconclusive, not proof" in report.verdict()
+    assert "native driver" in report.verdict()
 
 
 def test_the_app_storage_clear_is_limited_to_the_sitemap_cache(

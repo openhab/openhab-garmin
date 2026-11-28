@@ -243,7 +243,7 @@ def run_contract(
 
                 The app reaches the sitemap by selecting its glance entry, and that
                 needs the entry focused first: page down once, then select. `wait_ready`
-                runs exactly that sequence (see `WineSimulatorDriver.launch`), so this
+                runs exactly that sequence (see the driver's `launch`), so this
                 case fails only when the transition still did not happen.
         """
         parsed = parse_lines(list(driver.events()))

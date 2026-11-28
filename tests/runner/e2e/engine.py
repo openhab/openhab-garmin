@@ -38,7 +38,7 @@ from .reporting import ERRORED, FAILED, PASSED, SKIPPED, ScenarioResult, StepRes
 from .scenarios import Scenario, Step
 from .settings import AppSettings, load_settings, scenario_settings
 from .shim import ShimClient, ShimError, ShimRequest
-from .sim import Button, DriverError, SimulatorDriver, create_driver
+from .sim import Button, CONNECTION_TRACE_MODES, DriverError, SimulatorDriver, create_driver
 from .sdk import SdkError, SdkLayout, require_fonts
 from .trace import EventMatch, TraceLog, parse_lines
 
@@ -235,6 +235,7 @@ class ScenarioRunner:
     # -- preparation ------------------------------------------------------
     def _preflight(self) -> None:
         scenario = self.scenario
+        current_mode = scenario.mode
         for step in scenario.steps:
             if step.action == "press" and not self.device.supports_buttons:
                 raise ConfigError(
@@ -246,6 +247,17 @@ class ScenarioRunner:
                     f"{scenario.scenario_id}: step {step.index} taps the screen but device "
                     f"{self.device.id} has input {self.device.input!r}"
                 )
+            if step.action == "connection":
+                target = step.get("mode")
+                if target == current_mode:
+                    raise ConfigError(
+                        f"{scenario.scenario_id}: step {step.index} switches to {target!r}, "
+                        f"but the app is already in that mode (the launch mode or an earlier "
+                        "connection step). The app emits E2E:CONNECTION only on a change, so "
+                        "no new event could prove this step; switch to a different mode in "
+                        "between."
+                    )
+                current_mode = target
 
     def _prepare_stack(self) -> AppSettings:
         scenario = self.scenario
@@ -526,6 +538,58 @@ class ScenarioRunner:
         count = step.get("count", 1)
         context.driver.tap(step.get("x"), step.get("y"), count)
         return PASSED, f"({step.get('x')},{step.get('y')}) x{count}", []
+
+    def _do_connection(self, step: Step, context: _Context) -> Tuple[str, str, List[str]]:
+        """Change the simulator's connection mode and require the app to prove it.
+
+        The step passes only on a **new** ``E2E:CONNECTION;mode=<target>`` line
+        emitted after the menu action. A menu click that returns success is not
+        evidence (#421), and the start-up line is not evidence either: the trace
+        is marked before the action and only events after that mark are
+        considered.
+        """
+        mode = step.get("mode")
+        trace_mode = CONNECTION_TRACE_MODES[mode]
+        if context.dry_run:
+            return SKIPPED, f"would switch the simulator to {mode}", []
+        if not context.driver.supports_connection_switch:
+            raise fixtures_module.ScenarioSkipped(
+                f"driver {context.driver.name!r} cannot change the connection mode "
+                "while the app runs. The simulator's menu is scripted only by the "
+                "native driver: under Wine its popups are drawn inside the window, "
+                "so there is no X-visible menu to drive. Run this scenario with "
+                "`--driver native`."
+            )
+        if context.trace is None:
+            raise AssertionFailure("internal error: trace log was not initialised")
+
+        context.trace.poll()
+        mark = len(context.trace.events)
+        evidence = context.driver.set_connection_mode(mode)
+        timeout_s = min(step.get("timeout_ms", 60_000) / 1000.0, context.remaining())
+        match = EventMatch(event="CONNECTION", fields={"mode": trace_mode})
+        deadline = time.monotonic() + timeout_s
+        while True:
+            context.trace.poll()
+            fresh = context.trace.events[mark:]
+            found = next((event for event in fresh if match.matches(event)), None)
+            if found is not None:
+                return PASSED, f"{found.describe()} after the menu action ({evidence})", []
+            if time.monotonic() >= deadline:
+                seen = [event.describe() for event in fresh if event.event == "CONNECTION"]
+                raise AssertionFailure(
+                    f"the simulated menu action for {mode!r} did not change the app's "
+                    f"connection mode: no new E2E:CONNECTION;mode={trace_mode} within "
+                    f"{timeout_s:.0f}s.\n"
+                    f"  driver: {evidence}\n"
+                    "  new CONNECTION events: "
+                    + (", ".join(seen) if seen else "<none>")
+                    + "\n"
+                    "  A menu action that cannot be shown to have taken effect fails "
+                    "the step; the start-up CONNECTION line is not evidence.\n"
+                    + context.trace.failure_report(match)
+                )
+            time.sleep(0.25)
 
     def _do_screenshot(self, step: Step, context: _Context) -> Tuple[str, str, List[str]]:
         name = step.get("name")

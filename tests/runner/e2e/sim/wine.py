@@ -153,8 +153,12 @@ ENV_LAUNCH_RETRY_BUDGET = "E2E_WINE_LAUNCH_RETRY_BUDGET"
 #: Total budget for :meth:`WineSimulatorDriver.launch`: the settle (up to
 #: ``LAUNCH_SETTLE_MAX_S``) plus the retry budget.
 DEFAULT_LAUNCH_TIMEOUT = 260.0
-#: Accelerators for the simulator's own menus, kept for diagnostics only: the
-#: guest's simulator has no menu bar, so the driver does not rely on one.
+#: Accelerators for the simulator's own menus, kept for diagnostics only. The
+#: guest measured them doing nothing under Wine; that is a property of Wine's
+#: key handling, not evidence that the menu bar is absent. The menu bar exists
+#: (a real Win32 menu, measured on the Windows build) and is drawn inside the
+#: window under Wine, which is why this driver does not rely on it; the native
+#: GTK build's menus are X windows and the ``native`` driver scripts them.
 INPUT_PROBE_KEYS: Tuple[str, ...] = ("alt+s", "alt+c")
 #: Window pixels that must change for a press to count as having had an effect.
 #: A glance clock ticking changes a few hundred; an opened menu or a new view
@@ -1451,15 +1455,78 @@ def timeout_error(
     *,
     display: str = DEFAULT_DISPLAY,
     details: Sequence[str] = (),
+    hint: Optional[str] = None,
 ) -> DriverError:
-    """Build an actionable error for a stage that ran out of time."""
-    hint = _STAGE_HINTS.get(stage, "").format(display=display)
-    lines = [f"{stage} did not complete within {timeout_s:.0f}s.", hint]
+    """Build an actionable error for a stage that ran out of time.
+
+    ``hint`` lets a driver replace the Wine-specific advice with its own; the
+    stage names and details stay the same.
+    """
+    resolved = hint if hint is not None else _STAGE_HINTS.get(stage, "").format(display=display)
+    lines = [f"{stage} did not complete within {timeout_s:.0f}s.", resolved]
     for detail in details:
         if detail:
             lines.append(f"  {detail}")
     lines.append("See tests/docs/simulator-driver.md.")
     return DriverError("\n".join(lines))
+
+
+def point_inside(geometry: Mapping[str, int], x: int, y: int) -> bool:
+    """True when the screen point ``(x, y)`` lies inside ``geometry``.
+
+    Used by the pointer guard's fallback: a native GTK top-level can leave
+    ``xdotool getmouselocation`` reporting no child window under a pointer that
+    is inside it, so the rectangle decides instead of the window id.
+    """
+    gx, gy = geometry.get("x", 0), geometry.get("y", 0)
+    width, height = geometry.get("width", 0), geometry.get("height", 0)
+    if width <= 0 or height <= 0:
+        return False
+    return gx <= x < gx + width and gy <= y < gy + height
+
+
+def wine_version(binary: Optional[str] = None, *, timeout: float = 10.0) -> Optional[str]:
+    """``wine --version`` as installed, or ``None`` when Wine is absent.
+
+    Used to refuse an *implicit* Wine run on an image whose Wine build cannot
+    push the app, instead of spending the full readiness budget on it. The
+    driver records the same string when it starts.
+    """
+    executable = binary or os.environ.get(WINE_ENV) or shutil.which("wine")
+    if not executable:
+        return None
+    try:
+        completed = subprocess.run(
+            [executable, "--version"],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    text = (completed.stdout or completed.stderr or "").strip()
+    return text or None
+
+
+def wine_60_push_hint(version: Optional[str]) -> str:
+    """Extra diagnosis when a Wine 6.0.x build cannot push the app, else "".
+
+    Measured on 22.04: Wine 6.0.3 starts the simulator and maps its window,
+    ``monkeydo`` connects, and the app is never pushed — no console output, no
+    ``CIQ_LOG.YML``, and the device area stays black. That is a Wine limitation,
+    not an app or PRG defect, and the native driver is the supported path on
+    that base.
+    """
+    if not version or not version.startswith("wine-6.0"):
+        return ""
+    return (
+        "\nThis is the measured Wine 6.0.x failure on the 22.04 base: the "
+        "simulator starts and its window appears, `monkeydo` connects, and the "
+        "app is never pushed (no console output, no CIQ_LOG.YML, the device area "
+        "stays black). Wine 6.0.x is not a usable driver there; run with "
+        "`--driver native`, which is the supported driver. Do not read this as "
+        "an app or PRG defect."
+    )
 
 
 def tail(lines: Sequence[str], limit: int = 12) -> str:
@@ -1542,6 +1609,9 @@ class WineSimulatorDriver(SimulatorDriver):
         self._ciq_log: Optional[Path] = None
         self._started = False
         self._display_checked = False
+        #: ``wine --version`` as recorded at start; used to identify the measured
+        #: Wine 6.0.x push failure instead of reporting it as an app defect.
+        self._wine_version: Optional[str] = None
 
     # -- capability probe --------------------------------------------------
     @classmethod
@@ -1585,6 +1655,34 @@ class WineSimulatorDriver(SimulatorDriver):
             "simulator": getattr(self._simulator_process, "pid", None),
             "app": getattr(self._app_process, "pid", None),
         }
+
+    # -- driver-specific advice -------------------------------------------
+    def _stage_hint(self, stage: str) -> str:
+        """Advice for a start stage that failed; a driver overrides its own.
+
+        The default text is Wine-specific (prefix, ``link-devices``). A driver
+        that does not use a Wine prefix must not repeat it, because the next
+        reader follows it and finds nothing.
+        """
+        return _STAGE_HINTS.get(stage, "").format(display=self.display)
+
+    def _launch_plans(
+        self, device: Device
+    ) -> List[Tuple[str, str, Optional[str], Optional[str]]]:
+        """The launch variants to try, in order.
+
+        Each entry is ``(label, mechanism, down_key, select_key)``. A driver
+        reorders or replaces them when the measured mechanism differs: the
+        native build, for instance, only takes the keydown/keyup hold.
+        """
+        if device.supports_buttons:
+            return [
+                ("declared hit areas", "mouse", None, None),
+                ("keyboard taps", "keyboard", "Down", "Return"),
+                ("keyboard keydown/keyup", "keyboard-hold", "Down", "Return"),
+                ("declared hit areas (hold)", "mouse-hold", None, None),
+            ]
+        return [("a tap on the screen", "tap", None, None)]
 
     # -- contract ----------------------------------------------------------
     def prepare(self, prg: Path) -> None:
@@ -1951,16 +2049,9 @@ class WineSimulatorDriver(SimulatorDriver):
         )
         self._settle_before_launch(deadline)
         self._probe_selection(deadline)
-        plans: List[Tuple[str, str, Optional[str], Optional[str]]] = []
-        if device.supports_buttons:
-            plans = [
-                ("declared hit areas", "mouse", None, None),
-                ("keyboard taps", "keyboard", "Down", "Return"),
-                ("keyboard keydown/keyup", "keyboard-hold", "Down", "Return"),
-                ("declared hit areas (hold)", "mouse-hold", None, None),
-            ]
-        else:
-            plans = [("a tap on the screen", "tap", None, None)]
+        plans: List[Tuple[str, str, Optional[str], Optional[str]]] = self._launch_plans(
+            device
+        )
 
         retry_budget = self._seconds_from_env(
             ENV_LAUNCH_RETRY_BUDGET, LAUNCH_RETRY_BUDGET_S, 0.0, 600.0
@@ -2934,7 +3025,9 @@ class WineSimulatorDriver(SimulatorDriver):
                 abs(location["x"] - abs_x) <= 1
                 and abs(location["y"] - abs_y) <= 1
             ):
-                self._verify_pointer_window(window, location["window"])
+                self._verify_pointer_window(
+                    window, location["window"], location["x"], location["y"]
+                )
                 return
             if attempt == 2:
                 raise DriverError(
@@ -2956,7 +3049,13 @@ class WineSimulatorDriver(SimulatorDriver):
             return None
         return parse_mouselocation(completed.stdout or "")
 
-    def _verify_pointer_window(self, window: str, pointer_window: int) -> None:
+    def _verify_pointer_window(
+        self,
+        window: str,
+        pointer_window: int,
+        pointer_x: Optional[int] = None,
+        pointer_y: Optional[int] = None,
+    ) -> None:
         """Fail unless the pointer is over the simulator, or inside its window.
 
         Wine creates several X windows for one application process — a splash
@@ -2964,11 +3063,33 @@ class WineSimulatorDriver(SimulatorDriver):
         them is over the simulator. Accept the same window id, a window owned by
         the simulator's PID, or a window whose rectangle lies inside the
         simulator window's rectangle.
+
+        A native GTK top-level is one window with no input child, and
+        ``xdotool getmouselocation`` can report window 0 / the root under a
+        pointer that is inside it. For a driver that declares
+        ``pointer_top_level_fallback`` the rectangle decides in that case: the
+        point is inside the simulator window, so the click lands on it. A point
+        outside still fails, so this does not reintroduce the blind-click pass
+        the guard exists to prevent.
         """
         if str(pointer_window) == str(window):
             return
         root = self._root_window_id()
-        if root is not None and str(pointer_window) == root:
+        root_hit = root is not None and str(pointer_window) == root
+        if self.pointer_top_level_fallback and pointer_x is not None and pointer_y is not None:
+            try:
+                geometry = self._geometry(window)
+            except DriverError:
+                geometry = {}
+            if geometry and point_inside(geometry, pointer_x, pointer_y):
+                self._record(
+                    f"note: xdotool reports window {pointer_window} under the "
+                    f"pointer at ({pointer_x},{pointer_y}), which is inside the "
+                    f"simulator window {window}; the native GTK top-level has no "
+                    "input child there, so the rectangle is authoritative"
+                )
+                return
+        if root_hit:
             raise DriverError(
                 "the pointer never reached the simulator window: "
                 f"`xdotool getmouselocation` reports window {pointer_window}, which "
@@ -3154,8 +3275,9 @@ class WineSimulatorDriver(SimulatorDriver):
     def probe_input_delivery(self, timeout_s: float = 8.0) -> str:
         """Prove a bezel press reaches the app, measured on the app's screen.
 
-        The guest's simulator has no menu bar, so a menu accelerator cannot be
-        the probe. This presses the declared ``onSelect`` area once and requires
+        The simulator's menu bar is drawn inside the window under Wine, so this
+        probe deliberately uses input the app must handle: it presses the
+        declared ``onSelect`` area once and requires
         a new ``E2E:VIEW``/``ERRORVIEW`` or a change inside the declared
         ``display.location`` rectangle. Measuring the screen, never the whole
         window, keeps the simulator's own bezel graphics from counting.
@@ -3305,7 +3427,7 @@ class WineSimulatorDriver(SimulatorDriver):
             raise DriverError(
                 f"no X display is answering on {self.display!r}: xdpyinfo exited "
                 f"{completed.returncode}.\n"
-                f"{_STAGE_HINTS['display'].format(display=self.display)}\n"
+                f"{self._stage_hint('display')}\n"
                 f"{tail((completed.stderr or '').splitlines(), 6)}"
             )
         if not self._display_checked:
@@ -3342,6 +3464,27 @@ class WineSimulatorDriver(SimulatorDriver):
         text = path.read_text(encoding="utf-8", errors="replace") if path.is_file() else ""
         update = update_ini(text, updates, remove=ini_removals(language_value))
         path.write_text(update.text, encoding="utf-8")
+        # Pin the language on every start, not just for a new file: a previous
+        # run's `Language=7` must be gone for `eng`, and a requested index must
+        # be present. Reading it back is what makes that an invariant instead of
+        # a hope, and it stops a run silently measuring another language.
+        reread = path.read_text(encoding="utf-8", errors="replace")
+        language_lines = [
+            line
+            for line in reread.splitlines()
+            if line.partition("=")[0].strip().lower() == "language"
+        ]
+        if language_value is None and language_lines:
+            raise DriverError(
+                f"{path} still has {language_lines[0]!r} after writing the default "
+                "language; the simulator would start in whatever a previous run "
+                "left there. Remove the key and retry."
+            )
+        if language_value is not None and not language_lines:
+            raise DriverError(
+                f"{path} has no Language key after writing {language_value!r}; the "
+                "simulator would start in its own default language."
+            )
         self._ini_path = path
         self._ini_summary = update
         language_note = (
@@ -3371,6 +3514,12 @@ class WineSimulatorDriver(SimulatorDriver):
     # -- simulator ---------------------------------------------------------
     def _start_simulator(self) -> None:
         wine = self._wine()
+        completed = self._run(
+            [wine, "--version"], check=False, action="wine --version"
+        )
+        version = (completed.stdout or completed.stderr or "").strip()
+        self._wine_version = version or None
+        self._record(f"wine version: {version or '<unknown>'}")
         command = simulator_command(wine, require_simulator(self.layout))
         self.simulator_log.parent.mkdir(parents=True, exist_ok=True)
         self._simulator_handle = self.simulator_log.open("w", encoding="utf-8")
@@ -3429,7 +3578,7 @@ class WineSimulatorDriver(SimulatorDriver):
                     f"the simulator exited with code {process.returncode} before "
                     "its window appeared.\n"
                     f"log: {self.simulator_log}\n"
-                    f"{_STAGE_HINTS['simulator-window']}"
+                    f"{self._stage_hint('simulator-window')}"
                 )
             for window in self._find_windows():
                 name = self._window_name(window) or ""
@@ -3437,7 +3586,7 @@ class WineSimulatorDriver(SimulatorDriver):
                 if title.error:
                     raise DriverError(
                         f"the simulator opened an error dialog ({name!r}).\n"
-                        f"{_STAGE_HINTS['simulator-window']}\n"
+                        f"{self._stage_hint('simulator-window')}\n"
                         f"log: {self.simulator_log}"
                     )
                 self._window = window
@@ -3450,7 +3599,7 @@ class WineSimulatorDriver(SimulatorDriver):
                 raise DriverError(
                     "the simulator opened an error dialog instead of its main "
                     "window.\n"
-                    f"{_STAGE_HINTS['simulator-window']}\n"
+                    f"{self._stage_hint('simulator-window')}\n"
                     f"log: {self.simulator_log}"
                 )
             time.sleep(0.5)
@@ -3463,6 +3612,7 @@ class WineSimulatorDriver(SimulatorDriver):
                 "no window titled `CIQ Simulator` appeared",
                 f"log: {self.simulator_log}",
             ],
+            hint=self._stage_hint("simulator-window"),
         )
 
     def _find_windows(self) -> List[str]:
@@ -3660,7 +3810,7 @@ class WineSimulatorDriver(SimulatorDriver):
                 raise DriverError(
                     f"monkeydo exited with code {process.returncode} before the app "
                     "rendered its first view.\n"
-                    f"{_STAGE_HINTS['app-launch']}\n"
+                    f"{self._stage_hint('app-launch')}\n"
                     f"log: {self.console_log}\n"
                     f"{tail(self.events(), 12)}"
                 )
@@ -3689,6 +3839,7 @@ class WineSimulatorDriver(SimulatorDriver):
                 "device's memory limit; then launch it by hand with "
                 "`monkeydo <prg> <device>`.\n"
                 f"log: {self.console_log}"
+                + wine_60_push_hint(self._wine_version)
             )
         if not any("E2E:" in line for line in lines):
             raise DriverError(
@@ -3708,6 +3859,7 @@ class WineSimulatorDriver(SimulatorDriver):
                 "console tail:",
                 tail(self.events(), 12),
             ],
+            hint=self._stage_hint("app-ready"),
         )
 
     # -- application properties -------------------------------------------

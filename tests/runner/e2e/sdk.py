@@ -11,6 +11,7 @@ distributions a contributor may have differ)::
       version.txt                  (or bin/version.txt)
       linux/bin/monkeyc            (or bin/monkeyc)
       linux/bin/monkeydo           (or bin/monkeydo)
+      linux/bin/simulator          (or bin/simulator; the native GTK build)
       windows/bin/simulator.exe    (or bin/simulator.exe)
 
 Environment variables:
@@ -68,6 +69,10 @@ _FONT_SUFFIXES = (".cft", ".ttf")
 _MONKEYC_CANDIDATES = ("linux/bin/monkeyc", "bin/monkeyc")
 _MONKEYDO_CANDIDATES = ("linux/bin/monkeydo", "bin/monkeydo")
 _SIMULATOR_CANDIDATES = ("windows/bin/simulator.exe", "bin/simulator.exe")
+#: The native (GTK) Linux simulator that ships in the Linux SDK. It is a
+#: different binary from ``simulator.exe``: same UI, but its menus are real GTK
+#: widgets and therefore real X windows (see ``sim/menus.py``).
+_NATIVE_SIMULATOR_CANDIDATES = ("linux/bin/simulator", "bin/simulator")
 _VERSION_CANDIDATES = ("version.txt", "bin/version.txt")
 
 #: Where the two SDK distributions a contributor may have put their device
@@ -107,10 +112,15 @@ class SdkLayout:
     monkeydo: Optional[Path]
     simulator: Optional[Path]
     devices: Optional[Path] = None
+    native_simulator: Optional[Path] = None
 
     @property
     def has_simulator(self) -> bool:
         return self.simulator is not None
+
+    @property
+    def has_native_simulator(self) -> bool:
+        return self.native_simulator is not None
 
     @property
     def has_devices(self) -> bool:
@@ -209,6 +219,7 @@ def inspect_sdk(root: Path, expected_version: Optional[str] = None) -> SdkLayout
         monkeydo=_first_existing(root, _MONKEYDO_CANDIDATES),
         simulator=_first_existing(root, _SIMULATOR_CANDIDATES),
         devices=find_device_definitions(root),
+        native_simulator=_first_existing(root, _NATIVE_SIMULATOR_CANDIDATES),
     )
 
 
@@ -222,6 +233,22 @@ def require_simulator(layout: SdkLayout) -> Path:
             "a Wine installation; protocol-tier scenarios do not."
         )
     return layout.simulator
+
+
+def require_native_simulator(layout: SdkLayout) -> Path:
+    """Return the native Linux simulator, or raise with what is missing.
+
+    The native build ships only in the Linux SDK archive. Its absence is not a
+    bug in the checkout: it is the reason the ``wine`` driver still exists.
+    """
+    if layout.native_simulator is None:
+        raise SdkError(
+            f"{layout.root} has no native Linux simulator: expected "
+            f"{' or '.join(_NATIVE_SIMULATOR_CANDIDATES)}.\n"
+            "The native driver needs the Linux Connect IQ SDK, not the Windows "
+            "archive. Keep using --driver wine until it is mounted."
+        )
+    return layout.native_simulator
 
 
 def load_layout(environ: Optional[Mapping[str, str]] = None) -> SdkLayout:

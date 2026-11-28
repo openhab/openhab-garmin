@@ -61,8 +61,57 @@ def test_font_and_key_packages_are_installed() -> None:
         "libfontconfig1",
         "fontconfig",
         "openssl",
+        "default-jre",
+        # Wine, the fallback driver, and the native simulator's runtime. Both
+        # sets must be in one image while the fallback exists.
+        "wine",
+        "wine64",
+        "libgtk-3-0",
+        "libwebkit2gtk-4.0-37",
+        "libsecret-1-0",
+        "libnotify4",
+        "libusb-1.0-0",
+        "librsvg2-common",
+        "x11-xkb-utils",
     ):
-        assert re.search(rf"^\s+{re.escape(package)} \\$", text, re.MULTILINE), package
+        assert re.search(rf"^\s+{re.escape(package)}(?::\w+)? \\$", text, re.MULTILINE), package
+
+
+def test_the_jre_carries_awt_for_the_svg_rasteriser() -> None:
+    """monkeyc rasterises SVG through Batik, which initialises AWT.
+
+    On 22.04 ``libawt_xawt.so`` is only in the non-headless JRE; the headless
+    package made every resource compile fail with UnsatisfiedLinkError. The
+    build runs the shared check, which covers both the font manager and AWT.
+    """
+    text = _dockerfile()
+    assert re.search(r"^\s+default-jre \\$", text, re.MULTILINE)
+    assert not re.search(r"^\s+default-jre-headless \\$", text, re.MULTILINE)
+    assert "libawt_xawt" in text
+    assert "fontmanager_check.py" in text
+
+
+def test_the_pixbuf_cache_is_regenerated_for_the_native_simulator() -> None:
+    """A stale loader cache aborts the native build's first draw on an SVG."""
+    text = _dockerfile()
+    assert "gdk-pixbuf-query-loaders" in text
+    assert "loaders.cache" in text
+
+
+def test_the_image_smoke_checks_both_drivers() -> None:
+    """A missing Wine or GTK/WebKit piece must fail the build, not a launch."""
+    text = _dockerfile()
+    smoke = text[text.index("RUN wine --version") :]
+    assert "libgtk-3.so.0" in smoke
+    assert "libwebkit2gtk-4.0.so.37" in smoke
+    assert "loaders.cache" in smoke
+
+
+def test_the_base_image_is_22_for_the_native_simulator() -> None:
+    """24.04 dropped webkit2gtk-4.0, so the native binary cannot run there."""
+    text = _dockerfile()
+    assert re.search(r"^ARG RUNNER_BASE_IMAGE=ubuntu:22\.04$", text, re.MULTILINE)
+    assert compose_module.openhab_images()["runner_base"].tag == "22.04"
 
 
 def test_image_fails_when_libfontmanager_cannot_resolve() -> None:
@@ -131,6 +180,33 @@ def test_entrypoint_links_devices_before_checking_the_sdk() -> None:
     text = _entrypoint()
     assert "python -m e2e link-devices" in text
     assert text.index("python -m e2e link-devices") < text.index("python -m e2e sdk-check")
+
+
+def test_entrypoint_publishes_readiness_only_after_staging() -> None:
+    """`healthy` must mean "staged", not "container started".
+
+    The SDK copy is ~1 GB; the VM once saw the runner report healthy mid-copy
+    and the documented `up -d` then `exec` workflow failed with "does not look
+    like a Connect IQ SDK".
+    """
+    text = _entrypoint()
+    assert 'ready_marker="${CIQ_READY_MARKER:-/run/ciq-ready}"' in text
+    reset = text.index('rm -f "$ready_marker"')
+    written = text.index('> "$ready_marker"')
+    checks = text.index("python -m e2e sdk-check")
+    assert reset < checks < written, "the marker is cleared first and written last"
+    assert "simulator.windows=" in text and "simulator.native=" in text
+
+
+def test_the_runner_healthcheck_requires_the_readiness_marker() -> None:
+    runner = compose_module.load_compose()["services"]["runner"]
+    healthcheck = runner["healthcheck"]
+    command = " ".join(healthcheck["test"])
+    assert "ciq-ready" in command
+    assert "import e2e" in command
+    # At least one simulator build must be staged for the runner to run.
+    assert "simulator" in command
+    assert healthcheck["start_period"] == "300s"
 
 
 def test_entrypoint_clears_a_stale_x_socket_before_starting_xvfb() -> None:

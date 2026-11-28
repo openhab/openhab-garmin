@@ -32,7 +32,8 @@ This directory is the foundation tracked by
 | Device matrix covering all 17 build variants from `monkey.jungle` and `manifest.xml` | approved in [#366](https://github.com/openhab/openhab-garmin/issues/366); enforced by `runner/tests/test_variants.py` |
 | Protocol-tier scenarios (shim trace + `E2E:` trace events) | ready; need the debug trace build from [#364](https://github.com/openhab/openhab-garmin/issues/364) |
 | Connect IQ unit-test tier (`source/test`, run by `tests/unit/run`) | pilot: 18 tests over sitemap parsing, error classification and element parameters. Compiled by the existing device matrix (it already passes `--unit-test`); verified on the guest (18/18 PASS on fenix7, about two minutes). See [docs/unit-tests.md](docs/unit-tests.md). |
-| Wine simulator driver | implemented against the contract, with the compiled-properties model and the guest-measured start order; the proof is a driver run on the guest with `--prg` (see [docs/simulator-driver.md](docs/simulator-driver.md)). The app runs end to end there: from the glance, DOWN then SELECT opens it, the sitemap request is answered, the response parses and the homepage paints once the device font pack is present (see [docs/simulator-input.md](docs/simulator-input.md)) |
+| Wine simulator driver | implemented against the contract, with the compiled-properties model and the guest-measured start order; the proof is a driver run on the guest with `--prg` (see [docs/simulator-driver.md](docs/simulator-driver.md)). The app runs end to end there: from the glance, DOWN then SELECT opens it, the sitemap request is answered, the response parses and the homepage paints once the device font pack is present (see [docs/simulator-input.md](docs/simulator-input.md)). **On the 22.04 image this driver cannot push the app**: Wine 6.0.3 maps the window, `monkeydo` connects, and no console output follows (measured; see the driver status section). An implicit `run` refuses it and points at `--driver native`. |
+| Native (GTK) simulator driver | implemented as `--driver native`: the same contract on `linux/bin/simulator`, plus the simulator's own menu, which is the only way to change connection mode **while the app runs**. The VM has proven `interface`, `prepare`, `start`, `wait_ready`, `app-entry`, `screenshot`, `events` and `stop` (window 446×700; the app runs). Fixes since that run: in-place binary, native pointer guard, the measured `/tmp` app-data root, a root capture cropped to the window (window-id captures are black), a measured device canvas, and the key-hold launch first. The contract re-run, the menu plan and the scenarios are the gate. See [docs/simulator-driver.md](docs/simulator-driver.md#the-native-driver-gate-on-the-vm). |
 | Golden capture (drive-and-look) | `smoke/launch-and-poll` captures and compares a reviewed golden on the guest (`golden homepage: matches`), with the device font pack required at capture time and the expected view checked against the live trace. A golden detects drift on one simulator build; it does not prove the render is correct on a device. See [docs/scenarios.md](docs/scenarios.md) and [docs/visual-truth.md](docs/visual-truth.md). |
 | Wine feasibility spike | ready to run on an approved Linux host with Docker and the SDK (see [spike/README.md](spike/README.md), issue [#370](https://github.com/openhab/openhab-garmin/issues/370)) |
 | #140 scope coverage map | checked in as `config/scope.yaml` and `docs/coverage.md`; enforced by `python -m e2e coverage --check`. The glance entries are **not yet verified** (waived with a reason, not blocked by a defect) and E2E builds exclude the glance by default (`--with-glance` re-enables it). |
@@ -277,7 +278,9 @@ python -m e2e validate-compose        # no Docker needed
 
 cd ../compose
 docker compose up -d                  # init staging, openhab-stable, shim, runner
-docker compose ps                     # wait for the healthchecks
+docker compose ps                     # wait for the healthchecks; the runner's
+                                      # turns healthy only after the SDK copy and
+                                      # staging finish, so `exec` is safe then
 
 cd ../runner
 python -m e2e status                  # SDK, openHAB, shim, pins
@@ -438,7 +441,12 @@ run, so the results are not attributable to the app).
   naming the served version and the command that starts the wanted stack. Omit
   it to run whatever is up.
 - `--device <id>` overrides the scenario's device (see `config/devices.yaml`).
-- `--driver wine|null`; `--dry-run` implies `null`.
+- `--driver wine|native|null`; `--dry-run` implies `null`. `native` is the
+  supported driver and the only one that can change the connection mode while
+  the app runs. `wine` is still the CLI default until `native` passes the same
+  corpus, but on the 22.04 image Wine 6.0.3 cannot push the app, so an implicit
+  `run` exits 2 with that reason and points at `--driver native` (see
+  [docs/simulator-driver.md](docs/simulator-driver.md#driver-status-on-the-2204-image)).
 - `--key BUTTON=KEYSYM` (repeatable) sends that X keysym for a button instead of
   the driver's default path, e.g. `--key ENTER=Return`.
 - `--update-goldens` writes new golden images instead of comparing; review the
@@ -541,6 +549,9 @@ scheduled in CI; only its pure logic is covered by
 | extended | `limits-over-limit` | ui | a sitemap above the simulator JSON limit shows the `S:-402` error view |
 | extended | `wifi-mode` | protocol | Wi-Fi mode renders the cached sitemap and does not poll |
 | extended | `offline-mode` | protocol | offline mode sends nothing |
+| extended | `connection-ble-wifi` | protocol | BLE → Wi-Fi → BLE mid-run, proven by new `E2E:CONNECTION` lines; no polling in Wi-Fi, resumed over BLE (`--driver native` only) |
+| extended | `connection-ble-offline` | protocol | BLE → offline → BLE mid-run, the cached sitemap survives, the offline command toast appears and sends nothing (`--driver native` only) |
+| extended | `connection-wifi-offline` | protocol | Wi-Fi → offline → Wi-Fi mid-run without polling in either state (`--driver native` only) |
 | extended | `localisation-sitemap` | ui | homepage, control labels and connection indicator in all six languages |
 | extended | `localisation-settings-menu` | ui | every settings entry, including the two-line Wi-Fi item, in all six languages |
 | extended | `localisation-glyphs` | ui | accented strings on normal screens, captured for glyph review |
@@ -746,7 +757,7 @@ digests:
 | --- | --- | --- |
 | stable | `openhab/openhab:5.2.5-debian` | current stable release, the default target |
 | dev | `openhab/openhab:5.3.0.M5-debian` | next milestone, opt-in; breaking changes appear here first |
-| runner base | `ubuntu:24.04` | Wine/Xvfb/xdotool packages the runner needs |
+| runner base | `ubuntu:22.04` | One image carries both drivers: Wine for the fallback and the GTK/WebKit stack for `--driver native` (24.04 dropped `webkit2gtk-4.0`). Moving the base also moved Wine from 24.04's 9.0 to 22.04's 6.0.3, a named risk in [docs/simulator-driver.md](docs/simulator-driver.md#the-native-driver-and-the-connection-transition); the image smoke-checks `wine --version` and the GTK/WebKit libraries at build time |
 | shim base | `python:3.12-slim-bookworm` | stdlib-only shim |
 
 `python -m e2e pin-images --write` copies those pins into `tests/compose/.env`
@@ -851,6 +862,10 @@ happened for this change.
 - The Wine driver: it needs Wine, the simulator and an X display, so only a run
   on the guest proves it. `contract-test --driver wine --prg <built.prg>` is
   that proof; see [docs/simulator-driver.md](docs/simulator-driver.md).
+- The native driver and the connection-mode transition: they need the Linux SDK
+  and a display, and were written without one. `contract-test --driver native`,
+  one scenario, one golden re-capture and the three `connection-*` scenarios are
+  the gate; see [docs/simulator-driver.md](docs/simulator-driver.md#the-native-driver-and-the-connection-transition).
 
 Run the first three before merging a change that touches `compose/`, `runner/Dockerfile`
 or the fixtures.
@@ -971,7 +986,7 @@ manual counterpart to `tests/runner/tests/test_compose.py` and
 - [docs/coverage.md](docs/coverage.md) – generated #140 scope-to-scenario matrix with waivers and manual checks
 - [docs/localisation.md](docs/localisation.md) – language coverage, device choice and review-only assertions
 - [docs/sdk.md](docs/sdk.md) – SDK layout, version pinning, licence handling
-- [docs/simulator-driver.md](docs/simulator-driver.md) – driver contract and Wine plan
+- [docs/simulator-driver.md](docs/simulator-driver.md) – driver contract, the Wine and native drivers, the menu model and the mode-transition gate
 - [docs/visual-truth.md](docs/visual-truth.md) – what visual truth one Ubuntu VM can give: off-screen assertions, no-input captures, AI review and the rejected Windows host
 - [docs/unit-tests.md](docs/unit-tests.md) – Connect IQ unit tests: feasibility, tier split, limits and operator commands
 - [spike/README.md](spike/README.md) – the #370 Wine feasibility spike and its verdict

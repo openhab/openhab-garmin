@@ -105,7 +105,7 @@ from .settings import SettingsError, load_settings, scenario_settings
 from .shim import ShimClient, ShimError
 from .trace import parse_lines
 from .sim import DRIVER_NAMES, Button, create_driver
-from .sim.wine import ENV_KEY_PREFIX
+from .sim.wine import ENV_KEY_PREFIX, wine_version
 from .variants import (
     check_coverage,
     combinations,
@@ -403,6 +403,17 @@ def _cmd_run(args: argparse.Namespace) -> int:
     driver_name = args.driver or ("null" if dry_run else "wine")
     if driver_name not in DRIVER_NAMES:
         return _fail(f"unknown driver {driver_name!r}; known: {', '.join(DRIVER_NAMES)}")
+    if driver_name == "wine" and args.driver is None and not dry_run:
+        version = wine_version()
+        if version and version.startswith("wine-6.0"):
+            return _fail(
+                f"the default driver is 'wine', but this image ships {version}, "
+                "which cannot push the app: the simulator window appears, monkeydo "
+                "connects, and no console output or CIQ_LOG.YML follows (the "
+                "device area stays black). Pass --driver native, the supported "
+                "driver; pass --driver wine explicitly only to reproduce that "
+                "failure."
+            )
 
     # `run` identifies the profile from the live stack, so `--profile` is only
     # an assertion. It is checked once, before any scenario, because running the
@@ -777,7 +788,7 @@ def _cmd_contract_test(args: argparse.Namespace) -> int:
     if invalid:
         return _fail(invalid)
     layout = None
-    if args.driver == "wine":
+    if args.driver in ("wine", "native"):
         layout = load_layout()
     workdir = _artifacts_dir(args) / "contract" / args.driver
     driver = create_driver(
@@ -958,8 +969,8 @@ def _cmd_language_scan(args: argparse.Namespace) -> int:
 
 def _cmd_simulator_probe(args: argparse.Namespace) -> int:
     """Probe the simulator's menu bar, then restart into each start-up mode."""
-    if args.driver != "wine":
-        return _fail("simulator-probe needs a real simulator; use --driver wine")
+    if args.driver not in ("wine", "native"):
+        return _fail("simulator-probe needs a real simulator; use --driver wine or --driver native")
     prg = Path(args.prg)
     if not prg.is_file():
         return _fail(f"--prg {prg} is not a file")
@@ -973,7 +984,7 @@ def _cmd_simulator_probe(args: argparse.Namespace) -> int:
     settings = load_settings(args.settings)
     workdir = _artifacts_dir(args) / "simulator-probe"
     driver = create_driver(
-        "wine",
+        args.driver,
         layout=load_layout(),
         artifact_dir=workdir,
         log=lambda message: print(message),
@@ -1497,7 +1508,7 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     run.add_argument("--device", help="override the device for every scenario")
-    run.add_argument("--driver", choices=DRIVER_NAMES, help="simulator driver (default: wine, or null with --dry-run)")
+    run.add_argument("--driver", choices=DRIVER_NAMES, help="simulator driver (default: wine; null with --dry-run; native can change connection mode while the app runs)")
     run.add_argument("--dry-run", action="store_true", help="no Docker, no SDK, no simulator: exercise scenario wiring only")
     run.add_argument(
         "--update-goldens",

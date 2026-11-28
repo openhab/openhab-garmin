@@ -1,0 +1,147 @@
+﻿# Extended: BLE <-> Offline while the app runs.
+#
+# Offline means neither the phone nor Wi-Fi is available; the simulator menu is
+# set to BLE: Not Connected and Wi-Fi: Not Initialized, which is the same state
+# the `offline` start-up ini keys produce. The app must report OFFLINE, keep
+# rendering the cached sitemap, refuse a command with the offline toast, and
+# return to BLE with polling when the phone comes back.
+#
+# Needs `--driver native` (see connection-ble-wifi.yaml); skipped with a reason
+# under the wine fallback.
+
+name: connection-ble-offline
+description: BLE to offline and back while the app runs, including the offline command toast.
+tier: protocol
+suite: extended
+device: fenix7
+mode: ble
+fixture: fast-polling
+openhab:
+  profile: stable
+  sitemap: garmin_commands
+  items:
+    E2E_Toggle: "OFF"
+language: eng
+timeout_s: 600
+
+covers:
+  - communication.transitions
+  - communication.transition-data
+  - communication.command-semantics
+manual_checks:
+  - >-
+    The connection-mode indicator and the settings-menu "Connection mode" value
+    after each switch are review-only; compare the captured screens by eye.
+  - >-
+    The toast text is localised, so only its stable id is asserted; whether the
+    drawn text is the expected translation is a manual check.
+
+settings:
+  sitemap_0: garmin_commands
+
+steps:
+  - action: launch
+
+  - action: wait_for_request
+    description: The first sitemap request over BLE.
+    method: GET
+    path_prefix: /rest/sitemaps/garmin_commands
+    min_count: 1
+    timeout_ms: 60000
+
+  - action: wait_for_view
+    description: The commands homepage is on screen before the switch.
+    category: sitemap
+    view: HomepageMenu
+    timeout_ms: 60000
+
+  - action: screenshot
+    name: ble-homepage
+
+  # BLE -> offline.
+  - action: connection
+    mode: offline
+    timeout_ms: 120000
+    description: The simulator's menu removes both connections and the app reports offline.
+
+  - action: wait
+    ms: 2000
+
+  - action: screenshot
+    name: offline-homepage
+
+  - action: reset_shim
+
+  - action: wait
+    description: Several 250 ms poll intervals, so a BLE poll would be visible.
+    ms: 6000
+
+  - action: assert
+    description: No sitemap poll is made while the app is offline.
+    shim_requests:
+      method: GET
+      path_prefix: /rest/sitemaps/garmin_commands
+      max_count: 0
+
+  - action: assert
+    description: The cached sitemap is still on screen, not an error view.
+    no_error_view: true
+
+  # Offline command attempt. The first frame is the "Widgets" frame, so the
+  # first select opens its page and the second selects the toggle. Offline, the
+  # app must refuse with the stable `offline` select result and the
+  # `offline-command` toast, and send nothing.
+  - action: press
+    button: ENTER
+
+  - action: wait_for_view
+    description: The Widgets frame page is open before selecting its element.
+    category: sitemap
+    view: PageMenu
+    timeout_ms: 30000
+
+  - action: press
+    button: ENTER
+
+  - action: wait_for_event
+    description: The app refused the command because it is offline.
+    event: SELECT
+    fields:
+      result: offline
+    timeout_ms: 30000
+
+  - action: wait_for_event
+    description: The offline command toast is shown, by stable id.
+    event: TOAST
+    fields:
+      id: offline-command
+    timeout_ms: 30000
+
+  - action: assert
+    description: An offline command sends nothing to the server.
+    shim_requests:
+      method: POST
+      max_count: 0
+
+  - action: screenshot
+    name: offline-command
+
+  # Offline -> BLE. Polling must resume without a restart.
+  - action: connection
+    mode: ble
+    timeout_ms: 120000
+    description: The simulator's menu restores the phone connection and the app reports BLE.
+
+  - action: wait_for_request
+    description: Polling resumes over BLE.
+    method: GET
+    path_prefix: /rest/sitemaps/garmin_commands
+    min_count: 2
+    timeout_ms: 60000
+
+  - action: screenshot
+    name: ble-homepage-again
+
+  - action: assert
+    description: No full-screen error appeared during either transition.
+    never_error_view: true

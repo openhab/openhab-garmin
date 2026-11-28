@@ -1,13 +1,23 @@
-"""The simulator's own menu bar: probing it, and the restart fallback."""
+"""The simulator's own menu bar: the measured model, the key plan, and probing."""
 
 from __future__ import annotations
 
+import pytest
+
 from e2e.sim.menus import (
+    CONNECTION_MENU_IDS,
+    CONNECTION_STATES,
+    CONNECTION_TYPES,
     MENU_BAR_HEIGHT,
     MENU_PROBE_STEP,
     MenuProbeReport,
     MenuProbeStep,
+    MenuSelection,
+    connection_menu_selections,
     menu_bar_points,
+    menu_item_index,
+    menu_key_plan,
+    menu_mnemonic,
     new_window_ids,
     parse_window_ids,
 )
@@ -68,8 +78,8 @@ def test_the_probe_verdict_says_what_was_and_was_not_proven() -> None:
 
     silent = MenuProbeReport(steps=[MenuProbeStep(12, 11), MenuProbeStep(36, 11)])
     assert silent.opened is False
-    assert "does not take synthetic clicks on its menu bar" in silent.verdict()
-    assert "restart-in-mode remains the documented capability" in silent.verdict()
+    assert "inconclusive, not proof" in silent.verdict()
+    assert "native driver" in silent.verdict()
 
     drawn = MenuProbeReport(steps=[MenuProbeStep(12, 11, screen_delta=800)])
     assert "in-window" in drawn.verdict()
@@ -84,3 +94,94 @@ def test_probe_lines_describe_every_attempt() -> None:
     assert len(lines) == 2
     assert lines[0].startswith("(12,11)")
     assert "x" in lines[1]
+
+
+def test_the_measured_connection_model_is_recorded_in_menu_order() -> None:
+    assert CONNECTION_TYPES == ("BLE", "WiFi", "LTE")
+    assert CONNECTION_STATES == ("Not Initialized", "Not Connected", "Connected")
+    # The ids are the evidence that the model was measured, not invented.
+    assert ("BLE", "Not Connected", 6052) in CONNECTION_MENU_IDS
+    assert ("WiFi", "Connected", 6056) in CONNECTION_MENU_IDS
+
+
+def test_each_mode_selects_its_end_state_wifi_first() -> None:
+    ble = connection_menu_selections("ble")
+    assert [selection.path for selection in ble] == [
+        ("Settings", "Connection Type", "WiFi", "Not Connected"),
+        ("Settings", "Connection Type", "BLE", "Connected"),
+    ]
+
+    wifi = connection_menu_selections("wifi")
+    assert [selection.path for selection in wifi] == [
+        ("Settings", "Connection Type", "WiFi", "Connected"),
+        ("Settings", "Connection Type", "BLE", "Not Connected"),
+    ]
+
+    offline = connection_menu_selections("offline")
+    assert [selection.path for selection in offline] == [
+        # Not initialised, not merely disconnected: hasWifiCapability() is false
+        # then and the app goes straight to OFFLINE.
+        ("Settings", "Connection Type", "WiFi", "Not Initialized"),
+        ("Settings", "Connection Type", "BLE", "Not Connected"),
+    ]
+
+
+def test_an_unknown_connection_mode_is_refused() -> None:
+    with pytest.raises(ValueError):
+        connection_menu_selections("lte")
+
+
+def test_the_key_plan_is_a_mnemonic_then_arrows_with_no_coordinates() -> None:
+    connected = MenuSelection(("Settings", "Connection Type", "BLE", "Connected"))
+    assert menu_key_plan(connected) == (
+        "alt+s",
+        "Down",
+        "Down",
+        "Down",
+        "Right",
+        "Right",
+        "Down",
+        "Down",
+        "Return",
+    )
+
+    not_connected = MenuSelection(("Settings", "Connection Type", "WiFi", "Not Connected"))
+    assert menu_key_plan(not_connected) == (
+        "alt+s",
+        "Down",
+        "Down",
+        "Down",
+        "Right",
+        "Down",
+        "Right",
+        "Down",
+        "Return",
+    )
+    allowed = {"Down", "Right", "Return"}
+    assert {key for key in menu_key_plan(not_connected) if not key.startswith("alt+")} <= allowed
+
+
+def test_the_key_plan_starts_at_the_settings_menu_only() -> None:
+    with pytest.raises(ValueError):
+        menu_key_plan(MenuSelection(("Simulation", "Time Simulation")))
+
+
+def test_menu_item_index_refuses_to_guess() -> None:
+    assert menu_item_index(("Settings", "Connection Type")) == 3
+    assert menu_item_index(("Settings", "Connection Type", "WiFi")) == 1
+    assert menu_item_index(("Settings", "Connection Type", "LTE", "Connected")) == 2
+    for path in (
+        ("Settings", "Language"),
+        ("Settings", "Connection Type", "Satellite"),
+        ("Settings", "Connection Type", "BLE", "Maybe"),
+        ("Settings",),
+    ):
+        with pytest.raises(ValueError):
+            menu_item_index(path)
+
+
+def test_menu_mnemonic_reads_the_ampersand() -> None:
+    assert menu_mnemonic("&Settings") == "s"
+    assert menu_mnemonic("Si&mulation") == "m"
+    with pytest.raises(ValueError):
+        menu_mnemonic("Settings")

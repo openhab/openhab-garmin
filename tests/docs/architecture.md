@@ -5,7 +5,7 @@
 ```mermaid
 flowchart LR
     subgraph stack["Docker Compose (tests/compose)"]
-        runner["runner<br/>Ubuntu 24.04, Wine, Xvfb,<br/>xdotool, ImageMagick, Python 3"]
+        runner["runner<br/>Ubuntu 22.04, Wine + native GTK simulator,<br/>Xvfb, xdotool, ImageMagick, Python 3"]
         shim["shim<br/>proxy + fault injector<br/>records every request"]
         init["openhab-&lt;profile&gt;-init<br/>one-shot fixture staging"]
         stable["openhab-stable<br/>profile: stable (default)"]
@@ -138,8 +138,16 @@ survives with no server behind it; Xvfb refuses to start against it, and the
 container would report healthy with nothing able to render. The files are only
 removed after `xdpyinfo` says nothing is answering, and an Xvfb that never
 comes up is a fatal start-up error. Xvfb starts before the SDK is staged: the
-copy is ~250 MB, and a display that only appears afterwards would make "healthy"
+copy is ~1 GB, and a display that only appears afterwards would make "healthy"
 and "can render" mean different things while a UI driver is already running.
+
+"Healthy" is stricter than "the container is up". The entrypoint writes
+`/run/ciq-ready` only after the SDK copy, the device and font staging and
+`sdk-check` have succeeded, and the runner's healthcheck requires that marker,
+the harness import and at least one staged simulator build. Before that marker
+existed, the VM saw the runner report healthy during the copy and the documented
+`up -d` then `exec` workflow failed with "does not look like a Connect IQ SDK".
+A restart clears the marker first, so a stale file cannot survive.
 
 The copy costs the size of the SDK in the container's writable layer on each
 start; `preflight` already requires 5 GiB free disk for the stack.
@@ -151,6 +159,13 @@ that way, so a plain `ldd` marks a healthy image as broken — which is what the
 first guest build did. The rule lives in `runner/e2e/fontmanager.py` and is
 unit-tested against recorded `ldd` output, because the check itself only runs
 inside the Docker build.
+
+The same class of check covers AWT: `monkeyc` rasterises SVG drawables through
+Batik, which initialises AWT and loads `libawt_xawt.so`. On 22.04 that library is
+only in the non-headless JRE, so the image installs `default-jre` (not
+`-headless`) and the build asserts the file exists with its X dependencies
+resolved. Without it, a resource compile fails with `UnsatisfiedLinkError` long
+after the image looked healthy.
 
 ## Request flow
 
